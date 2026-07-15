@@ -191,7 +191,7 @@ class ClipsPipeline:
     
     def stop(self):
         """Pipeline'ı durdur"""
-        logger.info("Pipeline durdurulıyor...")
+        logger.info("Pipeline durdurulüyor...")
         self.monitor.stop_monitoring()
         self.state = PipelineState.IDLE
         logger.info("✓ Pipeline durduruldu")
