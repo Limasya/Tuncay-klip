@@ -1,6 +1,8 @@
 """
-Pipeline API router — new microservice-based endpoints.
+Pipeline API router — microservice-based endpoints.
 Controls the event-driven pipeline orchestrator.
+All microservice imports are lazy to avoid startup failures
+when Redis or ML dependencies are unavailable.
 """
 import asyncio
 import json
@@ -9,19 +11,24 @@ import os
 import time
 from typing import Optional
 
-import cv2
-import numpy as np
 from fastapi import APIRouter, HTTPException, UploadFile, File, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
-
-from microservices.orchestrator import orchestrator
 
 logger = logging.getLogger("pipeline_api")
 
 router = APIRouter(prefix="/api/pipeline", tags=["pipeline"])
 
-# ── WebSocket connections ───────────────────────────────────
-_ws_clients: list[WebSocket] = []
+_ws_clients: list = []
+
+
+def _get_orch():
+    """Lazy import of microservices orchestrator."""
+    try:
+        from microservices.orchestrator import orchestrator
+        return orchestrator
+    except Exception as e:
+        logger.warning("Microservices orchestrator unavailable: %s", e)
+        return None
 
 
 class StartStreamRequest(BaseModel):
@@ -38,10 +45,12 @@ class ChatMessageRequest(BaseModel):
 @router.post("/start")
 async def start_pipeline(request: StartStreamRequest):
     """Start the event-driven pipeline with a stream URL."""
+    orchestrator = _get_orch()
+    if orchestrator is None:
+        raise HTTPException(503, "Microservices orchestrator unavailable (Redis required)")
     if orchestrator._is_running:
         raise HTTPException(400, "Pipeline already running")
 
-    import asyncio
     asyncio.create_task(orchestrator.start_stream(
         stream_url=request.stream_url,
         target_fps=request.target_fps,
@@ -54,6 +63,9 @@ async def start_pipeline(request: StartStreamRequest):
 @router.post("/stop")
 async def stop_pipeline():
     """Stop the pipeline gracefully."""
+    orchestrator = _get_orch()
+    if orchestrator is None:
+        raise HTTPException(503, "Microservices orchestrator unavailable")
     if not orchestrator._is_running:
         raise HTTPException(400, "Pipeline not running")
     await orchestrator.stop()
@@ -63,15 +75,23 @@ async def stop_pipeline():
 @router.get("/status")
 async def pipeline_status():
     """Get full pipeline status with all service metrics."""
+    orchestrator = _get_orch()
+    if orchestrator is None:
+        return {"error": "Microservices orchestrator unavailable (Redis required)"}
     return orchestrator.get_full_status()
 
 
 @router.post("/chat")
 async def inject_chat(request: ChatMessageRequest):
     """Inject a chat message for analysis (testing)."""
+    orchestrator = _get_orch()
+    if orchestrator is None:
+        raise HTTPException(503, "Microservices orchestrator unavailable")
     result = await orchestrator.inject_chat_message(request.text, request.user)
     if result:
-        return result.model_dump()
+        if hasattr(result, "model_dump"):
+            return result.model_dump()
+        return result
     raise HTTPException(500, "Chat analysis not available")
 
 
@@ -79,8 +99,10 @@ async def inject_chat(request: ChatMessageRequest):
 async def analyze_frame():
     """Analyze a test frame (for demo/testing)."""
     import numpy as np
+    orchestrator = _get_orch()
+    if orchestrator is None:
+        raise HTTPException(503, "Microservices orchestrator unavailable")
     try:
-        # Create a test frame
         test_frame = np.random.randint(0, 255, (720, 1280, 3), dtype=np.uint8)
         result = await orchestrator.analyze_single_frame(test_frame)
         return {
@@ -96,90 +118,87 @@ async def analyze_frame():
 @router.get("/events")
 async def get_recent_events(last_n: int = 50):
     """Get recent events from the event bus."""
-    if orchestrator.event_bus:
+    orchestrator = _get_orch()
+    if orchestrator and orchestrator.event_bus:
         events = orchestrator.event_bus.get_all_recent(last_n)
-        return [e.model_dump(mode="json") for e in events]
+        return [e.model_dump(mode="json") if hasattr(e, "model_dump") else e for e in events]
     return []
 
 
 @router.get("/events/{event_type}")
 async def get_events_by_type(event_type: str, last_n: int = 20):
     """Get recent events of a specific type."""
-    if orchestrator.event_bus:
+    orchestrator = _get_orch()
+    if orchestrator and orchestrator.event_bus:
         events = orchestrator.event_bus.get_history(event_type, last_n)
-        return [e.model_dump(mode="json") for e in events]
+        return [e.model_dump(mode="json") if hasattr(e, "model_dump") else e for e in events]
     return []
 
 
 @router.get("/score")
 async def get_current_score():
     """Get the current highlight score."""
+    orchestrator = _get_orch()
+    if orchestrator is None:
+        raise HTTPException(503, "Microservices orchestrator unavailable")
     if not orchestrator.event_bus:
         await orchestrator.initialize()
     if orchestrator.event_detector:
         score = orchestrator.event_detector.get_latest_score()
-        return score.model_dump()
+        return score.model_dump() if hasattr(score, "model_dump") else score
     raise HTTPException(500, "Event detector not available")
 
 
 @router.get("/metrics")
 async def get_metrics():
     """Get event bus metrics."""
-    if orchestrator.event_bus:
+    orchestrator = _get_orch()
+    if orchestrator and orchestrator.event_bus:
         return orchestrator.event_bus.metrics
     return {}
 
 
-# ── WebSocket: Real-time event stream ──────────────────────
-
 @router.websocket("/ws/events")
 async def websocket_events(websocket: WebSocket):
-    """
-    WebSocket for real-time event streaming to the dashboard.
-    Pushes events as they flow through the bus.
-    """
+    """WebSocket for real-time event streaming to the dashboard."""
     await websocket.accept()
     _ws_clients.append(websocket)
-    logger.info(f"WebSocket client connected ({len(_ws_clients)} total)")
+    logger.info("WebSocket client connected (%d total)", len(_ws_clients))
 
-    # Send current state immediately
+    orchestrator = _get_orch()
     try:
-        status = orchestrator.get_full_status()
-        await websocket.send_json({"type": "status", "data": status})
-        if orchestrator.event_detector:
-            score = orchestrator.event_detector.get_latest_score()
-            await websocket.send_json({"type": "score", "data": score.model_dump()})
+        if orchestrator:
+            status = orchestrator.get_full_status()
+            await websocket.send_json({"type": "status", "data": status})
     except Exception:
         pass
 
-    # Set up event bus subscription that pushes to this WebSocket
     async def _ws_event_handler(event):
         try:
-            await websocket.send_json({
-                "type": "event",
-                "data": event.model_dump(mode="json"),
-            })
+            data = event.model_dump(mode="json") if hasattr(event, "model_dump") else event
+            await websocket.send_json({"type": "event", "data": data})
         except Exception:
             pass
 
-    if orchestrator.event_bus:
+    if orchestrator and orchestrator.event_bus:
         orchestrator.event_bus.subscribe_wildcard("*", _ws_event_handler)
 
     try:
-        # Keep connection alive, send periodic score updates
         while True:
             await asyncio.sleep(2)
-            if orchestrator.event_detector:
+            if orchestrator and orchestrator.event_detector:
                 score = orchestrator.event_detector.get_latest_score()
-                await websocket.send_json({"type": "score", "data": score.model_dump()})
+                await websocket.send_json({
+                    "type": "score",
+                    "data": score.model_dump() if hasattr(score, "model_dump") else score,
+                })
     except WebSocketDisconnect:
         pass
     finally:
-        _ws_clients.remove(websocket)
-        logger.info(f"WebSocket client disconnected ({len(_ws_clients)} total)")
+        if websocket in _ws_clients:
+            _ws_clients.remove(websocket)
+        logger.info("WebSocket client disconnected (%d total)", len(_ws_clients))
 
-
-# ── Offline Video Analysis ─────────────────────────────────
 
 @router.post("/upload")
 async def upload_video(
@@ -187,15 +206,17 @@ async def upload_video(
     target_fps: int = 2,
     max_seconds: int = 60,
 ):
-    """
-    Upload a video file for offline pipeline analysis.
-    Extracts frames at target_fps, runs them through the full
-    video analysis pipeline, and returns results.
-    """
+    """Upload a video file for offline pipeline analysis."""
+    import cv2
+    import numpy as np
+
     if not file.filename or not file.filename.lower().endswith(('.mp4', '.avi', '.mkv', '.mov', '.webm')):
         raise HTTPException(400, "Unsupported video format. Use mp4, avi, mkv, mov, or webm.")
 
-    # Save uploaded file
+    orchestrator = _get_orch()
+    if orchestrator is None:
+        raise HTTPException(503, "Microservices orchestrator unavailable")
+
     upload_dir = os.path.join("data", "uploads")
     os.makedirs(upload_dir, exist_ok=True)
     file_path = os.path.join(upload_dir, f"upload_{int(time.time())}_{file.filename}")
@@ -204,13 +225,11 @@ async def upload_video(
     with open(file_path, "wb") as f:
         f.write(content)
 
-    logger.info(f"Video uploaded: {file_path} ({len(content)} bytes)")
+    logger.info("Video uploaded: %s (%d bytes)", file_path, len(content))
 
-    # Ensure orchestrator is initialized
     if not orchestrator.event_bus:
         await orchestrator.initialize()
 
-    # Open video with OpenCV
     cap = cv2.VideoCapture(file_path)
     if not cap.isOpened():
         raise HTTPException(500, "Failed to open video file")
@@ -219,9 +238,6 @@ async def upload_video(
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     duration = total_frames / video_fps if video_fps > 0 else 0
 
-    logger.info(f"Video: {video_fps:.1f} FPS, {total_frames} frames, {duration:.1f}s")
-
-    # Calculate frame skip
     frame_skip = max(1, int(video_fps / target_fps))
     frames_to_process = min(
         int(max_seconds * target_fps),
@@ -241,7 +257,6 @@ async def upload_video(
         "events_generated": 0,
     }
 
-    # Process frames
     frame_idx = 0
     processed = 0
     total_inference = 0.0
@@ -252,7 +267,6 @@ async def upload_video(
             break
 
         if frame_idx % frame_skip == 0:
-            # Resize for analysis
             if frame.shape[0] > 720:
                 h, w = frame.shape[:2]
                 scale = 720 / h
@@ -277,7 +291,6 @@ async def upload_video(
         total_inference / processed if processed > 0 else 0, 1
     )
 
-    # Count events generated
     if orchestrator.event_bus:
         events = orchestrator.event_bus.get_all_recent(500)
         results["events_generated"] = len([
@@ -286,17 +299,12 @@ async def upload_video(
             or e.source_service in ("video-analysis", "event-detector")
         ])
 
-    # Get final score
     if orchestrator.event_detector:
         score = orchestrator.event_detector.get_latest_score()
-        results["final_score"] = score.model_dump()
-
-    logger.info(f"Upload analysis complete: {processed} frames, {results['faces_detected']} faces")
+        results["final_score"] = score.model_dump() if hasattr(score, "model_dump") else score
 
     return results
 
-
-# ── DB Integration: Save pipeline clips ─────────────────────
 
 async def save_pipeline_clip_to_db(clip_data: dict):
     """Save a pipeline-generated clip to the database."""
@@ -305,7 +313,6 @@ async def save_pipeline_clip_to_db(clip_data: dict):
         from models.database import Clip, ClipStatus, ClipCategory, TriggerType
 
         async with async_session() as session:
-            # Map pipeline category to DB enum
             category_map = {
                 "exciting": ClipCategory.EXCITING,
                 "hype": ClipCategory.EXCITING,
@@ -318,14 +325,12 @@ async def save_pipeline_clip_to_db(clip_data: dict):
             db_category = category_map.get(cat, ClipCategory.OTHER)
 
             clip = Clip(
-                broadcaster_id=1,  # Default broadcaster
+                broadcaster_id=1,
                 title=f"Pipeline Clip - {cat.title()}",
                 description=f"Auto-generated. Score: {clip_data.get('highlight_score', 0):.3f}",
                 category=db_category,
                 status=ClipStatus.READY,
                 trigger_type=TriggerType.COMPOSITE,
-                clip_start_time=None,
-                clip_end_time=None,
                 duration_seconds=clip_data.get("duration_seconds", 0),
                 video_path=clip_data.get("file_path", ""),
                 thumbnail_path=clip_data.get("thumbnail_path", ""),
@@ -333,6 +338,6 @@ async def save_pipeline_clip_to_db(clip_data: dict):
             )
             session.add(clip)
             await session.commit()
-            logger.info(f"Clip saved to DB: {clip.id} - {cat}")
+            logger.info("Clip saved to DB: %s - %s", clip.id, cat)
     except Exception as e:
-        logger.error(f"Failed to save clip to DB: {e}")
+        logger.error("Failed to save clip to DB: %s", e)

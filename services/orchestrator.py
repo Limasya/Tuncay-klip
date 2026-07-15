@@ -327,7 +327,11 @@ class Orchestrator:
     def get_status(self) -> Dict:
         """Sistem durumunu döndürür."""
         import psutil
-        import torch
+        try:
+            import torch
+            gpu_available = torch.cuda.is_available()
+        except ImportError:
+            gpu_available = False
 
         return {
             "is_monitoring": self.is_monitoring,
@@ -339,7 +343,7 @@ class Orchestrator:
             "analysis_stats": analysis_pipeline.stats,
             "cpu_usage": psutil.cpu_percent(),
             "memory_usage": psutil.virtual_memory().percent,
-            "gpu_available": torch.cuda.is_available(),
+            "gpu_available": gpu_available,
             "uptime_seconds": (
                 (datetime.utcnow() - self._start_time).total_seconds()
                 if self._start_time else 0
