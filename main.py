@@ -6,6 +6,7 @@ import logging
 import os
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
+from fastapi.responses import PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
@@ -128,6 +129,139 @@ async def readiness_check():
     }
     ready = all(checks.values())
     return {"ready": ready, "checks": checks}
+
+
+@app.get("/metrics", response_class=PlainTextResponse)
+async def prometheus_metrics():
+    """Prometheus-compatible metrics endpoint.
+
+    Exposes pipeline metrics in Prometheus exposition format.
+    Scrape this endpoint with Prometheus or compatible collector.
+    """
+    lines = []
+
+    def gauge(name, value, help_text="", labels=None):
+        if help_text:
+            lines.append(f"# HELP {name} {help_text}")
+            lines.append(f"# TYPE {name} gauge")
+        label_str = ""
+        if labels:
+            label_str = "{" + ",".join(f'{k}="{v}"' for k, v in labels.items()) + "}"
+        lines.append(f"{name}{label_str} {value}")
+
+    def counter(name, value, help_text="", labels=None):
+        if help_text:
+            lines.append(f"# HELP {name} {help_text}")
+            lines.append(f"# TYPE {name} counter")
+        label_str = ""
+        if labels:
+            label_str = "{" + ",".join(f'{k}="{v}"' for k, v in labels.items()) + "}"
+        lines.append(f"{name}{label_str} {value}")
+
+    try:
+        from microservices.orchestrator import orchestrator
+        status = orchestrator.get_full_status()
+
+        # Pipeline status
+        pipeline = status.get("pipeline", {})
+        gauge(
+            "klip_pipeline_running",
+            1 if pipeline.get("is_running") else 0,
+            "Whether the pipeline is currently running",
+        )
+
+        # Event bus metrics
+        bus_metrics = status.get("event_bus", {})
+        counter(
+            "klip_events_published_total",
+            bus_metrics.get("events_published", 0),
+            "Total events published to the event bus",
+        )
+        counter(
+            "klip_events_dispatched_total",
+            bus_metrics.get("events_dispatched", 0),
+            "Total events dispatched to handlers",
+        )
+        counter(
+            "klip_events_failed_total",
+            bus_metrics.get("events_failed", 0),
+            "Total event handler failures",
+        )
+        counter(
+            "klip_events_dlq_total",
+            bus_metrics.get("events_dlq", 0),
+            "Total events sent to dead-letter queue",
+        )
+
+        # Event detector metrics
+        det = status.get("event_detector", {})
+        counter(
+            "klip_detector_events_processed_total",
+            det.get("events_processed", 0),
+            "Total events processed by event detector",
+        )
+        gauge(
+            "klip_detector_current_score",
+            det.get("current_score", 0),
+            "Current composite highlight score",
+        )
+        gauge(
+            "klip_detector_high_scores_total",
+            det.get("high_scores", 0),
+            "Total number of high-score evaluations",
+        )
+        gauge(
+            "klip_detector_active_streams",
+            det.get("active_streams", 0),
+            "Number of active streams being tracked",
+        )
+
+        # Decision engine metrics
+        de = status.get("decision_engine", {})
+        counter(
+            "klip_decision_clips_created_total",
+            de.get("clips_created", 0),
+            "Total clips created",
+        )
+        counter(
+            "klip_decision_clips_rejected_total",
+            de.get("clips_rejected", 0),
+            "Total clip candidates rejected",
+        )
+        counter(
+            "klip_decision_confirmation_rejects_total",
+            de.get("confirmation_rejects", 0),
+            "Total rejections due to confirmation window",
+        )
+        conf = de.get("confirmation_window", {})
+        gauge(
+            "klip_decision_confirmation_pass_count",
+            conf.get("pass_count", 0),
+            "Current confirmation window pass count",
+        )
+        gauge(
+            "klip_decision_confirmation_avg_score",
+            conf.get("avg_score", 0),
+            "Average score in confirmation window",
+        )
+
+        # Per-service status
+        for svc_name in [
+            "audio_analysis", "chat_analysis", "video_analysis",
+            "clip_generator", "transcription", "uploader",
+        ]:
+            svc = status.get(svc_name)
+            if svc and isinstance(svc, dict):
+                gauge(
+                    f"klip_{svc_name}_available",
+                    1,
+                    labels={"service": svc_name},
+                )
+
+    except Exception as e:
+        lines.append(f"# ERROR: Failed to collect metrics: {e}")
+
+    return "\n".join(lines) + "\n"
 
 
 if __name__ == "__main__":

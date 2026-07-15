@@ -67,7 +67,7 @@ class TestScoringEngine:
 
     def test_combo_boost_capped_at_1(self):
         engine = ScoringEngine()
-        for signal in ScoringEngine.WEIGHTS:
+        for signal in engine.WEIGHTS:
             engine.update_signal(signal, 1.0)
         score = engine.compute_score()
         assert score.composite_score <= 1.0
@@ -96,7 +96,8 @@ class TestScoringEngine:
 
     def test_all_weights_sum(self):
         """All weights should sum to ~1.0."""
-        total = sum(ScoringEngine.WEIGHTS.values())
+        engine = ScoringEngine()
+        total = sum(engine.WEIGHTS.values())
         assert 0.95 <= total <= 1.05
 
     def test_donation_signal(self):
@@ -263,6 +264,8 @@ class TestDecisionEngine:
             clip_threshold=0.5,
             cooldown_seconds=0,
             min_evidence_signals=1,
+            confirmation_window=1,
+            confirmation_required=1,
         )
         score = HighlightScore(
             composite_score=0.8,
@@ -312,6 +315,8 @@ class TestDecisionEngine:
             clip_threshold=0.3,
             cooldown_seconds=0,
             min_evidence_signals=2,
+            confirmation_window=1,
+            confirmation_required=1,
         )
         # With 4 active signals, required_evidence = max(1, 2-1) = 1
         score = HighlightScore(
@@ -328,6 +333,8 @@ class TestDecisionEngine:
             clip_threshold=0.5,
             cooldown_seconds=0,
             min_evidence_signals=1,
+            confirmation_window=1,
+            confirmation_required=1,
         )
         # Score 0.55 with 1.3x multiplier → adjusted threshold 0.65 → REJECT
         score = HighlightScore(
@@ -338,7 +345,7 @@ class TestDecisionEngine:
         result = engine.evaluate(score, threshold_multiplier=1.3)
         assert result.decision == "REJECT"
 
-        # Score 0.55 with 0.6x multiplier (PEAK) → adjusted 0.30 → APPROVE
+        # Score 0.55 with 0.6x multiplier (PEAK) → adjusted 0.30, but floored at 0.35 → 0.55 > 0.35 → APPROVE
         result = engine.evaluate(score, threshold_multiplier=0.6)
         assert result.decision == "CREATE_CLIP"
 

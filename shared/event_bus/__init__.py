@@ -223,7 +223,7 @@ class EventBus:
                 self._dlq.append((event, str(e)))
 
 
-# ─── Singleton Instance ───────────────────────────────────────
+# ─── Singleton Instance & Factory ─────────────────────────────
 
 _event_bus: Optional[EventBus] = None
 
@@ -236,8 +236,34 @@ def get_event_bus() -> EventBus:
     return _event_bus
 
 
-async def init_event_bus() -> EventBus:
-    """Initialize and start the event bus."""
-    bus = get_event_bus()
+def set_event_bus(bus) -> None:
+    """Replace the global event bus (used by factory/tests)."""
+    global _event_bus
+    _event_bus = bus
+
+
+async def init_event_bus():
+    """Initialize and start the event bus.
+
+    Chooses backend based on config:
+      - 'memory' (default): in-memory EventBus
+      - 'redis': RedisEventBus backed by Redis Streams
+    """
+    try:
+        from config import get_settings
+        settings = get_settings()
+        backend = settings.event_bus_backend
+    except Exception:
+        backend = "memory"
+
+    if backend == "redis":
+        from shared.event_bus.redis_bus import RedisEventBus
+        bus = RedisEventBus(redis_url=settings.redis_url)
+        logger.info("Using Redis Streams event bus: %s", settings.redis_url)
+    else:
+        bus = EventBus()
+        logger.info("Using in-memory event bus")
+
+    set_event_bus(bus)
     await bus.start()
     return bus

@@ -20,7 +20,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from collections import defaultdict
+from collections import defaultdict, deque
 from datetime import datetime
 from typing import Any, Callable, Coroutine, Optional
 
@@ -75,6 +75,12 @@ class RedisEventBus:
 
         # Background tasks
         self._consumer_task: Optional[asyncio.Task] = None
+
+        # Local caches for sync API parity with in-memory EventBus
+        self._history: dict[str, deque] = defaultdict(
+            lambda: deque(maxlen=history_size)
+        )
+        self._dlq: deque = deque(maxlen=100)
 
     async def start(self):
         """Connect to Redis and start the consumer loop."""
@@ -136,6 +142,9 @@ class RedisEventBus:
                 approximate=True,
             )
             self._metrics["events_published"] += 1
+
+            # Mirror to local history cache for sync get_history()
+            self._history[event.event_type.value].append(event)
 
         except Exception as e:
             logger.error("Redis publish error: %s", e)
@@ -280,6 +289,7 @@ class RedisEventBus:
                             },
                         )
                         self._metrics["events_dlq"] += 1
+                        self._dlq.append((event, str(e)))
                     except Exception:
                         pass
 
@@ -304,14 +314,35 @@ class RedisEventBus:
             if "BUSYGROUP" not in str(e):
                 logger.debug("Group may already exist: %s", e)
 
-    # ─── History ──────────────────────────────────────────────
+    # ─── History (sync API, backed by local cache) ──────────────
 
-    async def get_history(
+    def get_history(
         self,
         event_type: str,
         last_n: int = 50,
     ) -> list[SystemEvent]:
-        """Get recent events from Redis Stream."""
+        """Get recent events from local cache (sync API, matches EventBus)."""
+        history = self._history.get(event_type, deque())
+        return list(history)[-last_n:]
+
+    def get_all_recent(self, last_n: int = 100) -> list[SystemEvent]:
+        """Get all recent events across all types from local cache."""
+        all_events = []
+        for history in self._history.values():
+            all_events.extend(list(history))
+        all_events.sort(key=lambda e: e.timestamp, reverse=True)
+        return all_events[:last_n]
+
+    @property
+    def dead_letter_queue(self) -> list:
+        return list(self._dlq)
+
+    async def fetch_history(
+        self,
+        event_type: str,
+        last_n: int = 50,
+    ) -> list[SystemEvent]:
+        """Fetch history directly from Redis (async, bypasses local cache)."""
         if not self._redis:
             return []
 

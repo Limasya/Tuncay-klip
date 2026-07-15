@@ -52,6 +52,7 @@ from microservices.ai_generator.service import AIGeneratorMicroservice
 from microservices.uploader.service import UploaderMicroservice
 from microservices.thumbnail.service import ThumbnailMicroservice
 from microservices.notification.service import NotificationService
+from config import get_settings
 
 logger = logging.getLogger("orchestrator")
 
@@ -99,6 +100,7 @@ class PipelineOrchestrator:
         """Initialize event bus and lightweight services.
         Video analysis is initialized lazily (downloads ML models)."""
         logger.info("Initializing pipeline orchestrator...")
+        settings = get_settings()
 
         # Start event bus
         self.event_bus = await init_event_bus()
@@ -106,8 +108,22 @@ class PipelineOrchestrator:
         # Create lightweight services
         self.audio_analysis = AudioAnalysisService(self.event_bus)
         self.chat_analysis = ChatAnalysisService(self.event_bus)
-        self.event_detector = EventDetectorService(self.event_bus)
-        self.decision_engine = DecisionEngineService(self.event_bus)
+        self.event_detector = EventDetectorService(
+            event_bus=self.event_bus,
+            score_threshold=settings.emotion_threshold,
+            score_interval=settings.decision_score_interval,
+            decay_halflife=settings.decision_decay_halflife,
+        )
+        self.decision_engine = DecisionEngineService(
+            event_bus=self.event_bus,
+            clip_threshold=settings.decision_clip_threshold,
+            cooldown_seconds=settings.decision_cooldown_seconds,
+            min_evidence_signals=settings.decision_min_evidence,
+            confirmation_window=settings.decision_confirmation_window,
+            confirmation_required=settings.decision_confirmation_required,
+            threshold_floor=settings.decision_threshold_floor,
+            evidence_threshold=settings.decision_evidence_threshold,
+        )
 
         # Subscribe to clip creation for logging
         self.event_bus.subscribe(

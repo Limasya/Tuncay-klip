@@ -25,6 +25,7 @@ import time
 from collections import deque
 from typing import Optional
 
+
 import numpy as np
 
 from shared.event_bus import EventBus, get_event_bus
@@ -39,9 +40,16 @@ class ScoringEngine:
     """
     Computes composite highlight score from multiple signals.
     Uses temporal decay — recent events matter more.
+
+    Weights are loaded from config.py at init time (normalized to sum=1.0).
+    To add a new signal:
+      1. Add `weight_<signal_name>` to config.py Settings
+      2. Subscribe to the relevant event in EventDetectorService
+      3. Call self.scoring.update_signal("signal_name", value) in the handler
     """
 
-    WEIGHTS = {
+    # Fallback defaults — used only if config loading fails
+    DEFAULT_WEIGHTS = {
         "audio_spike": 0.20,
         "chat_velocity": 0.18,
         "emotion_intensity": 0.15,
@@ -55,13 +63,45 @@ class ScoringEngine:
         "donation": 0.05,
     }
 
-    DECAY_HALFLIFE = 5.0  # seconds
-
-    def __init__(self):
+    def __init__(self, weights: Optional[dict[str, float]] = None,
+                 decay_halflife: float = 5.0):
+        self.WEIGHTS = self._load_weights(weights)
+        self.DECAY_HALFLIFE = decay_halflife
         self._signal_history: dict[str, deque] = {
             signal: deque(maxlen=120)
             for signal in self.WEIGHTS
         }
+
+    @classmethod
+    def _load_weights(cls, override: Optional[dict[str, float]]) -> dict[str, float]:
+        """Load weights from config or overrides, normalize to sum=1.0."""
+        if override:
+            raw = override
+        else:
+            try:
+                from config import get_settings
+                s = get_settings()
+                raw = {
+                    "audio_spike": s.weight_audio_spike,
+                    "chat_velocity": s.weight_chat_velocity,
+                    "emotion_intensity": s.weight_emotion_intensity,
+                    "emotion_change": s.weight_emotion_change,
+                    "pose_gesture": s.weight_pose_gesture,
+                    "pose_motion": s.weight_pose_motion,
+                    "chat_sentiment": s.weight_chat_sentiment,
+                    "viewer_delta": s.weight_viewer_delta,
+                    "ocr_keyword": s.weight_ocr_keyword,
+                    "speech_content": s.weight_speech_content,
+                    "donation": s.weight_donation,
+                }
+            except Exception:
+                raw = dict(cls.DEFAULT_WEIGHTS)
+
+        # Normalize to sum=1.0
+        total = sum(raw.values())
+        if total <= 0:
+            return dict(cls.DEFAULT_WEIGHTS)
+        return {k: v / total for k, v in raw.items()}
 
     def update_signal(self, signal_name: str, value: float):
         if signal_name in self._signal_history:
@@ -148,6 +188,9 @@ class StreamStateMachine:
         StreamState.ENDING: 1.3,
     }
 
+    # Absolute minimum threshold — state multipliers never push below this
+    THRESHOLD_FLOOR = 0.35
+
     # Time in current state before considering auto-transition
     WARMING_UP_DURATION = 120.0      # 2 min warm-up after start
     COOLING_DOWN_DURATION = 30.0     # 30s cooling after energy drop
@@ -224,35 +267,75 @@ class StreamStateMachine:
     def get_threshold_multiplier(self) -> float:
         return self.THRESHOLD_ADJUSTMENTS.get(self.state, 1.0)
 
+    def get_adjusted_threshold(self, base_threshold: float) -> float:
+        """Return base_threshold * multiplier, floored at THRESHOLD_FLOOR."""
+        adjusted = base_threshold * self.get_threshold_multiplier()
+        return max(adjusted, self.THRESHOLD_FLOOR)
+
 
 class EventDetectorService:
     """
     Main event detector service.
     Subscribes to all analysis events and produces highlight scores.
+
+    Multi-stream aware: each stream_id gets its own ScoringEngine and
+    StreamStateMachine instance. Events without stream_id use "default".
     """
+
+    DEFAULT_STREAM = "default"
 
     def __init__(
         self,
         event_bus: Optional[EventBus] = None,
         score_threshold: float = 0.5,
+        score_interval: float = 2.0,
+        decay_halflife: float = 5.0,
     ):
         self.event_bus = event_bus or get_event_bus()
-        self.scoring = ScoringEngine()
-        self.state_machine = StreamStateMachine()
         self.score_threshold = score_threshold
+        self._score_interval = score_interval
+        self._decay_halflife = decay_halflife
 
-        self._last_score_time = 0.0
-        self._score_interval = 2.0  # Compute score every 2 seconds
+        # Per-stream state
+        self._stream_scoring: dict[str, ScoringEngine] = {}
+        self._stream_state: dict[str, StreamStateMachine] = {}
+        self._stream_last_score_time: dict[str, float] = {}
 
         self._metrics = {
             "events_processed": 0,
             "high_scores": 0,
             "current_score": 0.0,
             "stream_state": StreamState.OFFLINE.value,
+            "active_streams": 0,
         }
 
         # Subscribe to all analysis events
         self._subscribe_all()
+
+    def _get_stream_scoring(self, stream_id: str) -> ScoringEngine:
+        """Get or create ScoringEngine for a stream."""
+        if stream_id not in self._stream_scoring:
+            self._stream_scoring[stream_id] = ScoringEngine(
+                decay_halflife=self._decay_halflife,
+            )
+            self._stream_state[stream_id] = StreamStateMachine()
+            self._stream_last_score_time[stream_id] = 0.0
+            self._metrics["active_streams"] = len(self._stream_scoring)
+        return self._stream_scoring[stream_id]
+
+    def _get_stream_state(self, stream_id: str) -> StreamStateMachine:
+        """Get or create StreamStateMachine for a stream."""
+        self._get_stream_scoring(stream_id)  # ensures both exist
+        return self._stream_state[stream_id]
+
+    # Backward-compatible properties (use "default" stream)
+    @property
+    def scoring(self) -> ScoringEngine:
+        return self._get_stream_scoring(self.DEFAULT_STREAM)
+
+    @property
+    def state_machine(self) -> StreamStateMachine:
+        return self._get_stream_state(self.DEFAULT_STREAM)
 
     def _subscribe_all(self):
         """Subscribe to all relevant event types."""
@@ -274,18 +357,24 @@ class EventDetectorService:
             self.event_bus.subscribe(event_type, handler)
 
     async def _on_audio_spike(self, event: SystemEvent):
+        stream_id = event.stream_id or self.DEFAULT_STREAM
+        scoring = self._get_stream_scoring(stream_id)
         magnitude = event.payload.get("peak_magnitude", 0.5)
-        self.scoring.update_signal("audio_spike", min(magnitude, 1.0))
+        scoring.update_signal("audio_spike", min(magnitude, 1.0))
         self._metrics["events_processed"] += 1
-        await self._maybe_emit_score()
+        await self._maybe_emit_score(stream_id)
 
     async def _on_audio_features(self, event: SystemEvent):
+        stream_id = event.stream_id or self.DEFAULT_STREAM
+        scoring = self._get_stream_scoring(stream_id)
         spike_mag = event.payload.get("spike_magnitude", 0.0)
         if spike_mag > 0.3:
-            self.scoring.update_signal("audio_spike", spike_mag)
+            scoring.update_signal("audio_spike", spike_mag)
         self._metrics["events_processed"] += 1
 
     async def _on_emotion(self, event: SystemEvent):
+        stream_id = event.stream_id or self.DEFAULT_STREAM
+        scoring = self._get_stream_scoring(stream_id)
         emotions = event.payload.get("emotions", [])
         highlight_emotions = {"happy", "surprise", "fear", "angry"}
         max_intensity = 0.0
@@ -299,11 +388,13 @@ class EventDetectorService:
                 intensity = conf * 0.5
             max_intensity = max(max_intensity, intensity)
 
-        self.scoring.update_signal("emotion_intensity", min(max_intensity, 1.0))
+        scoring.update_signal("emotion_intensity", min(max_intensity, 1.0))
         self._metrics["events_processed"] += 1
-        await self._maybe_emit_score()
+        await self._maybe_emit_score(stream_id)
 
     async def _on_pose(self, event: SystemEvent):
+        stream_id = event.stream_id or self.DEFAULT_STREAM
+        scoring = self._get_stream_scoring(stream_id)
         poses = event.payload.get("poses", [])
         max_gesture = 0.0
         max_motion = 0.0
@@ -315,69 +406,86 @@ class EventDetectorService:
             motion = p.get("motion_score", 0.0)
             max_motion = max(max_motion, min(motion * 5, 1.0))
 
-        self.scoring.update_signal("pose_gesture", min(max_gesture, 1.0))
-        self.scoring.update_signal("pose_motion", min(max_motion, 1.0))
+        scoring.update_signal("pose_gesture", min(max_gesture, 1.0))
+        scoring.update_signal("pose_motion", min(max_motion, 1.0))
         self._metrics["events_processed"] += 1
-        await self._maybe_emit_score()
+        await self._maybe_emit_score(stream_id)
 
     async def _on_face(self, event: SystemEvent):
         self._metrics["events_processed"] += 1
 
     async def _on_chat_spike(self, event: SystemEvent):
+        stream_id = event.stream_id or self.DEFAULT_STREAM
+        scoring = self._get_stream_scoring(stream_id)
         ratio = event.payload.get("spike_ratio", 1.0)
         normalized = min(ratio / 10.0, 1.0)
-        self.scoring.update_signal("chat_velocity", normalized)
+        scoring.update_signal("chat_velocity", normalized)
         self._metrics["events_processed"] += 1
-        await self._maybe_emit_score()
+        await self._maybe_emit_score(stream_id)
 
     async def _on_chat_sentiment(self, event: SystemEvent):
+        stream_id = event.stream_id or self.DEFAULT_STREAM
+        scoring = self._get_stream_scoring(stream_id)
         sentiment = event.payload.get("sentiment", {})
         score = abs(sentiment.get("score", 0.0))
-        self.scoring.update_signal("chat_sentiment", min(score, 1.0))
+        scoring.update_signal("chat_sentiment", min(score, 1.0))
         self._metrics["events_processed"] += 1
 
     async def _on_text(self, event: SystemEvent):
+        stream_id = event.stream_id or self.DEFAULT_STREAM
+        scoring = self._get_stream_scoring(stream_id)
         if event.payload.get("is_highlight_keyword"):
-            self.scoring.update_signal("ocr_keyword", 0.8)
+            scoring.update_signal("ocr_keyword", 0.8)
         self._metrics["events_processed"] += 1
 
     async def _on_viewer(self, event: SystemEvent):
+        stream_id = event.stream_id or self.DEFAULT_STREAM
+        scoring = self._get_stream_scoring(stream_id)
         delta = event.payload.get("delta", 0)
         normalized = min(abs(delta) / 100.0, 1.0)
-        self.scoring.update_signal("viewer_delta", normalized)
+        scoring.update_signal("viewer_delta", normalized)
         self._metrics["events_processed"] += 1
 
     async def _on_stream_start(self, event: SystemEvent):
-        self.state_machine.transition(StreamState.STARTING)
-        self._metrics["stream_state"] = self.state_machine.state.value
+        stream_id = event.stream_id or self.DEFAULT_STREAM
+        sm = self._get_stream_state(stream_id)
+        sm.transition(StreamState.STARTING)
+        self._metrics["stream_state"] = sm.state.value
 
     async def _on_stream_end(self, event: SystemEvent):
-        self.state_machine.transition(StreamState.OFFLINE)
-        self._metrics["stream_state"] = self.state_machine.state.value
+        stream_id = event.stream_id or self.DEFAULT_STREAM
+        sm = self._get_stream_state(stream_id)
+        sm.transition(StreamState.OFFLINE)
+        self._metrics["stream_state"] = sm.state.value
 
     async def _on_donation(self, event: SystemEvent):
         """Donation = strong highlight signal."""
+        stream_id = event.stream_id or self.DEFAULT_STREAM
+        scoring = self._get_stream_scoring(stream_id)
         amount = event.payload.get("amount", 0.0)
         # Scale: $1 = 0.3, $5 = 0.6, $10+ = 1.0
         value = min(amount / 10.0, 1.0) if amount > 0 else 0.5
-        self.scoring.update_signal("donation", max(value, 0.5))
+        scoring.update_signal("donation", max(value, 0.5))
         self._metrics["events_processed"] += 1
-        await self._maybe_emit_score()
+        await self._maybe_emit_score(stream_id)
 
-    async def _maybe_emit_score(self):
+    async def _maybe_emit_score(self, stream_id: str = "default"):
         """Emit score if enough time has passed since last emission."""
         now = time.time()
-        if now - self._last_score_time < self._score_interval:
+        last_time = self._stream_last_score_time.get(stream_id, 0.0)
+        if now - last_time < self._score_interval:
             return
 
-        self._last_score_time = now
-        score = self.scoring.compute_score()
+        self._stream_last_score_time[stream_id] = now
+        scoring = self._get_stream_scoring(stream_id)
+        sm = self._get_stream_state(stream_id)
+        score = scoring.compute_score()
 
         # Update state using full state machine logic
-        self.state_machine.update_from_score(score.composite_score)
+        sm.update_from_score(score.composite_score)
 
         self._metrics["current_score"] = score.composite_score
-        self._metrics["stream_state"] = self.state_machine.state.value
+        self._metrics["stream_state"] = sm.state.value
 
         if score.composite_score >= self.score_threshold:
             self._metrics["high_scores"] += 1
@@ -387,20 +495,25 @@ class EventDetectorService:
             EventType.EVENT_SCORED,
             {
                 "score": score.model_dump(mode="json"),
-                "stream_state": self.state_machine.state.value,
-                "threshold_multiplier": self.state_machine.get_threshold_multiplier(),
+                "stream_state": sm.state.value,
+                "threshold_multiplier": sm.get_threshold_multiplier(),
             },
             source_service="event-detector",
+            stream_id=stream_id,
         )
 
-    def get_latest_score(self) -> HighlightScore:
-        return self.scoring.compute_score()
+    def get_latest_score(self, stream_id: str = "default") -> HighlightScore:
+        scoring = self._get_stream_scoring(stream_id)
+        return scoring.compute_score()
 
     def get_status(self) -> dict:
-        score = self.scoring.compute_score()
+        scoring = self._get_stream_scoring(self.DEFAULT_STREAM)
+        sm = self._get_stream_state(self.DEFAULT_STREAM)
+        score = scoring.compute_score()
         return {
             **self._metrics,
             "current_score": score.composite_score,
             "breakdown": score.breakdown,
             "active_signals": score.active_signals,
+            "streams": list(self._stream_scoring.keys()),
         }
