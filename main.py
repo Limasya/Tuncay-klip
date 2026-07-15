@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 
 from api.routers import clips, system, preferences
+from api.routers import pipeline as pipeline_router
 from services.database import init_db
 from config import get_settings
 
@@ -30,10 +31,14 @@ async def lifespan(app: FastAPI):
     await init_db()
     logger.info("Klip Yakalama Sistemi hazır!")
     yield
-    # Cleanup
-    from services.orchestrator import orchestrator
-    if orchestrator.is_monitoring:
-        await orchestrator.stop()
+    # Cleanup — old orchestrator
+    from services.orchestrator import orchestrator as old_orch
+    if old_orch.is_monitoring:
+        await old_orch.stop()
+    # Cleanup — new pipeline orchestrator
+    from microservices.orchestrator import orchestrator as pipe_orch
+    if pipe_orch._is_running:
+        await pipe_orch.stop()
     logger.info("Sistem kapatıldı.")
 
 
@@ -63,6 +68,7 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 app.include_router(clips.router)
 app.include_router(system.router)
 app.include_router(preferences.router)
+app.include_router(pipeline_router.router)
 
 
 @app.get("/", response_class=HTMLResponse)
