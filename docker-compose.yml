@@ -1,0 +1,101 @@
+version: "3.9"
+
+services:
+  # Ana uygulama
+  app:
+    build: .
+    container_name: klip-app
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    volumes:
+      - klip-data:/app/data
+      - klip-models:/app/models
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    networks:
+      - klip-network
+
+  # Redis - mesaj kuyruğu ve cache
+  redis:
+    image: redis:7-alpine
+    container_name: klip-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+    networks:
+      - klip-network
+
+  # PostgreSQL - veritabanı
+  postgres:
+    image: postgres:16-alpine
+    container_name: klip-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: klip_db
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U user -d klip_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - klip-network
+
+  # Celery Worker - arka plan görevleri (altyazı, export, vb.)
+  worker:
+    build: .
+    container_name: klip-worker
+    command: celery -A main worker --loglevel=info --concurrency=2
+    env_file:
+      - .env
+    volumes:
+      - klip-data:/app/data
+      - klip-models:/app/models
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    networks:
+      - klip-network
+
+volumes:
+  klip-data:
+  klip-models:
+  redis-data:
+  postgres-data:
+
+networks:
+  klip-network:
+    driver: bridge

@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Klip Yakalama Sistemi - Kontrol Paneli</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', system-ui, sans-serif; background: #0f0f23; color: #e0e0e0; }
+        .header { background: linear-gradient(135deg, #1a1a3e, #2d1b69); padding: 20px 30px; display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #533483; }
+        .header h1 { font-size: 1.5rem; color: #fff; }
+        .header h1 span { color: #00d4ff; }
+        .status-badge { padding: 6px 16px; border-radius: 20px; font-size: 0.85rem; font-weight: 600; }
+        .status-online { background: #00c853; color: #000; }
+        .status-offline { background: #ff5252; color: #fff; }
+        .status-idle { background: #ffd740; color: #000; }
+        .container { max-width: 1400px; margin: 0 auto; padding: 20px; }
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; margin-bottom: 20px; }
+        .card { background: #1a1a2e; border-radius: 12px; padding: 20px; border: 1px solid #2a2a4a; }
+        .card h3 { color: #00d4ff; margin-bottom: 15px; font-size: 1rem; text-transform: uppercase; letter-spacing: 1px; }
+        .stat { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #2a2a4a; }
+        .stat:last-child { border-bottom: none; }
+        .stat-label { color: #888; }
+        .stat-value { font-weight: 600; color: #fff; }
+        .btn { padding: 10px 24px; border: none; border-radius: 8px; cursor: pointer; font-weight: 600; font-size: 0.9rem; transition: all 0.2s; margin: 5px; }
+        .btn-primary { background: #00d4ff; color: #000; }
+        .btn-primary:hover { background: #00b8d4; }
+        .btn-danger { background: #ff5252; color: #fff; }
+        .btn-danger:hover { background: #d32f2f; }
+        .btn-secondary { background: #333; color: #fff; border: 1px solid #555; }
+        .controls { display: flex; flex-wrap: wrap; gap: 10px; margin: 20px 0; }
+        .clips-table { width: 100%; border-collapse: collapse; }
+        .clips-table th { text-align: left; padding: 12px; background: #1a1a3e; color: #00d4ff; font-size: 0.85rem; text-transform: uppercase; }
+        .clips-table td { padding: 10px 12px; border-bottom: 1px solid #2a2a4a; }
+        .clips-table tr:hover { background: #1a1a3e; }
+        .tag { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; margin: 2px; }
+        .tag-emotion { background: #7c4dff33; color: #b388ff; }
+        .tag-motion { background: #00bcd433; color: #80deea; }
+        .tag-audio { background: #ff980033; color: #ffcc80; }
+        .category-badge { padding: 4px 10px; border-radius: 12px; font-size: 0.8rem; font-weight: 600; }
+        .cat-exciting { background: #ff6d00; color: #fff; }
+        .cat-funny { background: #ffd740; color: #000; }
+        .cat-rage { background: #ff1744; color: #fff; }
+        .cat-victory { background: #00e676; color: #000; }
+        .cat-emotional { background: #7c4dff; color: #fff; }
+        .cat-skill { background: #00b0ff; color: #fff; }
+        .cat-fail { background: #ff9100; color: #000; }
+        .cat-other { background: #555; color: #fff; }
+        .section-title { font-size: 1.2rem; margin: 30px 0 15px; color: #fff; }
+        .emotion-bar { height: 6px; border-radius: 3px; background: #333; margin: 4px 0; }
+        .emotion-fill { height: 100%; border-radius: 3px; transition: width 0.3s; }
+        .preferences-form label { display: block; margin: 10px 0 4px; color: #888; font-size: 0.85rem; }
+        .preferences-form input, .preferences-form select { width: 100%; padding: 8px 12px; background: #0f0f23; border: 1px solid #2a2a4a; border-radius: 6px; color: #fff; }
+        .toast { position: fixed; bottom: 20px; right: 20px; padding: 12px 24px; border-radius: 8px; color: #fff; font-weight: 600; z-index: 1000; animation: slideIn 0.3s ease; }
+        .toast-success { background: #00c853; }
+        .toast-error { background: #ff5252; }
+        @keyframes slideIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+        .pulse { animation: pulse 2s infinite; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>Klip Yakalama <span>Sistemi</span></h1>
+        <div>
+            <span id="statusBadge" class="status-badge status-offline">Bekliyor</span>
+        </div>
+    </div>
+
+    <div class="container">
+        <!-- Controls -->
+        <div class="controls">
+            <button class="btn btn-primary" onclick="startSystem()">Sistemi Baslat</button>
+            <button class="btn btn-danger" onclick="stopSystem()">Sistemi Durdur</button>
+            <button class="btn btn-secondary" onclick="refreshStatus()">Durumu Guncelle</button>
+            <button class="btn btn-secondary" onclick="testClip()">Test Klibi</button>
+            <button class="btn btn-secondary" onclick="loadClips()">Klipleri Yukle</button>
+        </div>
+
+        <!-- Status Cards -->
+        <div class="grid">
+            <div class="card">
+                <h3>Sistem Durumu</h3>
+                <div class="stat"><span class="stat-label">Izleme</span><span class="stat-value" id="isMonitoring">-</span></div>
+                <div class="stat"><span class="stat-label">Hedef Kanal</span><span class="stat-value" id="targetChannel">-</span></div>
+                <div class="stat"><span class="stat-label">Yayin Aktif</span><span class="stat-value" id="streamActive">-</span></div>
+                <div class="stat"><span class="stat-label">Bugun Klip</span><span class="stat-value" id="clipsToday">0</span></div>
+            </div>
+            <div class="card">
+                <h3>Kaynak Kullanimi</h3>
+                <div class="stat"><span class="stat-label">CPU</span><span class="stat-value" id="cpuUsage">-</span></div>
+                <div class="stat"><span class="stat-label">RAM</span><span class="stat-value" id="memUsage">-</span></div>
+                <div class="stat"><span class="stat-label">GPU</span><span class="stat-value" id="gpuStatus">-</span></div>
+                <div class="stat"><span class="stat-label">Buffer (MB)</span><span class="stat-value" id="bufferUsage">-</span></div>
+            </div>
+            <div class="card">
+                <h3>Yayin Bilgisi</h3>
+                <div class="stat"><span class="stat-label">Baslik</span><span class="stat-value" id="streamTitle">-</span></div>
+                <div class="stat"><span class="stat-label">Kategori</span><span class="stat-value" id="streamCategory">-</span></div>
+                <div class="stat"><span class="stat-label">Izleyici</span><span class="stat-value" id="viewerCount">-</span></div>
+            </div>
+            <div class="card">
+                <h3>Analiz Istatistikleri</h3>
+                <div class="stat"><span class="stat-label">Islenen Frame</span><span class="stat-value" id="framesProcessed">0</span></div>
+                <div class="stat"><span class="stat-label">Tetiklenen Olay</span><span class="stat-value" id="eventsTriggered">0</span></div>
+                <div class="stat"><span class="stat-label">Analiz FPS</span><span class="stat-value" id="analysisFps">-</span></div>
+            </div>
+        </div>
+
+        <!-- Clips Section -->
+        <h2 class="section-title">Son Klipler</h2>
+        <div class="card" style="overflow-x: auto;">
+            <table class="clips-table">
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Baslik</th>
+                        <th>Kategori</th>
+                        <th>Duygu</th>
+                        <th>Sure</th>
+                        <th>Izleyici</th>
+                        <th>Etiketler</th>
+                        <th>Durum</th>
+                        <th>Islem</th>
+                    </tr>
+                </thead>
+                <tbody id="clipsBody">
+                    <tr><td colspan="9" style="text-align:center;color:#888;">Klip yuklenmedi</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Preferences Section -->
+        <h2 class="section-title">Kullanici Tercihleri</h2>
+        <div class="grid">
+            <div class="card preferences-form">
+                <h3>Analiz Ayarlari</h3>
+                <label>Duygu Hassasiyeti (0-1)</label>
+                <input type="number" id="prefEmotion" min="0" max="1" step="0.1" value="0.7">
+                <label>Hareket Hassasiyeti (0-1)</label>
+                <input type="number" id="prefMotion" min="0" max="1" step="0.1" value="0.6">
+                <label>Ses Tetikleyici</label>
+                <select id="prefAudio"><option value="true">Aktif</option><option value="false">Pasif</option></select>
+                <label>Chat Tetikleyici</label>
+                <select id="prefChat"><option value="true">Aktif</option><option value="false">Pasif</option></select>
+            </div>
+            <div class="card preferences-form">
+                <h3>Klip Ayarlari</h3>
+                <label>Min Sure (sn)</label>
+                <input type="number" id="prefMinDur" value="10">
+                <label>Max Sure (sn)</label>
+                <input type="number" id="prefMaxDur" value="60">
+                <label>Otomatik Altyazi</label>
+                <select id="prefSubtitle"><option value="true">Aktif</option><option value="false">Pasif</option></select>
+                <label>Altyazi Dili</label>
+                <select id="prefLang"><option value="tr">Turkce</option><option value="en">Ingilizce</option></select>
+            </div>
+            <div class="card preferences-form">
+                <h3>Disa Aktarma</h3>
+                <label>Format</label>
+                <select id="prefFormat"><option value="mp4">MP4</option><option value="webm">WebM</option></select>
+                <label>Cozunurluk</label>
+                <select id="prefRes"><option value="1080p">1080p</option><option value="720p">720p</option><option value="portrait">Portrait (9:16)</option></select>
+                <label>Filigran</label>
+                <select id="prefWatermark"><option value="false">Kapali</option><option value="true">Acik</option></select>
+                <label>Filigran Metni</label>
+                <input type="text" id="prefWatermarkText" placeholder="@kanal_adi">
+                <br><br>
+                <button class="btn btn-primary" onclick="savePreferences()">Tercihleri Kaydet</button>
+                <button class="btn btn-secondary" onclick="loadPreferences()">Yenile</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API = '';
+
+        async function apiCall(path, method = 'GET', body = null) {
+            const opts = { method, headers: { 'Content-Type': 'application/json' } };
+            if (body) opts.body = JSON.stringify(body);
+            const res = await fetch(API + path, opts);
+            return res.json();
+        }
+
+        function showToast(msg, type = 'success') {
+            const t = document.createElement('div');
+            t.className = `toast toast-${type}`;
+            t.textContent = msg;
+            document.body.appendChild(t);
+            setTimeout(() => t.remove(), 3000);
+        }
+
+        async function refreshStatus() {
+            try {
+                const s = await apiCall('/api/system/status');
+                document.getElementById('isMonitoring').textContent = s.is_monitoring ? 'Aktif' : 'Pasif';
+                document.getElementById('targetChannel').textContent = s.target_channel || '-';
+                document.getElementById('streamActive').textContent = s.stream_active ? 'Canli' : 'Cevrimdisi';
+                document.getElementById('clipsToday').textContent = s.clips_today;
+                document.getElementById('cpuUsage').textContent = s.cpu_usage.toFixed(1) + '%';
+                document.getElementById('memUsage').textContent = s.memory_usage.toFixed(1) + '%';
+                document.getElementById('gpuStatus').textContent = s.gpu_available ? 'Mevcut' : 'Yok';
+                document.getElementById('bufferUsage').textContent = s.buffer_usage_mb.toFixed(1);
+                document.getElementById('analysisFps').textContent = s.analysis_fps;
+
+                const badge = document.getElementById('statusBadge');
+                if (s.stream_active) { badge.className = 'status-badge status-online'; badge.textContent = 'CANLI'; }
+                else if (s.is_monitoring) { badge.className = 'status-badge status-idle'; badge.textContent = 'IZLENIYOR'; }
+                else { badge.className = 'status-badge status-offline'; badge.textContent = 'BEKLIYOR'; }
+            } catch (e) { console.error('Status error:', e); }
+        }
+
+        async function startSystem() {
+            try {
+                await apiCall('/api/system/start', 'POST');
+                showToast('Sistem baslatiliyor...');
+                setTimeout(refreshStatus, 2000);
+            } catch (e) { showToast('Baslatma hatasi', 'error'); }
+        }
+
+        async function stopSystem() {
+            try {
+                await apiCall('/api/system/stop', 'POST');
+                showToast('Sistem durduruldu');
+                setTimeout(refreshStatus, 1000);
+            } catch (e) { showToast('Durdurma hatasi', 'error'); }
+        }
+
+        async function testClip() {
+            try {
+                const r = await apiCall('/api/system/test-clip', 'POST');
+                showToast(r.message || 'Test klibi olusturuldu');
+            } catch (e) { showToast('Test klip hatasi', 'error'); }
+        }
+
+        async function loadClips() {
+            try {
+                const data = await apiCall('/api/clips/?page=1&page_size=20');
+                const tbody = document.getElementById('clipsBody');
+                if (!data.clips || data.clips.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:#888;">Klip bulunamadi</td></tr>';
+                    return;
+                }
+                tbody.innerHTML = data.clips.map(c => `
+                    <tr>
+                        <td>${c.id}</td>
+                        <td>${c.title || '-'}</td>
+                        <td><span class="category-badge cat-${c.category || 'other'}">${c.category || 'other'}</span></td>
+                        <td>${c.dominant_emotion || '-'}</td>
+                        <td>${c.duration_seconds ? c.duration_seconds.toFixed(1) + 's' : '-'}</td>
+                        <td>${c.viewer_count || '-'}</td>
+                        <td>${(c.tags || []).map(t => `<span class="tag tag-emotion">${t}</span>`).join('')}</td>
+                        <td>${c.status || '-'}</td>
+                        <td>
+                            <button class="btn btn-secondary" style="padding:4px 10px;font-size:0.8rem" onclick="toggleFav(${c.id})">&#9734;</button>
+                            <button class="btn btn-primary" style="padding:4px 10px;font-size:0.8rem" onclick="exportClip(${c.id})">Export</button>
+                        </td>
+                    </tr>
+                `).join('');
+            } catch (e) { console.error('Clips error:', e); }
+        }
+
+        async function toggleFav(id) {
+            await apiCall(`/api/clips/${id}/favorite`, 'PATCH');
+            loadClips();
+        }
+
+        async function exportClip(id) {
+            try {
+                const r = await apiCall(`/api/clips/${id}/export?resolution=720p&format=portrait`, 'POST');
+                showToast(r.message || 'Disa aktarildi');
+            } catch (e) { showToast('Export hatasi', 'error'); }
+        }
+
+        async function loadPreferences() {
+            try {
+                const p = await apiCall('/api/preferences/');
+                document.getElementById('prefEmotion').value = p.emotion_sensitivity;
+                document.getElementById('prefMotion').value = p.motion_sensitivity;
+                document.getElementById('prefAudio').value = String(p.audio_trigger_enabled);
+                document.getElementById('prefChat').value = String(p.chat_trigger_enabled);
+                document.getElementById('prefMinDur').value = p.min_clip_duration;
+                document.getElementById('prefMaxDur').value = p.max_clip_duration;
+                document.getElementById('prefSubtitle').value = String(p.auto_subtitle);
+                document.getElementById('prefLang').value = p.subtitle_language;
+                document.getElementById('prefFormat').value = p.export_format;
+                document.getElementById('prefRes').value = p.export_resolution;
+                document.getElementById('prefWatermark').value = String(p.add_watermark);
+                document.getElementById('prefWatermarkText').value = p.watermark_text || '';
+            } catch (e) { console.error('Prefs error:', e); }
+        }
+
+        async function savePreferences() {
+            const body = {
+                emotion_sensitivity: parseFloat(document.getElementById('prefEmotion').value),
+                motion_sensitivity: parseFloat(document.getElementById('prefMotion').value),
+                audio_trigger_enabled: document.getElementById('prefAudio').value === 'true',
+                chat_trigger_enabled: document.getElementById('prefChat').value === 'true',
+                min_clip_duration: parseInt(document.getElementById('prefMinDur').value),
+                max_clip_duration: parseInt(document.getElementById('prefMaxDur').value),
+                auto_subtitle: document.getElementById('prefSubtitle').value === 'true',
+                subtitle_language: document.getElementById('prefLang').value,
+                export_format: document.getElementById('prefFormat').value,
+                export_resolution: document.getElementById('prefRes').value,
+                add_watermark: document.getElementById('prefWatermark').value === 'true',
+                watermark_text: document.getElementById('prefWatermarkText').value || null,
+            };
+            try {
+                await apiCall('/api/preferences/', 'PUT', body);
+                showToast('Tercihler kaydedildi');
+            } catch (e) { showToast('Kaydetme hatasi', 'error'); }
+        }
+
+        // Auto-refresh
+        refreshStatus();
+        loadPreferences();
+        loadClips();
+        setInterval(refreshStatus, 10000);
+    </script>
+</body>
+</html>
