@@ -1964,7 +1964,7 @@ Owner Render Platform Cache ekibi; S3 Storage Platform, Redis Data Infrastructur
 
 ---
 
-## 46. Çapraz operasyon modeli
+## Ek A.4. Çapraz operasyon modeli
 
 ### 46.1 Temporal workflow yapısı
 
@@ -2015,7 +2015,7 @@ S3 bucket/prefix rolleri quarantine, CAS, artifact ve license evidence için ayr
 
 FFmpeg/libav, EBU meter, resampler, plugin host ABI, ML model, font shaper ve canonical serializer değişiklikleri cache/render kimliğini etkileyen release'lerdir. Rollout sırası shadow/dual render, golden corpus, yüzde 1 canary, kalite fark analizi, kademeli trafik ve eski worker drain'dir. In-flight RenderPlan yalnız uyumlu runtime class'ta yürütülür. Zorunlu güvenlik revoke hariç eski runtime bir planın retention süresince erişilebilir tutulur veya plan açıkça `UNRENDERABLE_RUNTIME_RETIRED` durumuna alınır.
 
-## 47. Uçtan uca kabul planı
+## Ek A.5. Uçtan uca kabul planı
 
 Release adayı aşağıdaki kapıları birlikte geçmeden production'a çıkmaz:
 

@@ -2346,7 +2346,7 @@ Ownership: **Vision ML Platform**; coordinate/render integration için **Media C
 
 ---
 
-## 25. Uçtan Uca Render Pipeline Sözleşmesi
+## Ek A.1. Uçtan Uca Render Pipeline Sözleşmesi
 
 ```mermaid
 sequenceDiagram
@@ -2389,7 +2389,7 @@ Pipeline’ın kesin render sırası:
 
 RenderPlan node’u kendinden sonra gelen semantiğe geri çağrı yapamaz. Örneğin renderer caption layout’u değiştiremez veya face detector çalıştıramaz. Böyle bir ihtiyaç compiler/analysis artefact’ının eksik olduğunu gösterir ve preflight fail etmelidir.
 
-## 26. Ortak Benchmark ve Sürüm Geçiş Politikası
+## Ek A.2. Ortak Benchmark ve Sürüm Geçiş Politikası
 
 ### 26.1 Benchmark Disiplini
 
@@ -2408,7 +2408,7 @@ RenderPlan node’u kendinden sonra gelen semantiğe geri çağrı yapamaz. Örn
 - Font/model/template revocation hariç eski plan dependency lock ile replay edilebilir olmalıdır.
 - PostgreSQL migration’ları expand/contract uygulanır; immutable S3 artefact schema migration inplace yapılmaz, yeni artefact üretilir.
 
-## 27. Ortak Definition of Done
+## Ek A.3. Ortak Definition of Done
 
 Bir özelliğin production-ready sayılması için:
 

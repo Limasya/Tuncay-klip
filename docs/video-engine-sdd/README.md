@@ -26,9 +26,9 @@ Bu belge, AI tarafından üretilen Clip JSON'unu (ClipSpec) alarak profesyonel s
 | Dosya | Kapsam | Bölümler |
 |---|---|---|
 | `01-media-foundations.md` | Video processing temeli: decode/encode, mux/demux, FFmpeg, hardware acceleration (NVENC/CUDA/VAAPI/DXVA) | 1-12 |
-| `02-timeline-captions-motion.md` | Timeline engine, subtitle rendering (ASS/SRT), word-level timing, template engine, motion graphics, keyframe/Bezier animation, face tracking | 13-24 |
+| `02-timeline-captions-motion.md` | Timeline engine, subtitle rendering (ASS/SRT), word-level timing, template engine, motion graphics, keyframe/Bezier animation, face tracking + Ek A.1-A.3 (Pipeline sözleşmesi, benchmark, DoD) | 13-24, Ek A.1-A.3 |
 | `03-visual-intelligence-effects.md` | Auto reframe, smart crop, camera/zoom/pan/shake engines, motion blur, glow/bloom, chromatic aberration, transitions | 25-35 |
-| `04-audio-assets-cache.md` | Audio mixing, music ducking, sound effects, loudness normalization, thumbnail/preview generation, asset management, plugin/preset systems, video cache | 36-45 |
+| `04-audio-assets-cache.md` | Audio mixing, music ducking, sound effects, loudness normalization, thumbnail/preview generation, asset management, plugin/preset systems, video cache + Ek A.4-A.5 (Çapraz operasyon, kabul planı) | 36-45, Ek A.4-A.5 |
 
 ### Yürütme ve Operasyon
 
