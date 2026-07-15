@@ -1,12 +1,15 @@
 """
 Merkezi yapılandırma modülü - tüm ortam değişkenlerini yönetir.
+Pydantic v1 uyumlu.
 """
-from pydantic_settings import BaseSettings
+from pydantic import BaseSettings
 from functools import lru_cache
 
 
 class Settings(BaseSettings):
-    model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
+    class Config:
+        env_file = ".env"
+        env_file_encoding = "utf-8"
     # Kick API
     kick_client_id: str = ""
     kick_client_secret: str = ""

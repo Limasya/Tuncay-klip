@@ -1,7 +1,7 @@
 """
-Pydantic şemaları - API istek/yanıt modelleri.
+Pydantic şemaları - API istek/yanıt modelleri. Pydantic v1 uyumlu.
 """
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 from enum import Enum
