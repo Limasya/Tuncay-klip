@@ -52,7 +52,8 @@ class BroadcasterResponse(BaseModel):
     is_active: bool
     created_at: datetime
 
-    model_config = ConfigDict(from_attributes=True)
+    class Config:
+        orm_mode = True
 
 
 # --- Stream Info ---
@@ -105,7 +106,8 @@ class ClipResponse(BaseModel):
     is_favorite: bool
     created_at: datetime
 
-    model_config = ConfigDict(from_attributes=True)
+    class Config:
+        orm_mode = True
 
 
 class ClipListResponse(BaseModel):
@@ -183,7 +185,8 @@ class UserPreferencesResponse(BaseModel):
     excluded_tags: Optional[List[str]]
     sort_by: str
 
-    model_config = ConfigDict(from_attributes=True)
+    class Config:
+        orm_mode = True
 
 
 # --- Auth ---
@@ -218,7 +221,8 @@ class ChatMessageResponse(BaseModel):
     sentiment_label: Optional[str]
     timestamp: datetime
 
-    model_config = ConfigDict(from_attributes=True)
+    class Config:
+        orm_mode = True
 
 
 # --- Otomatik Edit ---
