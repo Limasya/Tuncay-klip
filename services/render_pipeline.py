@@ -1,6 +1,9 @@
 """
 FFmpeg render pipeline - ClipSpec'i uygulayan render motoru.
 Filter graph oluşturucu ve FFmpeg subprocess yöneticisi.
+Gelişmiş altyazı, efekt, platform profilleri, ses miksajı, QC entegrasyonu.
+Beat-sync, word-highlight, sticker, lower-third, end-screen, split-screen,
+emotion-arc, scene-detection entegrasyonu.
 """
 import asyncio
 import json
@@ -14,6 +17,9 @@ from services.edit_spec import (
     AudioTrack, Watermark, ColorGrading, VisualEffect, ThumbnailSpec,
     Transition, TransitionType, SpeedEffect, SubtitleStyle, ColorPreset,
     AspectRatio,
+    BeatSyncConfig, WordHighlightConfig, StickerOverlayConfig,
+    LowerThirdConfig, EndScreenConfig, SplitScreenConfig,
+    EmotionArcConfig, SceneDetectionConfig,
 )
 
 logger = logging.getLogger(__name__)
@@ -64,9 +70,13 @@ class RenderPipeline:
     def __init__(self):
         self._temp_files: List[str] = []
 
-    async def render(self, spec: ClipSpec, output_path: Optional[str] = None) -> Optional[str]:
+    async def render(self, spec: ClipSpec, output_path: Optional[str] = None,
+                     run_qc: bool = True, platform: Optional[str] = None) -> Optional[str]:
         """
         ClipSpec'i render eder. Tek klip veya montaj.
+        Geliştirilmiş: altyazı burn-in, QC kontrol, platform optimizasyonu,
+        beat-sync, word-highlight, sticker, lower-third, end-screen, split-screen,
+        emotion-arc, scene-detection.
         """
         if spec.clips:
             return await self.render_montage(MontageSpec(
@@ -75,6 +85,10 @@ class RenderPipeline:
                 output_path=output_path or str(EXPORTS_DIR / "montage.mp4"),
             ))
 
+        # Split screen ise ayrı render
+        if spec.split_screen.enabled and spec.split_screen.clip_paths:
+            return await self.render_split_screen(spec, output_path)
+
         if not output_path:
             output_path = str(EXPORTS_DIR / f"render_{Path(spec.source_path).stem}.mp4")
 
@@ -82,16 +96,34 @@ class RenderPipeline:
         video_filters, audio_filters = self._build_filter_graph(spec)
 
         # 2. FFmpeg komutunu oluştur
-        cmd = self._build_command(spec, video_filters, audio_filters, output_path)
+        cmd = self._build_command(spec, video_filters, audio_filters, output_path,
+                                  platform=platform)
 
         # 3. Çalıştır
         result = await self._run_ffmpeg(cmd, output_path)
 
-        # 4. Thumbnail üret
-        if spec.thumbnail.auto and result:
-            await self._generate_thumbnail(spec, output_path)
+        # 4. Altyazı burn-in (varsa)
+        if result and spec.subtitles:
+            result = await self._burn_subtitles(spec, result)
 
-        # 5. Geçici dosyaları temizle
+        # 5. Thumbnail üret
+        if spec.thumbnail.auto and result:
+            result = await self._generate_smart_thumbnail(spec, result)
+
+        # 6. Word highlight (karaoke) ASS burn-in
+        if result and spec.word_highlight.enabled and spec.word_highlight.words:
+            result = await self._burn_word_highlight(spec, result)
+
+        # 7. Post-render QC
+        if result and run_qc:
+            from services.quality_control import quality_control
+            qc_report = await quality_control.run_qc(result)
+            if not qc_report.passed:
+                logger.warning("QC başarısız: %s", qc_report.summary())
+            else:
+                logger.info("QC başarılı: %s", qc_report.summary())
+
+        # 8. Geçici dosyaları temizle
         self._cleanup_temp()
 
         return result
@@ -206,6 +238,36 @@ class RenderPipeline:
         if spec.watermark and spec.watermark.text:
             video_filters.append(self._build_watermark_filter(spec.watermark))
 
+        # 6. Emotion arc efektleri
+        if spec.emotion_arc.enabled and spec.emotion_arc.segments:
+            emotion_filters = self._build_emotion_arc_filters(spec.emotion_arc)
+            if emotion_filters:
+                video_filters.extend(emotion_filters)
+
+        # 7. Beat-sync efektleri
+        if spec.beat_sync.enabled:
+            beat_filters = self._build_beat_sync_filters(spec.beat_sync)
+            if beat_filters:
+                video_filters.extend(beat_filters)
+
+        # 8. Sticker/emoji overlay
+        if spec.stickers.enabled:
+            sticker_filter = self._build_sticker_filters(spec.stickers)
+            if sticker_filter:
+                video_filters.append(sticker_filter)
+
+        # 9. Lower third grafikleri
+        if spec.lower_thirds.enabled:
+            lt_filters = self._build_lower_third_filters(spec.lower_thirds)
+            if lt_filters:
+                video_filters.extend(lt_filters)
+
+        # 10. End screen overlay
+        if spec.end_screen.enabled:
+            end_filter = self._build_end_screen_filter(spec.end_screen)
+            if end_filter:
+                video_filters.append(end_filter)
+
         # === AUDIO FILTERS ===
 
         # 1. Volume ayarı
@@ -318,6 +380,306 @@ class RenderPipeline:
             f"borderw=1:bordercolor=black@0.5:"
             f"{pos}"
         )
+
+    # --- Beat-Sync Filtreleri ---
+
+    def _build_beat_sync_filters(self, config: BeatSyncConfig) -> List[str]:
+        """Beat-sync efektlerinden FFmpeg filter listesi üretir."""
+        from services.beat_sync import beat_sync
+        import asyncio
+
+        filters = []
+
+        # Beat grid oluştur (sync wrapper)
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # Zaten bir event loop çalışıyorsa senkron workaround
+                beat_grid = None
+            else:
+                beat_grid = loop.run_until_complete(
+                    beat_sync.detect_beats(config.audio_path or "", config.bpm or 0.8)
+                )
+        except Exception:
+            beat_grid = None
+
+        if not beat_grid or not beat_grid.beats:
+            return filters
+
+        # BPM override
+        if config.bpm:
+            from services.beat_sync import BeatGrid, BeatInfo
+            interval = 60.0 / config.bpm
+            beats = []
+            t = 0.0
+            beat_num = 0
+            while t < beat_grid.duration:
+                is_downbeat = (beat_num % 4 == 0)
+                beats.append(BeatInfo(
+                    time=t,
+                    strength=1.0 if is_downbeat else 0.6,
+                    bpm=config.bpm,
+                    beat_number=beat_num % 4,
+                    is_downbeat=is_downbeat,
+                ))
+                t += interval
+                beat_num += 1
+            beat_grid = BeatGrid(
+                bpm=config.bpm, beats=beats,
+                total_bars=beat_num // 4,
+                time_signature="4/4",
+                duration=beat_grid.duration,
+            )
+
+        # Zoom on beat
+        if config.zoom_on_beat:
+            zoom_filter = beat_sync.generate_beat_zoom_filter(
+                beat_grid, config.zoom_level, config.downbeats_only
+            )
+            if zoom_filter and zoom_filter != "null":
+                filters.append(zoom_filter)
+
+        # Flash on beat
+        if config.flash_on_beat:
+            flash_filter = beat_sync.generate_beat_flash_filter(
+                beat_grid, config.flash_color, config.flash_intensity
+            )
+            if flash_filter and flash_filter != "null":
+                filters.append(flash_filter)
+
+        # Shake on beat
+        if config.shake_on_beat:
+            shake_filter = beat_sync.generate_beat_shake_filter(
+                beat_grid, config.shake_intensity
+            )
+            if shake_filter and shake_filter != "null":
+                filters.append(shake_filter)
+
+        # Speed variation
+        if config.speed_variation:
+            speed_filter = beat_sync.generate_beat_speed_filter(
+                beat_grid, config.slow_on_beat, config.fast_between
+            )
+            if speed_filter and speed_filter != "null":
+                filters.append(speed_filter)
+
+        return filters
+
+    # --- Emotion Arc Filtreleri ---
+
+    def _build_emotion_arc_filters(self, config: EmotionArcConfig) -> List[str]:
+        """Emotion arc efektlerinden FFmpeg filter listesi üretir."""
+        from services.emotion_arc import emotion_arc, EmotionArc, EmotionPoint
+
+        filters = []
+
+        # EmotionArc oluştur
+        segments = []
+        for seg in config.segments:
+            segments.append({
+                "start": seg.start,
+                "end": seg.end,
+                "emotion": seg.emotion,
+                "intensity": seg.intensity,
+            })
+
+        if not segments:
+            return filters
+
+        # Süre bilgisi (varsayılan 10s)
+        total_duration = max(s["end"] for s in segments) if segments else 10.0
+        arc = emotion_arc.build_emotion_arc(segments, total_duration)
+
+        if config.apply_color:
+            color_filter = emotion_arc.generate_emotion_color_filter(arc)
+            if color_filter and color_filter != "null":
+                filters.append(color_filter)
+
+        if config.apply_speed:
+            speed_filter = emotion_arc.generate_emotion_speed_filter(arc)
+            if speed_filter and speed_filter != "null":
+                filters.append(speed_filter)
+
+        if config.apply_vignette:
+            vig_filter = emotion_arc.generate_emotion_vignette_filter(arc)
+            if vig_filter and vig_filter != "null":
+                filters.append(vig_filter)
+
+        return filters
+
+    # --- Sticker Filtreleri ---
+
+    def _build_sticker_filters(self, config: StickerOverlayConfig) -> str:
+        """Sticker overlay'lerinden FFmpeg filter string'i üretir."""
+        from services.sticker_engine import sticker_engine, StickerDef
+
+        parts = []
+
+        # Tekil sticker'lar
+        if config.stickers:
+            sticker_defs = []
+            for s in config.stickers:
+                sticker_defs.append(StickerDef(
+                    emoji=s.emoji, x=s.x, y=s.y,
+                    start=s.start, duration=s.duration,
+                    scale=s.scale, animation=s.animation,
+                    opacity=s.opacity,
+                ))
+            sticker_filter = sticker_engine.generate_sticker_filter(sticker_defs)
+            if sticker_filter and sticker_filter != "null":
+                parts.append(sticker_filter)
+
+        # Reaksiyon overlay
+        if config.reaction_type:
+            reaction_filter = sticker_engine.generate_reaction_overlay(
+                config.reaction_type,
+                config.reaction_start,
+                config.reaction_duration,
+            )
+            if reaction_filter and reaction_filter != "null":
+                parts.append(reaction_filter)
+
+        # Emoji rain
+        if config.emoji_rain:
+            rain_filter = sticker_engine.generate_emoji_rain(
+                config.emoji_rain_emoji,
+                config.emoji_rain_start,
+                config.emoji_rain_duration,
+            )
+            if rain_filter and rain_filter != "null":
+                parts.append(rain_filter)
+
+        # Confetti
+        if config.confetti:
+            confetti_filter = sticker_engine.generate_confetti(
+                config.confetti_start,
+                config.confetti_duration,
+            )
+            if confetti_filter and confetti_filter != "null":
+                parts.append(confetti_filter)
+
+        return ",".join(parts) if parts else "null"
+
+    # --- Lower Third Filtreleri ---
+
+    def _build_lower_third_filters(self, config: LowerThirdConfig) -> List[str]:
+        """Lower third grafiklerinden FFmpeg filter listesi üretir."""
+        from services.lower_third import lower_third
+
+        filters = []
+
+        for entry in config.entries:
+            if entry.animated:
+                lt_filter = lower_third.generate_animated_lower_third(
+                    name=entry.name,
+                    title=entry.title,
+                    style=entry.style,
+                    start_time=entry.start_time,
+                    duration=entry.duration,
+                )
+            else:
+                lt_filter = lower_third.generate_lower_third(
+                    name=entry.name,
+                    title=entry.title,
+                    style=entry.style,
+                    start_time=entry.start_time,
+                    duration=entry.duration,
+                    position=entry.position,
+                )
+            if lt_filter:
+                filters.append(lt_filter)
+
+        # Skor tablosu
+        if config.scoreboard:
+            sb_filter = lower_third.generate_scoreboard(
+                config.scoreboard_player1,
+                config.scoreboard_score1,
+                config.scoreboard_player2,
+                config.scoreboard_score2,
+            )
+            if sb_filter:
+                filters.append(sb_filter)
+
+        # İlerleme çubuğu
+        if config.progress_bar:
+            pb_filter = lower_third.generate_progress_bar(
+                0.5,  # Varsayılan başlangıç
+                config.progress_bar_color,
+            )
+            if pb_filter:
+                filters.append(pb_filter)
+
+        return filters
+
+    # --- End Screen Filtresi ---
+
+    def _build_end_screen_filter(self, config: EndScreenConfig) -> str:
+        """End screen overlay'inden FFmpeg filter string'i üretir."""
+        from services.end_screen import end_screen
+
+        parts = []
+
+        # End screen template
+        es_filter = end_screen.generate_end_screen(
+            template=config.template,
+            custom_text=config.custom_text,
+        )
+        if es_filter and es_filter != "null":
+            parts.append(es_filter)
+
+        # CTA overlay
+        if config.call_to_action:
+            cta_filter = end_screen.generate_call_to_action(
+                config.call_to_action,
+                config.cta_position,
+            )
+            if cta_filter:
+                parts.append(cta_filter)
+
+        return ",".join(parts) if parts else "null"
+
+    # --- Split Screen Render ---
+
+    async def render_split_screen(
+        self,
+        spec: ClipSpec,
+        output_path: Optional[str] = None,
+    ) -> Optional[str]:
+        """
+        Split screen render'i.
+        Çoklu giriş videosunu xstack ile birleştirir.
+        """
+        from services.split_screen import split_screen
+
+        if not spec.split_screen.clip_paths:
+            return await self.render(spec, output_path)
+
+        if not output_path:
+            output_path = str(EXPORTS_DIR / f"split_{Path(spec.source_path).stem}.mp4")
+
+        # Filter_complex oluştur
+        filter_complex = split_screen.generate_split_filter(
+            spec.split_screen.layout,
+            gap=spec.split_screen.gap,
+        )
+
+        # FFmpeg komutu (çoklu giriş)
+        cmd = ["ffmpeg", "-y"]
+        for path in spec.split_screen.clip_paths:
+            cmd.extend(["-i", path])
+
+        cmd.extend([
+            "-filter_complex", filter_complex,
+            "-c:v", "libx264", "-preset", "fast",
+            "-crf", str(spec.crf),
+            "-c:a", "aac", "-b:a", "192k",
+            "-shortest",
+            output_path,
+        ])
+
+        result = await self._run_ffmpeg(cmd, output_path)
+        self._cleanup_temp()
+        return result
 
     # --- FFmpeg Komut Oluşturucu ---
 
@@ -549,6 +911,106 @@ class RenderPipeline:
         except Exception as e:
             logger.error("FFmpeg çalıştırma hatası: %s", e)
             return None
+
+    # --- Gelişmiş Yardımcılar ---
+
+    async def _burn_subtitles(self, spec: ClipSpec, video_path: str) -> Optional[str]:
+        """
+        Altyazılari videoya gömer (ASS formatı ile).
+        """
+        from services.advanced_subtitle import advanced_subtitle
+
+        # ASS içeriği üret
+        ass_content = advanced_subtitle.generate_ass(
+            entries=[
+                {"text": s.text, "start": s.start, "end": s.end}
+                for s in spec.subtitles
+            ],
+            style_name=spec.subtitles[0].style if spec.subtitles else "classic",
+        )
+
+        # ASS dosyasını kaydet
+        ass_path = str(TEMP_DIR / f"{Path(video_path).stem}.ass")
+        advanced_subtitle.save_ass(ass_content, ass_path)
+
+        # Burn-in
+        output_path = str(
+            EXPORTS_DIR / f"{Path(video_path).stem}_sub.mp4"
+        )
+        result = await advanced_subtitle.burn_ass_subtitles(
+            video_path, ass_path, output_path
+        )
+
+        return result if result else video_path
+
+    async def _generate_smart_thumbnail(self, spec: ClipSpec, video_path: str) -> Optional[str]:
+        """
+        Akıllı thumbnail üretir (yüz algılama, platform optimizasyonu).
+        """
+        from services.thumbnail_engine import thumbnail_engine
+
+        output_path = str(
+            EXPORTS_DIR / f"{Path(spec.source_path).stem}_thumb.jpg"
+        )
+
+        result = await thumbnail_engine.generate_smart_thumbnail(
+            video_path=video_path,
+            output_path=output_path,
+            time_point=spec.thumbnail.time_point,
+            add_title=spec.thumbnail.add_title,
+            title_text=spec.thumbnail.title_text or spec.category,
+            title_style=spec.thumbnail.style,
+        )
+
+        return result
+
+    async def render_for_platform(
+        self,
+        spec: ClipSpec,
+        platform: str,
+        output_path: Optional[str] = None,
+    ) -> Optional[str]:
+        """
+        Belirli bir platform için render eder.
+        Platform profilini uygular.
+        """
+        from services.platform_profiles import platform_export
+
+        profile = platform_export.get_profile(platform)
+        if not profile:
+            logger.warning("Bilinmeyen platform: %s", platform)
+            return await self.render(spec, output_path)
+
+        # Platform-specific aspect ratio ile render et
+        from services.edit_spec import AspectRatio
+        try:
+            ar = AspectRatio(profile.aspect_ratio)
+        except ValueError:
+            ar = spec.aspect_ratio
+
+        spec = spec.copy(update={"aspect_ratio": ar, "crf": profile.crf})
+
+        return await self.render(
+            spec, output_path, run_qc=True, platform=platform
+        )
+
+    async def render_multi_platform(
+        self,
+        spec: ClipSpec,
+        platforms: List[str],
+    ) -> Dict[str, Optional[str]]:
+        """
+        Birden fazla platform için ayrı ayrı render eder.
+        """
+        results = {}
+        for platform in platforms:
+            output_path = str(
+                EXPORTS_DIR / f"{Path(spec.source_path).stem}_{platform}.mp4"
+            )
+            result = await self.render_for_platform(spec, platform, output_path)
+            results[platform] = result
+
+        return results
 
     def _cleanup_temp(self):
         """Geçici dosyaları temizler."""
