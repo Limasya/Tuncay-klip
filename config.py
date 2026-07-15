@@ -30,7 +30,7 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379/0"
 
     # Database
-    database_url: str = "postgresql+asyncpg://user:password@localhost:5432/klip_db"
+    database_url: str = "sqlite+aiosqlite:///./data/klip.db"
 
     # AWS
     aws_access_key_id: str = ""
