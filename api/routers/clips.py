@@ -147,12 +147,14 @@ async def toggle_favorite(clip_id: int, db: AsyncSession = Depends(get_db)):
 async def export_clip(
     clip_id: int,
     resolution: str = "720p",
+    platform: Optional[str] = None,
     output_format: str = "mp4",
     add_subtitle: bool = True,
     db: AsyncSession = Depends(get_db),
 ):
-    """Klibi sosyal medya formatında dışa aktarır.
-    resolution: 1080p, 720p, 480p, 9:16, 1:1, 4:5, portrait
+    """Klibi sosyal medya format\u0131nda d\u0131\u015fa aktar\u0131r.
+    platform: youtube, reels, instagram_post, instagram_vertical (platform secilirse resolution yerine bu kullanilir)
+    resolution: 1440p, 1080p, 720p, 480p, 360p, 240p
     output_format: mp4, mov, mkv, webm, avi, wmv
     """
     result = await db.execute(select(Clip).where(Clip.id == clip_id))
@@ -162,10 +164,15 @@ async def export_clip(
 
     from services.video_editor import video_editor
 
-    # Boyutlandır + format donustur
+    # Platform secildiyse, onun resolution'unu kullan
+    actual_resolution = resolution
+    if platform and platform in video_editor.PLATFORM_SIZES:
+        actual_resolution = video_editor.PLATFORM_SIZES[platform]["resolution"]
+
+    # Boyutlandir + format donustur
     output = await video_editor.export_clip(
         clip.video_path,
-        resolution=resolution,
+        resolution=actual_resolution,
         output_format=output_format,
     )
 

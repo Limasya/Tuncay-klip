@@ -24,17 +24,55 @@ class VideoEditor:
     FFmpeg tabanlı otomatik video düzenleme servisi.
     """
 
-    # Çözünürlük profilleri (genislik x yukseklik)
+    # Cozunurluk profilleri (genislik x yukseklik)
     RESOLUTIONS = {
-        "1080p": {"width": 1920, "height": 1080},
-        "720p": {"width": 1280, "height": 720},
-        "480p": {"width": 854, "height": 480},
-        "portrait": {"width": 1080, "height": 1920},   # 9:16 TikTok/Reels/Shorts
-        "9:16": {"width": 1080, "height": 1920},       # 9:16 ayni
-        "square": {"width": 1080, "height": 1080},      # 1:1 Instagram
-        "1:1": {"width": 1080, "height": 1080},         # 1:1 ayni
-        "4:5": {"width": 1080, "height": 1350},         # 4:5 Instagram post
-        "16:9": {"width": 1920, "height": 1080},        # 16:9 YouTube
+        # Standart cozunurlukler
+        "1440p": {"width": 2560, "height": 1440},   # 2K
+        "1080p": {"width": 1920, "height": 1080},   # Full HD
+        "720p":  {"width": 1280, "height": 720},    # HD
+        "480p":  {"width": 854,  "height": 480},    # SD
+        "360p":  {"width": 640,  "height": 360},    # SD
+        "240p":  {"width": 426,  "height": 240},    # SD
+        # Platform bazli boyutlar
+        "youtube":          {"width": 1280, "height": 720},    # 16:9 yatay
+        "reels":            {"width": 1080, "height": 1920},   # 9:16 dikey
+        "tiktok":           {"width": 1080, "height": 1920},   # 9:16 dikey
+        "shorts":           {"width": 1080, "height": 1920},   # 9:16 dikey
+        "instagram_post":   {"width": 1080, "height": 1080},   # 1:1 kare
+        "instagram_vertical": {"width": 1080, "height": 1350}, # 4:5 dikey
+        "facebook_post":    {"width": 1080, "height": 1080},   # 1:1 kare
+        "facebook_vertical": {"width": 1080, "height": 1350},  # 4:5 dikey
+        # Eski uyumluluk
+        "portrait": {"width": 1080, "height": 1920},
+        "9:16":     {"width": 1080, "height": 1920},
+        "square":   {"width": 1080, "height": 1080},
+        "1:1":      {"width": 1080, "height": 1080},
+        "4:5":      {"width": 1080, "height": 1350},
+        "16:9":     {"width": 1920, "height": 1080},
+    }
+
+    # Platform boyut profilleri (UI icin)
+    PLATFORM_SIZES = {
+        "youtube": {
+            "label": "YouTube",
+            "resolution": "youtube",
+            "aspect": "16:9",
+        },
+        "reels": {
+            "label": "Instagram Reels / TikTok / YouTube Shorts",
+            "resolution": "reels",
+            "aspect": "9:16",
+        },
+        "instagram_post": {
+            "label": "Instagram / Facebook Gonderi (Kare)",
+            "resolution": "instagram_post",
+            "aspect": "1:1",
+        },
+        "instagram_vertical": {
+            "label": "Instagram / Facebook Gonderi (Dikey)",
+            "resolution": "instagram_vertical",
+            "aspect": "4:5",
+        },
     }
 
     # Video container formatlari ve FFmpeg codec ayarlari
@@ -138,20 +176,26 @@ class VideoEditor:
         """Resolution key'e gore uygun video filtresini olusturur."""
         w, h = res["width"], res["height"]
 
-        if resolution_key in ("portrait", "9:16"):
-            # Dikey: ortadan krip + pad
+        # Dikey (9:16) platformlar
+        vertical_9_16 = ("portrait", "9:16", "reels", "tiktok", "shorts")
+        # Kare (1:1) platformlar
+        square_1_1 = ("square", "1:1", "instagram_post", "facebook_post")
+        # Dikey (4:5) platformlar
+        vertical_4_5 = ("4:5", "instagram_vertical", "facebook_vertical")
+
+        if resolution_key in vertical_9_16:
             return (
                 f"crop=ih*9/16:ih,"
                 f"scale={w}:{h}:"
                 f"force_original_aspect_ratio=decrease,"
                 f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:black"
             )
-        elif resolution_key in ("square", "1:1"):
+        elif resolution_key in square_1_1:
             return (
                 f"crop='min(iw,ih)':'min(iw,ih)',"
                 f"scale={w}:{h}"
             )
-        elif resolution_key == "4:5":
+        elif resolution_key in vertical_4_5:
             return (
                 f"crop=ih*4/5:ih,"
                 f"scale={w}:{h}:"
@@ -159,7 +203,7 @@ class VideoEditor:
                 f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:black"
             )
         else:
-            # Yatay: 16:9, 1080p, 720p, 480p
+            # Yatay: 16:9, 1080p, 720p, 480p, 1440p, youtube, vs.
             return (
                 f"scale={w}:{h}:"
                 f"force_original_aspect_ratio=decrease,"

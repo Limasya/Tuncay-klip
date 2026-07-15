@@ -79,15 +79,18 @@ async def inject_chat(request: ChatMessageRequest):
 async def analyze_frame():
     """Analyze a test frame (for demo/testing)."""
     import numpy as np
-    # Create a test frame
-    test_frame = np.random.randint(0, 255, (720, 1280, 3), dtype=np.uint8)
-    result = await orchestrator.analyze_single_frame(test_frame)
-    return {
-        "faces": len(result.faces),
-        "emotions": len(result.emotions),
-        "poses": len(result.poses),
-        "inference_ms": result.inference_time_ms,
-    }
+    try:
+        # Create a test frame
+        test_frame = np.random.randint(0, 255, (720, 1280, 3), dtype=np.uint8)
+        result = await orchestrator.analyze_single_frame(test_frame)
+        return {
+            "faces": len(result.faces),
+            "emotions": len(result.emotions),
+            "poses": len(result.poses),
+            "inference_ms": result.inference_time_ms,
+        }
+    except Exception as e:
+        raise HTTPException(503, f"Frame analysis failed: {type(e).__name__}: {e}")
 
 
 @router.get("/events")
