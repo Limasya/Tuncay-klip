@@ -93,10 +93,22 @@ class FaceDetector:
 
     def _detect_haar(self, frame: np.ndarray) -> list[FaceDetection]:
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        cascade = cv2.CascadeClassifier(
-            cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
-        )
+
+        # Try local cascade first, then cv2.data path
+        cascade_path = "models_store/haarcascade_frontalface_default.xml"
+        import os
+        if not os.path.exists(cascade_path):
+            cascade_path = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+
+        cascade = cv2.CascadeClassifier(cascade_path)
+        if cascade.empty():
+            logger.warning("Haar cascade failed to load, skipping face detection")
+            return []
+
         faces = cascade.detectMultiScale(gray, 1.1, 5, minSize=(60, 60))
+
+        if faces is None or len(faces) == 0:
+            return []
 
         results = []
         for (x, y, w, h) in faces:
@@ -216,13 +228,32 @@ class PoseEstimator:
     def _load_model(self):
         try:
             import mediapipe as mp
-            self.mp_pose = mp.solutions.pose
-            self.pose = self.mp_pose.Pose(
-                static_image_mode=True,
-                model_complexity=1,
-                min_detection_confidence=0.5,
-            )
-            logger.info("Pose estimator loaded (MediaPipe)")
+            # MediaPipe >= 0.10.20 uses tasks API
+            if hasattr(mp, 'tasks'):
+                from mediapipe.tasks import python as mp_python
+                from mediapipe.tasks.python import vision as mp_vision
+                base_options = mp_python.BaseOptions(
+                    model_asset_path="models_store/pose_landmarker_lite.task"
+                )
+                options = mp_vision.PoseLandmarkerOptions(
+                    base_options=base_options,
+                    running_mode=mp_vision.RunningMode.IMAGE,
+                    num_poses=1,
+                    min_pose_detection_confidence=0.5,
+                )
+                self.pose = mp_vision.PoseLandmarker.create_from_options(options)
+                self.mp_pose = mp.tasks.vision
+                logger.info("Pose estimator loaded (MediaPipe Tasks API)")
+            elif hasattr(mp, 'solutions'):
+                self.mp_pose = mp.solutions.pose
+                self.pose = self.mp_pose.Pose(
+                    static_image_mode=True,
+                    model_complexity=1,
+                    min_detection_confidence=0.5,
+                )
+                logger.info("Pose estimator loaded (MediaPipe Solutions API)")
+            else:
+                raise ImportError("No compatible MediaPipe API found")
         except Exception as e:
             logger.warning(f"MediaPipe not available: {e}")
 
@@ -231,16 +262,38 @@ class PoseEstimator:
             return self._estimate_simple(frame_bgr)
 
         frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
-        results = self.pose.process(frame_rgb)
 
-        if not results.pose_landmarks:
+        # Handle Tasks API (new) vs Solutions API (old)
+        try:
+            import mediapipe as mp
+            if hasattr(mp, 'tasks') and hasattr(self.pose, 'detect'):
+                # Tasks API
+                mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame_rgb)
+                result = self.pose.detect(mp_image)
+                if not result.pose_landmarks or len(result.pose_landmarks) == 0:
+                    return []
+                landmarks = result.pose_landmarks[0]  # First person
+                pose_data = {}
+                from mediapipe.tasks.python.vision import PoseLandmarker
+                for i, lm in enumerate(landmarks):
+                    try:
+                        name = PoseLandmarker.PoseLandmark(i).name.lower()
+                    except (ValueError, AttributeError):
+                        name = f"landmark_{i}"
+                    pose_data[name] = (lm.x, lm.y)
+            else:
+                # Solutions API (legacy)
+                results = self.pose.process(frame_rgb)
+                if not results.pose_landmarks:
+                    return []
+                landmarks = results.pose_landmarks.landmark
+                pose_data = {}
+                for lm in landmarks:
+                    name = self.mp_pose.PoseLandmark(lm).name.lower()
+                    pose_data[name] = (lm.x, lm.y)
+        except Exception as e:
+            logger.debug(f"Pose estimation error: {e}")
             return []
-
-        landmarks = results.pose_landmarks.landmark
-        pose_data = {}
-        for lm in landmarks:
-            name = self.mp_pose.PoseLandmark(lm).name.lower()
-            pose_data[name] = (lm.x, lm.y)
 
         gestures = self._detect_gestures(pose_data)
         motion = self._compute_motion(pose_data)

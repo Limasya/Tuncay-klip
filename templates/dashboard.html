@@ -90,6 +90,15 @@
         .chat-input-row { display: flex; gap: 8px; margin-top: 12px; }
         .chat-input-row input { flex: 1; padding: 8px 12px; background: #0f0f23; border: 1px solid #2a2a4a; border-radius: 6px; color: #fff; font-size: 0.9rem; }
         .active-signals { font-size: 0.85rem; color: #888; text-align: center; margin-top: 5px; }
+        /* Export Modal */
+        .export-modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 2000; justify-content: center; align-items: center; }
+        .export-modal-overlay.active { display: flex; }
+        .export-modal { background: #1a1a2e; border-radius: 16px; padding: 24px; width: 420px; max-width: 90vw; border: 1px solid #533483; }
+        .export-modal h3 { color: #00d4ff; margin-bottom: 16px; font-size: 1.1rem; }
+        .export-modal label { display: block; margin: 12px 0 6px; color: #aaa; font-size: 0.85rem; }
+        .export-modal select { width: 100%; padding: 10px 12px; background: #0f0f23; border: 1px solid #2a2a4a; border-radius: 8px; color: #fff; font-size: 0.9rem; }
+        .export-modal .btn-row { display: flex; gap: 10px; margin-top: 20px; }
+        .export-modal .btn-row .btn { flex: 1; }
     </style>
 </head>
 <body>
@@ -250,6 +259,22 @@
             </div>
             <div class="card preferences-form">
                 <h3>Disa Aktarma</h3>
+                <label>Platform Boyutu</label>
+                <select id="prefPlatform">
+                    <option value="youtube">YouTube (1280 × 720 - 16:9)</option>
+                    <option value="reels">Instagram Reels / TikTok / YouTube Shorts (1080 × 1920 - 9:16)</option>
+                    <option value="instagram_post">Instagram / Facebook Gonderi - Kare (1080 × 1080 - 1:1)</option>
+                    <option value="instagram_vertical">Instagram / Facebook Gonderi - Dikey (1080 × 1350 - 4:5)</option>
+                </select>
+                <label>Cozunurluk</label>
+                <select id="prefRes">
+                    <option value="1440p">1440p (2K): 2560 × 1440</option>
+                    <option value="1080p">1080p (Full HD): 1920 × 1080</option>
+                    <option value="720p">720p (HD): 1280 × 720</option>
+                    <option value="480p">480p (SD): 854 × 480</option>
+                    <option value="360p">360p (SD): 640 × 360</option>
+                    <option value="240p">240p (SD): 426 × 240</option>
+                </select>
                 <label>Format</label>
                 <select id="prefFormat">
                     <option value="mp4">MP4 (MPEG-4) - Evrensel uyumluluk</option>
@@ -259,16 +284,6 @@
                     <option value="avi">AVI - Microsoft, yuksek kalite</option>
                     <option value="wmv">WMV - Windows Media, kucuk boyut</option>
                 </select>
-                <label>Cozunurluk / Aspect Ratio</label>
-                <select id="prefRes">
-                    <option value="1080p">1080p (16:9) - YouTube, Twitch</option>
-                    <option value="720p">720p (16:9) - Standart</option>
-                    <option value="480p">480p (16:9) - Dusuk bant</option>
-                    <option value="9:16">9:16 Portrait - TikTok, Reels, Shorts</option>
-                    <option value="1:1">1:1 Square - Instagram post</option>
-                    <option value="4:5">4:5 - Instagram feed</option>
-                    <option value="portrait">Portrait (1080x1920) - Mobil</option>
-                </select>
                 <label>Filigran</label>
                 <select id="prefWatermark"><option value="false">Kapali</option><option value="true">Acik</option></select>
                 <label>Filigran Metni</label>
@@ -276,6 +291,42 @@
                 <br><br>
                 <button class="btn btn-primary" onclick="savePreferences()">Tercihleri Kaydet</button>
                 <button class="btn btn-secondary" onclick="loadPreferences()">Yenile</button>
+            </div>
+        </div>
+
+        <!-- Export Modal -->
+        <div class="export-modal-overlay" id="exportModal" onclick="if(event.target===this)closeExportModal()">
+            <div class="export-modal">
+                <h3>Dışa Aktar</h3>
+                <label>Platform Boyutu</label>
+                <select id="exportPlatform">
+                    <option value="youtube">YouTube (1280 × 720 - 16:9)</option>
+                    <option value="reels">Instagram Reels / TikTok / YouTube Shorts (1080 × 1920 - 9:16)</option>
+                    <option value="instagram_post">Instagram / Facebook Gonderi - Kare (1080 × 1080 - 1:1)</option>
+                    <option value="instagram_vertical">Instagram / Facebook Gonderi - Dikey (1080 × 1350 - 4:5)</option>
+                </select>
+                <label>Çözünürlük</label>
+                <select id="exportResolution">
+                    <option value="1440p">1440p (2K): 2560 × 1440</option>
+                    <option value="1080p">1080p (Full HD): 1920 × 1080</option>
+                    <option value="720p">720p (HD): 1280 × 720</option>
+                    <option value="480p">480p (SD): 854 × 480</option>
+                    <option value="360p">360p (SD): 640 × 360</option>
+                    <option value="240p">240p (SD): 426 × 240</option>
+                </select>
+                <label>Format</label>
+                <select id="exportFormat">
+                    <option value="mp4">MP4</option>
+                    <option value="mov">MOV</option>
+                    <option value="mkv">MKV</option>
+                    <option value="webm">WebM</option>
+                    <option value="avi">AVI</option>
+                    <option value="wmv">WMV</option>
+                </select>
+                <div class="btn-row">
+                    <button class="btn btn-primary" onclick="doExport()">Dışa Aktar</button>
+                    <button class="btn btn-secondary" onclick="closeExportModal()">İptal</button>
+                </div>
             </div>
         </div>
     </div>
@@ -373,11 +424,33 @@
             loadClips();
         }
 
+        let exportClipId = null;
+
         async function exportClip(id) {
+            exportClipId = id;
+            // Load prefs into modal
+            const modal = document.getElementById('exportModal');
+            document.getElementById('exportPlatform').value = document.getElementById('prefPlatform').value || 'youtube';
+            document.getElementById('exportResolution').value = document.getElementById('prefRes').value || '720p';
+            document.getElementById('exportFormat').value = document.getElementById('prefFormat').value || 'mp4';
+            modal.classList.add('active');
+        }
+
+        function closeExportModal() {
+            document.getElementById('exportModal').classList.remove('active');
+            exportClipId = null;
+        }
+
+        async function doExport() {
+            if (!exportClipId) return;
+            const platform = document.getElementById('exportPlatform').value;
+            const resolution = document.getElementById('exportResolution').value;
+            const format = document.getElementById('exportFormat').value;
+            closeExportModal();
             try {
-                const r = await apiCall(`/api/clips/${id}/export?resolution=720p&format=portrait`, 'POST');
-                showToast(r.message || 'Disa aktarildi');
-            } catch (e) { showToast('Export hatasi', 'error'); }
+                const r = await apiCall(`/api/clips/${exportClipId}/export?platform=${platform}&resolution=${resolution}&output_format=${format}`, 'POST');
+                showToast(r.message || 'Dışa aktarıldı');
+            } catch (e) { showToast('Dışa aktarma hatası', 'error'); }
         }
 
         async function loadPreferences() {
@@ -393,6 +466,7 @@
                 document.getElementById('prefLang').value = p.subtitle_language;
                 document.getElementById('prefFormat').value = p.export_format;
                 document.getElementById('prefRes').value = p.export_resolution;
+                document.getElementById('prefPlatform').value = p.export_platform || 'youtube';
                 document.getElementById('prefWatermark').value = String(p.add_watermark);
                 document.getElementById('prefWatermarkText').value = p.watermark_text || '';
             } catch (e) { console.error('Prefs error:', e); }
@@ -410,6 +484,7 @@
                 subtitle_language: document.getElementById('prefLang').value,
                 export_format: document.getElementById('prefFormat').value,
                 export_resolution: document.getElementById('prefRes').value,
+                export_platform: document.getElementById('prefPlatform').value,
                 add_watermark: document.getElementById('prefWatermark').value === 'true',
                 watermark_text: document.getElementById('prefWatermarkText').value || null,
             };
