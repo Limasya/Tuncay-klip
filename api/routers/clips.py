@@ -147,11 +147,14 @@ async def toggle_favorite(clip_id: int, db: AsyncSession = Depends(get_db)):
 async def export_clip(
     clip_id: int,
     resolution: str = "720p",
-    format: str = "portrait",
+    output_format: str = "mp4",
     add_subtitle: bool = True,
     db: AsyncSession = Depends(get_db),
 ):
-    """Klibi sosyal medya formatında dışa aktarır."""
+    """Klibi sosyal medya formatında dışa aktarır.
+    resolution: 1080p, 720p, 480p, 9:16, 1:1, 4:5, portrait
+    output_format: mp4, mov, mkv, webm, avi, wmv
+    """
     result = await db.execute(select(Clip).where(Clip.id == clip_id))
     clip = result.scalar_one_or_none()
     if not clip or not clip.video_path:
@@ -159,11 +162,15 @@ async def export_clip(
 
     from services.video_editor import video_editor
 
-    # Boyutlandır
-    output = await video_editor.resize_clip(clip.video_path, resolution=format)
+    # Boyutlandır + format donustur
+    output = await video_editor.export_clip(
+        clip.video_path,
+        resolution=resolution,
+        output_format=output_format,
+    )
 
     # Altyazı ekle
-    if add_subtitle and clip.subtitle_path:
+    if add_subtitle and clip.subtitle_path and output:
         from services.subtitle_service import subtitle_service
         output = await subtitle_service.burn_subtitles(output, clip.subtitle_path)
 

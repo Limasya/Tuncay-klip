@@ -158,9 +158,24 @@
             <div class="card preferences-form">
                 <h3>Disa Aktarma</h3>
                 <label>Format</label>
-                <select id="prefFormat"><option value="mp4">MP4</option><option value="webm">WebM</option></select>
-                <label>Cozunurluk</label>
-                <select id="prefRes"><option value="1080p">1080p</option><option value="720p">720p</option><option value="portrait">Portrait (9:16)</option></select>
+                <select id="prefFormat">
+                    <option value="mp4">MP4 (MPEG-4) - Evrensel uyumluluk</option>
+                    <option value="mov">MOV (QuickTime) - Apple, yuksek kalite</option>
+                    <option value="mkv">MKV (Matroska) - Coklu ses/altyazi</option>
+                    <option value="webm">WebM - HTML5, web optimizasyonu</option>
+                    <option value="avi">AVI - Microsoft, yuksek kalite</option>
+                    <option value="wmv">WMV - Windows Media, kucuk boyut</option>
+                </select>
+                <label>Cozunurluk / Aspect Ratio</label>
+                <select id="prefRes">
+                    <option value="1080p">1080p (16:9) - YouTube, Twitch</option>
+                    <option value="720p">720p (16:9) - Standart</option>
+                    <option value="480p">480p (16:9) - Dusuk bant</option>
+                    <option value="9:16">9:16 Portrait - TikTok, Reels, Shorts</option>
+                    <option value="1:1">1:1 Square - Instagram post</option>
+                    <option value="4:5">4:5 - Instagram feed</option>
+                    <option value="portrait">Portrait (1080x1920) - Mobil</option>
+                </select>
                 <label>Filigran</label>
                 <select id="prefWatermark"><option value="false">Kapali</option><option value="true">Acik</option></select>
                 <label>Filigran Metni</label>

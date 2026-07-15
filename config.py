@@ -6,6 +6,7 @@ from functools import lru_cache
 
 
 class Settings(BaseSettings):
+    model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
     # Kick API
     kick_client_id: str = ""
     kick_client_secret: str = ""
@@ -53,10 +54,6 @@ class Settings(BaseSettings):
     # Server
     host: str = "0.0.0.0"
     port: int = 8000
-
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
 
 
 @lru_cache()

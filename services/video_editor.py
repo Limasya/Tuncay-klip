@@ -1,7 +1,8 @@
 """
 Video düzenleme ve post-processing servisi.
 - FFmpeg ile klip kesme, yeniden boyutlandırma
-- Sosyal medya formatları (portrait/landscape)
+- Çoklu format desteği: MP4, MOV, MKV, WebM, AVI, WMV
+- Sosyal medya aspect ratio'ları: 16:9, 9:16, 1:1, 4:5
 - Filigran, renk iyileştirme, geçiş efektleri
 - Klip montaj (highlight birleştirme)
 """
@@ -23,14 +24,147 @@ class VideoEditor:
     FFmpeg tabanlı otomatik video düzenleme servisi.
     """
 
-    # Çözünürlük profilleri
+    # Çözünürlük profilleri (genislik x yukseklik)
     RESOLUTIONS = {
         "1080p": {"width": 1920, "height": 1080},
         "720p": {"width": 1280, "height": 720},
         "480p": {"width": 854, "height": 480},
-        "portrait": {"width": 1080, "height": 1920},   # TikTok/Reels
-        "square": {"width": 1080, "height": 1080},      # Instagram
+        "portrait": {"width": 1080, "height": 1920},   # 9:16 TikTok/Reels/Shorts
+        "9:16": {"width": 1080, "height": 1920},       # 9:16 ayni
+        "square": {"width": 1080, "height": 1080},      # 1:1 Instagram
+        "1:1": {"width": 1080, "height": 1080},         # 1:1 ayni
+        "4:5": {"width": 1080, "height": 1350},         # 4:5 Instagram post
+        "16:9": {"width": 1920, "height": 1080},        # 16:9 YouTube
     }
+
+    # Video container formatlari ve FFmpeg codec ayarlari
+    FORMAT_PROFILES = {
+        "mp4": {
+            "extension": "mp4",
+            "video_codec": "libx264",
+            "audio_codec": "aac",
+            "extra_args": ["-movflags", "+faststart"],
+            "description": "Evrensel uyumluluk - YouTube, Instagram, TikTok",
+        },
+        "mov": {
+            "extension": "mov",
+            "video_codec": "libx264",
+            "audio_codec": "aac",
+            "extra_args": ["-movflags", "+faststart"],
+            "description": "Apple QuickTime - yuksek kalite, edit yazilimlari",
+        },
+        "mkv": {
+            "extension": "mkv",
+            "video_codec": "libx264",
+            "audio_codec": "aac",
+            "extra_args": [],
+            "description": "Matroska - coklu ses/altyazi destegi, acik kaynak",
+        },
+        "webm": {
+            "extension": "webm",
+            "video_codec": "libvpx-vp9",
+            "audio_codec": "libopus",
+            "extra_args": ["-b:v", "2M"],
+            "description": "Google WebM - HTML5, web optimizasyonu",
+        },
+        "avi": {
+            "extension": "avi",
+            "video_codec": "libx264",
+            "audio_codec": "mp3",
+            "extra_args": [],
+            "description": "Microsoft AVI - yuksek kalite, buyuk dosya",
+        },
+        "wmv": {
+            "extension": "wmv",
+            "video_codec": "wmv2",
+            "audio_codec": "wmav2",
+            "extra_args": ["-b:v", "3M"],
+            "description": "Windows Media Video - kucuk boyut, online akis",
+        },
+    }
+
+    def _get_format_profile(self, fmt: str) -> Dict:
+        """Format profilini dondurur, varsayilan mp4."""
+        return self.FORMAT_PROFILES.get(fmt.lower(), self.FORMAT_PROFILES["mp4"])
+
+    def _build_output_path(
+        self, input_path: str, suffix: str, fmt: str = "mp4"
+    ) -> str:
+        profile = self._get_format_profile(fmt)
+        base = Path(input_path).stem
+        return str(EXPORTS_DIR / f"{base}_{suffix}.{profile['extension']}")
+
+    async def export_clip(
+        self,
+        input_path: str,
+        resolution: str = "720p",
+        output_format: str = "mp4",
+        output_path: Optional[str] = None,
+    ) -> Optional[str]:
+        """
+        Klibi belirtilen cozunurluk ve formatta disa aktarir.
+        resolution: 1080p, 720p, 480p, portrait, 9:16, square, 1:1, 4:5, 16:9
+        output_format: mp4, mov, mkv, webm, avi, wmv
+        """
+        res = self.RESOLUTIONS.get(resolution, self.RESOLUTIONS["720p"])
+        profile = self._get_format_profile(output_format)
+
+        if not output_path:
+            output_path = self._build_output_path(
+                input_path, f"{resolution}_{output_format}", output_format
+            )
+
+        # Aspect ratio'ya gore vf filtresi
+        vf = self._build_video_filter(resolution, res)
+
+        cmd = [
+            "ffmpeg", "-y",
+            "-i", input_path,
+            "-vf", vf,
+            "-c:v", profile["video_codec"],
+            "-c:a", profile["audio_codec"],
+            "-preset", "fast",
+            "-crf", "23",
+        ]
+        cmd.extend(profile["extra_args"])
+        cmd.append(output_path)
+
+        return await self._run_ffmpeg(
+            cmd, output_path,
+            f"Export ({output_format.upper()}, {resolution})"
+        )
+
+    def _build_video_filter(self, resolution_key: str, res: Dict) -> str:
+        """Resolution key'e gore uygun video filtresini olusturur."""
+        w, h = res["width"], res["height"]
+
+        if resolution_key in ("portrait", "9:16"):
+            # Dikey: ortadan krip + pad
+            return (
+                f"crop=ih*9/16:ih,"
+                f"scale={w}:{h}:"
+                f"force_original_aspect_ratio=decrease,"
+                f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:black"
+            )
+        elif resolution_key in ("square", "1:1"):
+            return (
+                f"crop='min(iw,ih)':'min(iw,ih)',"
+                f"scale={w}:{h}"
+            )
+        elif resolution_key == "4:5":
+            return (
+                f"crop=ih*4/5:ih,"
+                f"scale={w}:{h}:"
+                f"force_original_aspect_ratio=decrease,"
+                f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:black"
+            )
+        else:
+            # Yatay: 16:9, 1080p, 720p, 480p
+            return (
+                f"scale={w}:{h}:"
+                f"force_original_aspect_ratio=decrease,"
+                f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:black"
+            )
 
     async def trim_clip(
         self,
@@ -38,22 +172,24 @@ class VideoEditor:
         start: float,
         duration: float,
         output_path: Optional[str] = None,
+        output_format: str = "mp4",
     ) -> Optional[str]:
-        """Klibi belirli zaman aralığında keser."""
+        """Klibi belirli zaman araliginda keser."""
+        profile = self._get_format_profile(output_format)
         if not output_path:
-            base = Path(input_path).stem
-            output_path = str(EXPORTS_DIR / f"{base}_trim.mp4")
+            output_path = self._build_output_path(input_path, "trim", output_format)
 
         cmd = [
             "ffmpeg", "-y",
             "-i", input_path,
             "-ss", str(start),
             "-t", str(duration),
-            "-c:v", "libx264",
-            "-c:a", "aac",
+            "-c:v", profile["video_codec"],
+            "-c:a", profile["audio_codec"],
             "-preset", "fast",
-            output_path,
         ]
+        cmd.extend(profile["extra_args"])
+        cmd.append(output_path)
 
         return await self._run_ffmpeg(cmd, output_path, "Klip kesme")
 
@@ -61,47 +197,13 @@ class VideoEditor:
         self,
         input_path: str,
         resolution: str = "720p",
+        output_format: str = "mp4",
         output_path: Optional[str] = None,
     ) -> Optional[str]:
-        """Klibi belirtilen çözünürlüğe yeniden boyutlandırır."""
-        res = self.RESOLUTIONS.get(resolution, self.RESOLUTIONS["720p"])
-
-        if not output_path:
-            base = Path(input_path).stem
-            output_path = str(EXPORTS_DIR / f"{base}_{resolution}.mp4")
-
-        if resolution == "portrait":
-            # Portrait: ortadan kırp + pad
-            vf = (
-                f"crop=ih*9/16:ih,"
-                f"scale={res['width']}:{res['height']}:"
-                f"force_original_aspect_ratio=decrease,"
-                f"pad={res['width']}:{res['height']}:(ow-iw)/2:(oh-ih)/2:black"
-            )
-        elif resolution == "square":
-            vf = (
-                f"crop='min(iw,ih)':'min(iw,ih)',"
-                f"scale={res['width']}:{res['height']}"
-            )
-        else:
-            vf = (
-                f"scale={res['width']}:{res['height']}:"
-                f"force_original_aspect_ratio=decrease,"
-                f"pad={res['width']}:{res['height']}:(ow-iw)/2:(oh-ih)/2:black"
-            )
-
-        cmd = [
-            "ffmpeg", "-y",
-            "-i", input_path,
-            "-vf", vf,
-            "-c:v", "libx264",
-            "-c:a", "aac",
-            "-preset", "fast",
-            "-crf", "23",
-            output_path,
-        ]
-
-        return await self._run_ffmpeg(cmd, output_path, f"Boyutlandırma ({resolution})")
+        """Klibi belirtilen cozunurluge ve formata yeniden boyutlandirir."""
+        return await self.export_clip(
+            input_path, resolution, output_format, output_path
+        )
 
     async def add_watermark(
         self,
