@@ -57,6 +57,39 @@
         @keyframes slideIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
         .pulse { animation: pulse 2s infinite; }
         @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+        /* Pipeline Panel */
+        .pipeline-section { margin: 20px 0; }
+        .pipeline-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; }
+        .pipeline-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; }
+        @media (max-width: 900px) { .pipeline-grid { grid-template-columns: 1fr; } }
+        .signal-row { display: flex; align-items: center; gap: 8px; padding: 4px 0; }
+        .signal-label { width: 110px; font-size: 0.8rem; color: #aaa; flex-shrink: 0; }
+        .signal-bar-bg { flex: 1; height: 8px; background: #2a2a4a; border-radius: 4px; overflow: hidden; }
+        .signal-bar-fill { height: 100%; border-radius: 4px; transition: width 0.5s ease; }
+        .signal-value { width: 40px; text-align: right; font-size: 0.75rem; color: #fff; font-weight: 600; }
+        .score-big { font-size: 3rem; font-weight: 700; text-align: center; margin: 10px 0; }
+        .score-label { text-align: center; color: #888; font-size: 0.85rem; }
+        .state-chip { display: inline-block; padding: 4px 12px; border-radius: 12px; font-size: 0.8rem; font-weight: 600; text-transform: uppercase; }
+        .state-offline { background: #555; color: #ccc; }
+        .state-starting { background: #ffd740; color: #000; }
+        .state-warming_up { background: #ff9800; color: #000; }
+        .state-steady { background: #2196f3; color: #fff; }
+        .state-high_energy { background: #ff6d00; color: #fff; }
+        .state-peak_moment { background: #ff1744; color: #fff; animation: pulse 1s infinite; }
+        .state-cooling_down { background: #26a69a; color: #fff; }
+        .state-ending { background: #78909c; color: #fff; }
+        .event-log { max-height: 280px; overflow-y: auto; font-family: 'Consolas', monospace; font-size: 0.78rem; }
+        .event-log-item { padding: 4px 8px; border-left: 3px solid #333; margin: 3px 0; background: #12121e; border-radius: 0 4px 4px 0; }
+        .event-log-item.chat { border-left-color: #00bcd4; }
+        .event-log-item.audio { border-left-color: #ff9800; }
+        .event-log-item.video { border-left-color: #7c4dff; }
+        .event-log-item.scored { border-left-color: #e91e63; }
+        .event-log-item.clip { border-left-color: #00e676; }
+        .event-log-item.decision { border-left-color: #ffd740; }
+        .event-type-badge { font-size: 0.7rem; padding: 1px 6px; border-radius: 3px; background: #333; color: #ddd; margin-right: 6px; }
+        .chat-input-row { display: flex; gap: 8px; margin-top: 12px; }
+        .chat-input-row input { flex: 1; padding: 8px 12px; background: #0f0f23; border: 1px solid #2a2a4a; border-radius: 6px; color: #fff; font-size: 0.9rem; }
+        .active-signals { font-size: 0.85rem; color: #888; text-align: center; margin-top: 5px; }
     </style>
 </head>
 <body>
@@ -104,6 +137,66 @@
                 <div class="stat"><span class="stat-label">Islenen Frame</span><span class="stat-value" id="framesProcessed">0</span></div>
                 <div class="stat"><span class="stat-label">Tetiklenen Olay</span><span class="stat-value" id="eventsTriggered">0</span></div>
                 <div class="stat"><span class="stat-label">Analiz FPS</span><span class="stat-value" id="analysisFps">-</span></div>
+            </div>
+        </div>
+
+        <!-- Pipeline Section -->
+        <div class="pipeline-section">
+            <div class="pipeline-header">
+                <h2 class="section-title" style="margin:0">Event-Driven Pipeline</h2>
+                <div>
+                    <span id="streamState" class="state-chip state-offline">OFFLINE</span>
+                    <button class="btn btn-secondary" style="margin-left:10px" onclick="refreshPipeline()">Refresh</button>
+                </div>
+            </div>
+            <div class="pipeline-grid">
+                <!-- Score Card -->
+                <div class="card">
+                    <h3>Highlight Score</h3>
+                    <div class="score-big" id="compositeScore" style="color:#555">0.00</div>
+                    <div class="score-label">Composite (threshold: 0.55)</div>
+                    <div class="active-signals" id="activeSignals">0 active signals</div>
+                    <div style="margin-top:15px">
+                        <div class="signal-row"><span class="signal-label">audio_spike</span><div class="signal-bar-bg"><div class="signal-bar-fill" id="bar_audio_spike" style="width:0%;background:#ff9800"></div></div><span class="signal-value" id="val_audio_spike">0</span></div>
+                        <div class="signal-row"><span class="signal-label">chat_velocity</span><div class="signal-bar-bg"><div class="signal-bar-fill" id="bar_chat_velocity" style="width:0%;background:#00bcd4"></div></div><span class="signal-value" id="val_chat_velocity">0</span></div>
+                        <div class="signal-row"><span class="signal-label">emotion_intensity</span><div class="signal-bar-bg"><div class="signal-bar-fill" id="bar_emotion_intensity" style="width:0%;background:#7c4dff"></div></div><span class="signal-value" id="val_emotion_intensity">0</span></div>
+                        <div class="signal-row"><span class="signal-label">emotion_change</span><div class="signal-bar-bg"><div class="signal-bar-fill" id="bar_emotion_change" style="width:0%;background:#b388ff"></div></div><span class="signal-value" id="val_emotion_change">0</span></div>
+                        <div class="signal-row"><span class="signal-label">pose_gesture</span><div class="signal-bar-bg"><div class="signal-bar-fill" id="bar_pose_gesture" style="width:0%;background:#00e676"></div></div><span class="signal-value" id="val_pose_gesture">0</span></div>
+                        <div class="signal-row"><span class="signal-label">pose_motion</span><div class="signal-bar-bg"><div class="signal-bar-fill" id="bar_pose_motion" style="width:0%;background:#80deea"></div></div><span class="signal-value" id="val_pose_motion">0</span></div>
+                        <div class="signal-row"><span class="signal-label">chat_sentiment</span><div class="signal-bar-bg"><div class="signal-bar-fill" id="bar_chat_sentiment" style="width:0%;background:#26c6da"></div></div><span class="signal-value" id="val_chat_sentiment">0</span></div>
+                        <div class="signal-row"><span class="signal-label">viewer_delta</span><div class="signal-bar-bg"><div class="signal-bar-fill" id="bar_viewer_delta" style="width:0%;background:#42a5f5"></div></div><span class="signal-value" id="val_viewer_delta">0</span></div>
+                        <div class="signal-row"><span class="signal-label">ocr_keyword</span><div class="signal-bar-bg"><div class="signal-bar-fill" id="bar_ocr_keyword" style="width:0%;background:#ffa726"></div></div><span class="signal-value" id="val_ocr_keyword">0</span></div>
+                        <div class="signal-row"><span class="signal-label">speech_content</span><div class="signal-bar-bg"><div class="signal-bar-fill" id="bar_speech_content" style="width:0%;background:#ab47bc"></div></div><span class="signal-value" id="val_speech_content">0</span></div>
+                    </div>
+                </div>
+                <!-- Event Log -->
+                <div class="card">
+                    <h3>Event Stream</h3>
+                    <div class="event-log" id="eventLog">
+                        <div style="text-align:center;color:#555;padding:40px 0">No events yet</div>
+                    </div>
+                </div>
+                <!-- Chat Test + Service Stats -->
+                <div class="card">
+                    <h3>Chat Test Panel</h3>
+                    <div class="chat-input-row">
+                        <input type="text" id="chatTestInput" placeholder="Type hype message..." onkeydown="if(event.key==='Enter')sendChat()">
+                        <button class="btn btn-primary" onclick="sendChat()">Send</button>
+                    </div>
+                    <div style="margin-top:15px">
+                        <h3 style="margin-bottom:10px">Service Metrics</h3>
+                        <div class="stat"><span class="stat-label">Chat Messages</span><span class="stat-value" id="svcChatMsgs">0</span></div>
+                        <div class="stat"><span class="stat-label">Chat Spikes</span><span class="stat-value" id="svcChatSpikes">0</span></div>
+                        <div class="stat"><span class="stat-label">Audio Chunks</span><span class="stat-value" id="svcAudioChunks">0</span></div>
+                        <div class="stat"><span class="stat-label">Audio Spikes</span><span class="stat-value" id="svcAudioSpikes">0</span></div>
+                        <div class="stat"><span class="stat-label">Events Processed</span><span class="stat-value" id="svcEventsProc">0</span></div>
+                        <div class="stat"><span class="stat-label">High Scores</span><span class="stat-value" id="svcHighScores">0</span></div>
+                        <div class="stat"><span class="stat-label">Clips Created</span><span class="stat-value" id="svcClipsCreated">0</span></div>
+                        <div class="stat"><span class="stat-label">Clips Rejected</span><span class="stat-value" id="svcClipsRejected">0</span></div>
+                        <div class="stat"><span class="stat-label">Bus Published</span><span class="stat-value" id="svcBusPub">0</span></div>
+                        <div class="stat"><span class="stat-label">Bus Dispatched</span><span class="stat-value" id="svcBusDisp">0</span></div>
+                    </div>
+                </div>
             </div>
         </div>
 
@@ -326,11 +419,168 @@
             } catch (e) { showToast('Kaydetme hatasi', 'error'); }
         }
 
-        // Auto-refresh
+        // ── Pipeline Functions ──
+        const SIGNALS = ['audio_spike','chat_velocity','emotion_intensity','emotion_change','pose_gesture','pose_motion','chat_sentiment','viewer_delta','ocr_keyword','speech_content'];
+
+        function getEventClass(type) {
+            if (type.startsWith('chat')) return 'chat';
+            if (type.startsWith('audio')) return 'audio';
+            if (type.startsWith('analysis') || type.startsWith('video')) return 'video';
+            if (type.includes('scored')) return 'scored';
+            if (type.includes('clip')) return 'clip';
+            if (type.includes('decision') || type.includes('candidate')) return 'decision';
+            return '';
+        }
+
+        async function refreshPipeline() {
+            try {
+                const [scoreData, eventsData, statusData] = await Promise.all([
+                    apiCall('/api/pipeline/score'),
+                    apiCall('/api/pipeline/events?last_n=30'),
+                    apiCall('/api/pipeline/status'),
+                ]);
+
+                // Score
+                const score = scoreData.composite_score || 0;
+                const scoreEl = document.getElementById('compositeScore');
+                scoreEl.textContent = score.toFixed(3);
+                scoreEl.style.color = score >= 0.55 ? '#ff1744' : score >= 0.3 ? '#ffd740' : score > 0 ? '#00d4ff' : '#555';
+                document.getElementById('activeSignals').textContent = (scoreData.active_signals || 0) + ' active signals';
+
+                // Signal bars
+                const bd = scoreData.breakdown || {};
+                SIGNALS.forEach(sig => {
+                    const v = bd[sig] || 0;
+                    const bar = document.getElementById('bar_' + sig);
+                    const val = document.getElementById('val_' + sig);
+                    if (bar) bar.style.width = Math.min(v * 100, 100) + '%';
+                    if (val) val.textContent = v.toFixed(2);
+                });
+
+                // Stream state
+                const state = (statusData.event_detector || {}).stream_state || 'offline';
+                const stateEl = document.getElementById('streamState');
+                stateEl.textContent = state.toUpperCase();
+                stateEl.className = 'state-chip state-' + state;
+
+                // Event log
+                if (Array.isArray(eventsData) && eventsData.length > 0) {
+                    const logEl = document.getElementById('eventLog');
+                    logEl.innerHTML = eventsData.slice(0, 25).map(e => {
+                        const cls = getEventClass(e.event_type);
+                        const time = e.timestamp ? new Date(e.timestamp).toLocaleTimeString() : '';
+                        const src = e.source_service || '';
+                        return '<div class="event-log-item ' + cls + '">' +
+                            '<span class="event-type-badge">' + e.event_type + '</span>' +
+                            '<span style="color:#666">' + time + '</span> ' +
+                            '<span style="color:#888">' + src + '</span></div>';
+                    }).join('');
+                }
+
+                // Service metrics
+                const ca = statusData.chat_analysis || {};
+                const aa = statusData.audio_analysis || {};
+                const ed = statusData.event_detector || {};
+                const de = statusData.decision_engine || {};
+                const eb = statusData.event_bus || {};
+                document.getElementById('svcChatMsgs').textContent = ca.messages_analyzed || 0;
+                document.getElementById('svcChatSpikes').textContent = ca.spikes_detected || 0;
+                document.getElementById('svcAudioChunks').textContent = aa.chunks_analyzed || 0;
+                document.getElementById('svcAudioSpikes').textContent = aa.spikes_detected || 0;
+                document.getElementById('svcEventsProc').textContent = ed.events_processed || 0;
+                document.getElementById('svcHighScores').textContent = ed.high_scores || 0;
+                document.getElementById('svcClipsCreated').textContent = de.clips_created || 0;
+                document.getElementById('svcClipsRejected').textContent = de.clips_rejected || 0;
+                document.getElementById('svcBusPub').textContent = eb.events_published || 0;
+                document.getElementById('svcBusDisp').textContent = eb.events_dispatched || 0;
+            } catch (e) { console.error('Pipeline refresh error:', e); }
+        }
+
+        async function sendChat() {
+            const input = document.getElementById('chatTestInput');
+            const text = input.value.trim();
+            if (!text) return;
+            try {
+                const r = await apiCall('/api/pipeline/chat', 'POST', { text, user: 'dashboard' });
+                showToast('Sentiment: ' + (r.label || '?') + ' (' + (r.score || 0).toFixed(2) + ')');
+                input.value = '';
+                setTimeout(refreshPipeline, 500);
+            } catch (e) { showToast('Chat send failed', 'error'); }
+        }
+
+        // ── WebSocket for real-time pipeline updates ──
+        let ws = null;
+        let wsReconnectTimer = null;
+
+        function connectWS() {
+            const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+            ws = new WebSocket(proto + '//' + location.host + '/api/pipeline/ws/events');
+
+            ws.onopen = () => console.log('[WS] connected');
+
+            ws.onmessage = (evt) => {
+                const msg = JSON.parse(evt.data);
+                if (msg.type === 'score') applyScore(msg.data);
+                else if (msg.type === 'event') appendEvent(msg.data);
+                else if (msg.type === 'status') applyStatusMetrics(msg.data);
+            };
+
+            ws.onclose = () => {
+                console.log('[WS] disconnected, reconnecting in 3s');
+                wsReconnectTimer = setTimeout(connectWS, 3000);
+            };
+
+            ws.onerror = () => ws.close();
+        }
+
+        function applyScore(data) {
+            const score = data.composite_score || 0;
+            const scoreEl = document.getElementById('compositeScore');
+            scoreEl.textContent = score.toFixed(3);
+            scoreEl.style.color = score >= 0.55 ? '#ff1744' : score >= 0.3 ? '#ffd740' : score > 0 ? '#00d4ff' : '#555';
+            document.getElementById('activeSignals').textContent = (data.active_signals || 0) + ' active signals';
+            const bd = data.breakdown || {};
+            SIGNALS.forEach(sig => {
+                const v = bd[sig] || 0;
+                const bar = document.getElementById('bar_' + sig);
+                const val = document.getElementById('val_' + sig);
+                if (bar) bar.style.width = Math.min(v * 100, 100) + '%';
+                if (val) val.textContent = v.toFixed(2);
+            });
+        }
+
+        function appendEvent(data) {
+            const logEl = document.getElementById('eventLog');
+            const cls = getEventClass(data.event_type);
+            const time = data.timestamp ? new Date(data.timestamp).toLocaleTimeString() : '';
+            const src = data.source_service || '';
+            const item = document.createElement('div');
+            item.className = 'event-log-item ' + cls;
+            item.innerHTML = '<span class="event-type-badge">' + data.event_type + '</span>' +
+                '<span style="color:#666">' + time + '</span> ' +
+                '<span style="color:#888">' + src + '</span>';
+            logEl.prepend(item);
+            // Keep max 50 items
+            while (logEl.children.length > 50) logEl.lastChild.remove();
+        }
+
+        function applyStatusMetrics(data) {
+            const ed = data.event_detector || {};
+            const state = ed.stream_state || 'offline';
+            const stateEl = document.getElementById('streamState');
+            stateEl.textContent = state.toUpperCase();
+            stateEl.className = 'state-chip state-' + state;
+        }
+
+        // Start
         refreshStatus();
         loadPreferences();
         loadClips();
+        refreshPipeline();
+        connectWS();
         setInterval(refreshStatus, 10000);
+        // Pipeline polling as fallback (less frequent since WS handles real-time)
+        setInterval(refreshPipeline, 10000);
     </script>
 </body>
 </html>

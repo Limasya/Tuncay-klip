@@ -188,14 +188,20 @@ class PipelineOrchestrator:
             await self.audio_analysis.analyze_chunk(audio_data)
 
     async def _on_clip_created(self, event: SystemEvent):
-        """Handle clip creation events."""
+        """Handle clip creation events — log + save to DB."""
         clip_data = event.payload
         logger.info(
-            f"🎬 CLIP CREATED! "
+            f"CLIP CREATED! "
             f"Score: {clip_data.get('highlight_score', 0):.3f} "
             f"Category: {clip_data.get('category', 'unknown')} "
             f"Path: {clip_data.get('file_path', 'unknown')}"
         )
+        # Save to database
+        try:
+            from api.routers.pipeline import save_pipeline_clip_to_db
+            await save_pipeline_clip_to_db(clip_data)
+        except Exception as e:
+            logger.warning(f"DB clip save failed (non-critical): {e}")
 
     # ─── Manual Trigger Methods ───────────────────────────────
 
