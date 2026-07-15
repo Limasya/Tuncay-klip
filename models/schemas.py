@@ -308,3 +308,139 @@ class AudioDuckingResponse(BaseModel):
     attack: int
     release: int
     filter_string: str
+
+
+# --- Gelistirilmis Edit Ozellikleri ---
+
+class BeatSyncRequest(BaseModel):
+    """Beat-sync analiz ve filtre istegi."""
+    source_path: str
+    audio_path: Optional[str] = None
+    bpm: Optional[float] = None
+    zoom_on_beat: bool = True
+    zoom_level: float = 1.05
+    flash_on_beat: bool = False
+    shake_on_beat: bool = False
+    speed_variation: bool = False
+    downbeats_only: bool = False
+
+
+class BeatSyncResponse(BaseModel):
+    """Beat-sync sonucu."""
+    bpm: float
+    total_beats: int
+    total_bars: int
+    duration: float
+    filters_generated: int
+
+
+class SceneDetectionRequest(BaseModel):
+    """Sahne algilama istegi."""
+    source_path: str
+    threshold: float = 0.3
+    min_scene_duration: float = 0.5
+    apply_effects: bool = True
+    highlight_reel: bool = False
+    max_highlight_duration: float = 60.0
+
+
+class SceneInfo(BaseModel):
+    """Sahne bilgisi."""
+    index: int
+    start: float
+    end: float
+    duration: float
+
+
+class SceneDetectionResponse(BaseModel):
+    """Sahne algilama sonucu."""
+    total_scenes: int
+    total_duration: float
+    average_scene_duration: float
+    scenes: List[SceneInfo]
+    highlight_reel: Optional[List[List[float]]] = None
+
+
+class SplitScreenRequest(BaseModel):
+    """Split screen render istegi."""
+    clip_paths: List[str] = Field(min_length=2, max_length=9)
+    layout: str = "side_by_side"
+    gap: int = 4
+    output_path: Optional[str] = None
+
+
+class EndScreenRequest(BaseModel):
+    """End screen overlay istegi."""
+    source_path: str
+    template: str = "subscribe_cta"
+    custom_text: Optional[Dict[str, str]] = None
+    call_to_action: Optional[str] = None
+    cta_position: str = "bottom_right"
+
+
+class LowerThirdRequest(BaseModel):
+    """Lower third ekleme istegi."""
+    source_path: str
+    name: str
+    title: str = ""
+    style: str = "news"
+    start_time: float = 0.0
+    duration: float = 5.0
+    position: str = "bottom_left"
+    animated: bool = True
+
+
+class StickerOverlayRequest(BaseModel):
+    """Sticker/emoji overlay istegi."""
+    source_path: str
+    reaction_type: Optional[str] = None
+    reaction_start: float = 0.0
+    reaction_duration: float = 2.0
+    emoji_rain: bool = False
+    emoji_rain_emoji: str = "fire"
+    confetti: bool = False
+
+
+class EmotionArcRequest(BaseModel):
+    """Emotion arc efekt istegi."""
+    source_path: str
+    segments: List[Dict[str, Any]]
+    apply_color: bool = True
+    apply_speed: bool = True
+    apply_vignette: bool = True
+
+
+class AdvancedRenderRequest(BaseModel):
+    """Tam gelistirilmis render istegi (tum ozellikler)."""
+    source_path: str
+    aspect_ratio: str = "9:16"
+    resolution: str = "1080p"
+    crf: int = 23
+    category: str = "other"
+    # Beat sync
+    beat_sync_enabled: bool = False
+    beat_sync_bpm: Optional[float] = None
+    beat_sync_zoom: bool = True
+    # Word highlight
+    word_highlight_enabled: bool = False
+    word_highlight_words: List[Dict[str, Any]] = Field(default_factory=list)
+    word_highlight_palette: str = "neon"
+    # Stickers
+    stickers_enabled: bool = False
+    sticker_reaction: Optional[str] = None
+    sticker_emoji_rain: bool = False
+    sticker_confetti: bool = False
+    # Lower thirds
+    lower_thirds_enabled: bool = False
+    lower_thirds_name: str = ""
+    lower_thirds_title: str = ""
+    lower_thirds_style: str = "news"
+    # End screen
+    end_screen_enabled: bool = False
+    end_screen_template: str = "subscribe_cta"
+    # Emotion arc
+    emotion_arc_enabled: bool = False
+    emotion_arc_segments: List[Dict[str, Any]] = Field(default_factory=list)
+    # Scene detection
+    scene_detection_enabled: bool = False
+    scene_detection_threshold: float = 0.3

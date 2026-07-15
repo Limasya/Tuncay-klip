@@ -1,11 +1,13 @@
 """
 Otomatik edit API endpoint'leri.
 Edit spec oluşturma, render, montaj, müzik/SFX kütüphanesi.
+Gelişmiş: sahne algılama, beat-sync, split-screen, end-screen,
+lower-third, sticker, emotion-arc endpoint'leri.
 """
 import logging
 import uuid
 from datetime import datetime
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 from fastapi import APIRouter, HTTPException, BackgroundTasks
 from pydantic import BaseModel
 
@@ -13,11 +15,20 @@ from models.schemas import (
     EditSpecRequest, EditSpecResponse, RenderJobCreate, RenderJobResponse,
     MontageCreate, MusicLibraryResponse, SFXLibraryResponse,
     AudioDuckingRequest, AudioDuckingResponse,
+    BeatSyncRequest, BeatSyncResponse,
+    SceneDetectionRequest, SceneDetectionResponse, SceneInfo,
+    SplitScreenRequest, EndScreenRequest, LowerThirdRequest,
+    StickerOverlayRequest, EmotionArcRequest, AdvancedRenderRequest,
 )
 from services.auto_editor import auto_editor
 from services.render_pipeline import render_pipeline
 from services.music_service import music_service
-from services.edit_spec import AspectRatio, ClipSpec
+from services.edit_spec import (
+    AspectRatio, ClipSpec, TimeRange, VisualEffect, ColorGrading,
+    BeatSyncConfig, WordHighlightConfig, StickerOverlayConfig,
+    LowerThirdConfig, LowerThirdEntry, EndScreenConfig,
+    EmotionArcConfig, EmotionSegment, SceneDetectionConfig,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/edit", tags=["auto-edit"])
@@ -309,3 +320,440 @@ async def _execute_montage_job(job_id: str, request: MontageCreate):
 
     except Exception as e:
         logger.error("Montaj job hatası (%s): %s", job_id, e)
+
+
+# --- Sahne Algilama ---
+
+@router.post("/scene-detect", response_model=SceneDetectionResponse)
+async def detect_scenes(request: SceneDetectionRequest):
+    """
+    Video dosyasından sahneleri algılar.
+    FFmpeg scene filter ile sahne değişimlerini tespit eder.
+    """
+    from services.scene_detection import scene_detection
+
+    try:
+        result = await scene_detection.detect_scenes(
+            request.source_path,
+            threshold=request.threshold,
+            min_scene_duration=request.min_scene_duration,
+        )
+
+        scenes = [
+            SceneInfo(
+                index=s.index, start=s.start,
+                end=s.end, duration=s.duration,
+            )
+            for s in result.scenes
+        ]
+
+        highlight = None
+        if request.highlight_reel:
+            highlight = scene_detection.generate_highlight_reel(
+                result.scenes,
+                max_duration=request.max_highlight_duration,
+            )
+
+        return SceneDetectionResponse(
+            total_scenes=result.total_scenes,
+            total_duration=result.total_duration,
+            average_scene_duration=result.average_scene_duration,
+            scenes=scenes,
+            highlight_reel=highlight,
+        )
+    except Exception as e:
+        logger.error("Sahne algılama hatası: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# --- Beat-Senkronize Duzenleme ---
+
+@router.post("/beat-sync", response_model=BeatSyncResponse)
+async def analyze_beat_sync(request: BeatSyncRequest):
+    """
+    Ses dosyasından beat'leri algılar ve beat-senkronize filtreler üretir.
+    """
+    from services.beat_sync import beat_sync
+
+    try:
+        audio_path = request.audio_path or request.source_path
+        beat_grid = await beat_sync.detect_beats(audio_path, request.bpm or 0.8)
+
+        # BPM override
+        if request.bpm:
+            from services.beat_sync import BeatGrid, BeatInfo
+            interval = 60.0 / request.bpm
+            beats = []
+            t = 0.0
+            beat_num = 0
+            while t < beat_grid.duration:
+                is_downbeat = (beat_num % 4 == 0)
+                beats.append(BeatInfo(
+                    time=t,
+                    strength=1.0 if is_downbeat else 0.6,
+                    bpm=request.bpm,
+                    beat_number=beat_num % 4,
+                    is_downbeat=is_downbeat,
+                ))
+                t += interval
+                beat_num += 1
+            beat_grid = BeatGrid(
+                bpm=request.bpm, beats=beats,
+                total_bars=beat_num // 4,
+                time_signature="4/4",
+                duration=beat_grid.duration,
+            )
+
+        filters_count = 0
+        if request.zoom_on_beat:
+            f = beat_sync.generate_beat_zoom_filter(beat_grid, request.zoom_level, request.downbeats_only)
+            if f and f != "null":
+                filters_count += 1
+        if request.flash_on_beat:
+            f = beat_sync.generate_beat_flash_filter(beat_grid)
+            if f and f != "null":
+                filters_count += 1
+        if request.shake_on_beat:
+            f = beat_sync.generate_beat_shake_filter(beat_grid)
+            if f and f != "null":
+                filters_count += 1
+        if request.speed_variation:
+            f = beat_sync.generate_beat_speed_filter(beat_grid)
+            if f and f != "null":
+                filters_count += 1
+
+        return BeatSyncResponse(
+            bpm=beat_grid.bpm,
+            total_beats=len(beat_grid.beats),
+            total_bars=beat_grid.total_bars,
+            duration=beat_grid.duration,
+            filters_generated=filters_count,
+        )
+    except Exception as e:
+        logger.error("Beat-sync hatası: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# --- Split Screen ---
+
+@router.post("/split-screen")
+async def render_split_screen(request: SplitScreenRequest):
+    """
+    Çoklu klibi split screen olarak render eder.
+    """
+    try:
+        spec = ClipSpec(
+            source_path=request.clip_paths[0],
+            split_screen=SplitScreenConfig(
+                enabled=True,
+                layout=request.layout,
+                clip_paths=request.clip_paths,
+                gap=request.gap,
+            ),
+        )
+
+        output_path = request.output_path
+        result = await render_pipeline.render_split_screen(spec, output_path)
+
+        if not result:
+            raise HTTPException(status_code=500, detail="Split screen render başarısız")
+
+        return {
+            "status": "completed",
+            "output_path": result,
+            "layout": request.layout,
+            "clip_count": len(request.clip_paths),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Split screen hatası: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# --- End Screen ---
+
+@router.post("/end-screen")
+async def add_end_screen(request: EndScreenRequest):
+    """
+    Videoya end screen (outro) overlay ekler.
+    """
+    from services.end_screen import end_screen
+
+    try:
+        spec = ClipSpec(
+            source_path=request.source_path,
+            end_screen=EndScreenConfig(
+                enabled=True,
+                template=request.template,
+                custom_text=request.custom_text,
+                call_to_action=request.call_to_action,
+                cta_position=request.cta_position,
+            ),
+        )
+
+        result = await render_pipeline.render(spec)
+        if not result:
+            raise HTTPException(status_code=500, detail="End screen render başarısız")
+
+        return {
+            "status": "completed",
+            "output_path": result,
+            "template": request.template,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("End screen hatası: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# --- Lower Third ---
+
+@router.post("/lower-third")
+async def add_lower_third(request: LowerThirdRequest):
+    """
+    Videoya lower third grafik ekler.
+    """
+    try:
+        spec = ClipSpec(
+            source_path=request.source_path,
+            lower_thirds=LowerThirdConfig(
+                enabled=True,
+                entries=[
+                    LowerThirdEntry(
+                        name=request.name,
+                        title=request.title,
+                        style=request.style,
+                        start_time=request.start_time,
+                        duration=request.duration,
+                        position=request.position,
+                        animated=request.animated,
+                    )
+                ],
+            ),
+        )
+
+        result = await render_pipeline.render(spec)
+        if not result:
+            raise HTTPException(status_code=500, detail="Lower third render başarısız")
+
+        return {
+            "status": "completed",
+            "output_path": result,
+            "name": request.name,
+            "style": request.style,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Lower third hatası: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# --- Sticker/Emoji Overlay ---
+
+@router.post("/sticker")
+async def add_sticker_overlay(request: StickerOverlayRequest):
+    """
+    Videoya sticker/emoji overlay ekler.
+    Reaksiyon, emoji yağmuru veya konfeti.
+    """
+    try:
+        spec = ClipSpec(
+            source_path=request.source_path,
+            stickers=StickerOverlayConfig(
+                enabled=True,
+                reaction_type=request.reaction_type,
+                reaction_start=request.reaction_start,
+                reaction_duration=request.reaction_duration,
+                emoji_rain=request.emoji_rain,
+                emoji_rain_emoji=request.emoji_rain_emoji,
+                confetti=request.confetti,
+            ),
+        )
+
+        result = await render_pipeline.render(spec)
+        if not result:
+            raise HTTPException(status_code=500, detail="Sticker render başarısız")
+
+        return {
+            "status": "completed",
+            "output_path": result,
+            "reaction_type": request.reaction_type,
+            "emoji_rain": request.emoji_rain,
+            "confetti": request.confetti,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Sticker hatası: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# --- Emotion Arc ---
+
+@router.post("/emotion-arc")
+async def apply_emotion_arc(request: EmotionArcRequest):
+    """
+    Videoya emotion arc efektleri uygular.
+    Duygu değişimlerini renk, hız ve vignette efektlerine çevirir.
+    """
+    try:
+        segments = [
+            EmotionSegment(
+                start=s.get("start", 0),
+                end=s.get("end", 1),
+                emotion=s.get("emotion", "neutral"),
+                intensity=s.get("intensity", 0.5),
+            )
+            for s in request.segments
+        ]
+
+        spec = ClipSpec(
+            source_path=request.source_path,
+            emotion_arc=EmotionArcConfig(
+                enabled=True,
+                segments=segments,
+                apply_color=request.apply_color,
+                apply_speed=request.apply_speed,
+                apply_vignette=request.apply_vignette,
+            ),
+        )
+
+        result = await render_pipeline.render(spec)
+        if not result:
+            raise HTTPException(status_code=500, detail="Emotion arc render başarısız")
+
+        return {
+            "status": "completed",
+            "output_path": result,
+            "segments_count": len(segments),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Emotion arc hatası: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# --- Tam Gelistirilmis Render ---
+
+@router.post("/advanced-render", response_model=RenderJobResponse)
+async def advanced_render(request: AdvancedRenderRequest, background_tasks: BackgroundTasks):
+    """
+    Tüm gelişmiş özellikleri tek seferde uygulayarak render eder.
+    Beat-sync, word-highlight, sticker, lower-third, end-screen,
+    emotion-arc, scene-detection dahil.
+    """
+    job_id = str(uuid.uuid4())[:8]
+    now = datetime.utcnow()
+
+    job = {
+        "job_id": job_id,
+        "status": "pending",
+        "source_path": request.source_path,
+        "output_path": None,
+        "edit_spec": None,
+        "created_at": now,
+        "completed_at": None,
+        "error": None,
+    }
+    _render_jobs[job_id] = job
+
+    background_tasks.add_task(_execute_advanced_render, job_id, request)
+
+    return RenderJobResponse(**job)
+
+
+async def _execute_advanced_render(job_id: str, request: AdvancedRenderRequest):
+    """Arka planda gelişmiş render işini yürütür."""
+    job = _render_jobs.get(job_id)
+    if not job:
+        return
+
+    try:
+        job["status"] = "processing"
+
+        # Aspect ratio
+        ar = AspectRatio(request.aspect_ratio) if request.aspect_ratio in [
+            a.value for a in AspectRatio
+        ] else AspectRatio.PORTRAIT_9_16
+
+        # ClipSpec oluştur
+        spec = ClipSpec(
+            source_path=request.source_path,
+            aspect_ratio=ar,
+            resolution=request.resolution,
+            crf=request.crf,
+            category=request.category,
+            # Beat sync
+            beat_sync=BeatSyncConfig(
+                enabled=request.beat_sync_enabled,
+                bpm=request.beat_sync_bpm,
+                zoom_on_beat=request.beat_sync_zoom,
+            ) if request.beat_sync_enabled else BeatSyncConfig(),
+            # Word highlight
+            word_highlight=WordHighlightConfig(
+                enabled=request.word_highlight_enabled,
+                words=request.word_highlight_words,
+                palette=request.word_highlight_palette,
+            ) if request.word_highlight_enabled else WordHighlightConfig(),
+            # Stickers
+            stickers=StickerOverlayConfig(
+                enabled=request.stickers_enabled,
+                reaction_type=request.sticker_reaction,
+                emoji_rain=request.sticker_emoji_rain,
+                confetti=request.sticker_confetti,
+            ) if request.stickers_enabled else StickerOverlayConfig(),
+            # Lower thirds
+            lower_thirds=LowerThirdConfig(
+                enabled=request.lower_thirds_enabled,
+                entries=[
+                    LowerThirdEntry(
+                        name=request.lower_thirds_name,
+                        title=request.lower_thirds_title,
+                        style=request.lower_thirds_style,
+                    )
+                ] if request.lower_thirds_enabled else [],
+            ) if request.lower_thirds_enabled else LowerThirdConfig(),
+            # End screen
+            end_screen=EndScreenConfig(
+                enabled=request.end_screen_enabled,
+                template=request.end_screen_template,
+            ) if request.end_screen_enabled else EndScreenConfig(),
+            # Emotion arc
+            emotion_arc=EmotionArcConfig(
+                enabled=request.emotion_arc_enabled,
+                segments=[
+                    EmotionSegment(
+                        start=s.get("start", 0),
+                        end=s.get("end", 1),
+                        emotion=s.get("emotion", "neutral"),
+                        intensity=s.get("intensity", 0.5),
+                    )
+                    for s in request.emotion_arc_segments
+                ] if request.emotion_arc_enabled else [],
+            ) if request.emotion_arc_enabled else EmotionArcConfig(),
+            # Scene detection
+            scene_detection=SceneDetectionConfig(
+                enabled=request.scene_detection_enabled,
+                threshold=request.scene_detection_threshold,
+            ) if request.scene_detection_enabled else SceneDetectionConfig(),
+        )
+
+        # Render
+        output_path = await render_pipeline.render(spec)
+
+        if output_path:
+            job["status"] = "completed"
+            job["output_path"] = output_path
+            job["completed_at"] = datetime.utcnow()
+        else:
+            job["status"] = "failed"
+            job["error"] = "Render başarısız"
+
+    except Exception as e:
+        job["status"] = "failed"
+        job["error"] = str(e)
+        logger.error("Advanced render job hatası (%s): %s", job_id, e)

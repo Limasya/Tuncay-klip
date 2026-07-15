@@ -689,6 +689,7 @@ class RenderPipeline:
         video_filters: List[str],
         audio_filters: List[str],
         output_path: str,
+        platform: Optional[str] = None,
     ) -> List[str]:
         """FFmpeg komut argümanlarını oluşturur."""
         cmd = ["ffmpeg", "-y"]
@@ -706,8 +707,17 @@ class RenderPipeline:
             af = ",".join(audio_filters)
             cmd.extend(["-af", af])
 
-        # Codec
-        cmd.extend(["-c:v", "libx264", "-preset", "fast"])
+        # Codec (platform bazlı preset)
+        preset_map = {
+            "tiktok": "veryfast",
+            "youtube": "medium",
+            "instagram": "fast",
+            "kick": "fast",
+            "twitter": "veryfast",
+        }
+        preset = preset_map.get(platform, "fast") if platform else "fast"
+
+        cmd.extend(["-c:v", "libx264", "-preset", preset])
         cmd.extend(["-crf", str(spec.crf)])
         cmd.extend(["-c:a", "aac", "-b:a", "192k"])
 
@@ -963,6 +973,55 @@ class RenderPipeline:
         )
 
         return result
+
+    async def _burn_word_highlight(self, spec: ClipSpec, video_path: str) -> Optional[str]:
+        """
+        Word highlight (karaoke) ASS dosyasını videoya gömer.
+        """
+        from services.word_highlight import word_highlight, WordTiming
+
+        # Word timing listesini oluştur
+        words = []
+        for w in spec.word_highlight.words:
+            words.append(WordTiming(
+                word=w.get("word", ""),
+                start=w.get("start", 0.0),
+                end=w.get("end", 0.0),
+                confidence=w.get("confidence", 1.0),
+            ))
+
+        # ASS içeriği üret
+        ass_content = word_highlight.generate_karaoke_ass(
+            words=words,
+            palette=spec.word_highlight.palette,
+            font_size=spec.word_highlight.font_size,
+            max_chars_per_line=spec.word_highlight.max_chars_per_line,
+            position=spec.word_highlight.position,
+            outline=spec.word_highlight.outline,
+            shadow=spec.word_highlight.shadow,
+        )
+
+        # ASS dosyasını kaydet
+        ass_path = str(TEMP_DIR / f"{Path(video_path).stem}_karaoke.ass")
+        with open(ass_path, "w", encoding="utf-8") as f:
+            f.write(ass_content)
+
+        # Burn-in
+        output_path = str(
+            EXPORTS_DIR / f"{Path(video_path).stem}_kh.mp4"
+        )
+
+        cmd = [
+            "ffmpeg", "-y",
+            "-i", video_path,
+            "-vf", f"ass={ass_path}",
+            "-c:v", "libx264", "-preset", "fast",
+            "-c:a", "copy",
+            output_path,
+        ]
+
+        result = await self._run_ffmpeg(cmd, output_path)
+        return result if result else video_path
 
     async def render_for_platform(
         self,
