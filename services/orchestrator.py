@@ -129,7 +129,7 @@ class Orchestrator:
     async def _on_event_detected(self, event: Dict):
         """
         Analiz pipeline'ından olay tespit edildiğinde çağrılır.
-        Otomatik klip oluşturma sürecini başlatır.
+        Otomatik klip oluşturma + edit sürecini başlatır.
         """
         timestamp = event.get("timestamp", time.time())
         trigger_type = event.get("trigger_type", "composite")
@@ -141,8 +141,8 @@ class Orchestrator:
         )
 
         try:
-            # 1. Buffer'dan klip çıkar
-            clip_path = await stream_capture.capture_clip(
+            # 1. Buffer'dan klip çıkar (sesli)
+            clip_path = await stream_capture.capture_clip_with_audio(
                 event_time=timestamp,
                 pre_seconds=settings.clip_pre_seconds,
                 post_seconds=settings.clip_post_seconds,
@@ -152,14 +152,21 @@ class Orchestrator:
                 logger.warning("Klip oluşturulamadı (buffer yetersiz)")
                 return
 
-            # 2. Thumbnail oluştur
-            thumb_path = await stream_capture.generate_thumbnail(clip_path)
-
-            # 3. CLIP ile sınıflandır
+            # 2. Sinyalleri topla
             emotion_result = event.get("emotion", {})
             motion_result = event.get("motion", {})
             audio_result = event.get("audio", {})
+            chat_result = event.get("chat", {})
 
+            analysis = {
+                "emotion": emotion_result,
+                "motion": motion_result,
+                "audio": audio_result,
+                "chat": chat_result,
+                "composite_score": composite_score,
+            }
+
+            # 3. Sınıflandır
             category = clip_classifier.determine_category(
                 emotion_result, motion_result, audio_result
             )
@@ -167,25 +174,67 @@ class Orchestrator:
                 emotion_result, motion_result, audio_result
             )
 
-            # 4. Meta veri topla
-            metadata = await clip_metadata.build_clip_metadata(
-                emotion_result, motion_result, audio_result
+            # 4. Otomatik edit spec üret
+            from services.auto_editor import auto_editor
+            from services.edit_spec import AspectRatio
+            edit_spec = auto_editor.generate_edit_spec(
+                source_path=clip_path,
+                analysis=analysis,
+                category=category,
+                aspect_ratio=AspectRatio.PORTRAIT_9_16,
             )
 
-            # 5. Altyazı oluştur (opsiyonel, arka planda)
+            # 5. Altyazı üret (Whisper)
             subtitle_result = await subtitle_service.process_clip_subtitles(
                 clip_path,
                 language="tr",
                 burn_in=False,
             )
+            whisper_segments = subtitle_result.get("segments", [])
 
-            # 6. S3'e yükle (opsiyonel)
-            s3_url = await storage_service.upload_clip(clip_path)
+            # 6. Müzik ve SFX seç
+            from services.music_service import music_service
+            selected_music = music_service.select_music_for_clip(
+                emotion=emotion_result.get("dominant", "neutral"),
+                category=category,
+                duration=settings.clip_pre_seconds + settings.clip_post_seconds,
+            )
+            selected_sfx = None
+            if audio_result.get("is_spike"):
+                selected_sfx = music_service.select_sfx_for_event(
+                    event_type="clip_trigger",
+                    emotion=emotion_result.get("dominant", "neutral"),
+                    audio_energy=audio_result.get("energy_level", "medium"),
+                )
 
-            # 7. Veritabanına kaydet
+            # 7. Edit spec'i zenginleştir
+            edit_spec = auto_editor.merge_analysis_into_edit_spec(
+                base_spec=edit_spec,
+                analysis=analysis,
+                whisper_segments=whisper_segments,
+                music_path=selected_sfx.path if selected_sfx else None,
+            )
+
+            # 8. Render pipeline ile uygula
+            from services.render_pipeline import render_pipeline
+            rendered_path = await render_pipeline.render(edit_spec)
+
+            if not rendered_path:
+                logger.warning("Render başarısız, ham klip kullanılıyor")
+                rendered_path = clip_path
+
+            # 9. Meta veri topla
+            metadata = await clip_metadata.build_clip_metadata(
+                emotion_result, motion_result, audio_result
+            )
+
+            # 10. S3'e yükle
+            s3_url = await storage_service.upload_clip(rendered_path)
+
+            # 11. Veritabanına kaydet
             await self._save_clip_to_db(
-                clip_path=clip_path,
-                thumb_path=thumb_path,
+                clip_path=rendered_path,
+                thumb_path=None,
                 subtitle_path=subtitle_result.get("srt_path"),
                 s3_url=s3_url,
                 category=category,
@@ -198,8 +247,15 @@ class Orchestrator:
             )
 
             self._clips_today += 1
-            logger.info("Klip #%d oluşturuldu: %s [%s]",
-                        self._clips_today, Path(clip_path).name, category)
+            logger.info(
+                "Klip #%d oluşturuldu ve render edildi: %s [%s] "
+                "(edit: color=%s, music=%s)",
+                self._clips_today,
+                Path(rendered_path).name,
+                category,
+                edit_spec.color_grading.preset.value,
+                "yes" if selected_sfx else "no",
+            )
 
         except Exception as e:
             logger.error("Klip oluşturma pipeline hatası: %s", e, exc_info=True)

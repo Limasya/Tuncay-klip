@@ -219,3 +219,92 @@ class ChatMessageResponse(BaseModel):
     timestamp: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+
+# --- Otomatik Edit ---
+
+class EditSpecRequest(BaseModel):
+    """Manuel edit spec oluşturma isteği."""
+    source_path: str
+    category: ClipCategoryEnum = ClipCategoryEnum.other
+    aspect_ratio: str = "9:16"
+    resolution: str = "1080p"
+    custom_overrides: Optional[Dict[str, Any]] = None
+
+
+class EditSpecResponse(BaseModel):
+    """Üretilen edit spec yanıtı."""
+    version: str
+    source_path: str
+    aspect_ratio: str
+    resolution: str
+    color_preset: str
+    subtitle_style: str
+    speed_segments_count: int
+    has_watermark: bool
+    has_music: bool
+    category: Optional[str]
+    composite_score: float
+
+
+class RenderJobCreate(BaseModel):
+    """Yeni render işi oluşturma."""
+    source_path: str
+    category: ClipCategoryEnum = ClipCategoryEnum.other
+    aspect_ratio: str = "9:16"
+    resolution: str = "1080p"
+    output_format: str = "mp4"
+    add_music: bool = True
+    add_sfx: bool = True
+    add_subtitle: bool = True
+    custom_overrides: Optional[Dict[str, Any]] = None
+
+
+class RenderJobResponse(BaseModel):
+    """Render iş durumu yanıtı."""
+    job_id: str
+    status: str  # pending, processing, completed, failed
+    source_path: str
+    output_path: Optional[str]
+    edit_spec: Optional[EditSpecResponse]
+    created_at: datetime
+    completed_at: Optional[datetime]
+    error: Optional[str]
+
+
+class MontageCreate(BaseModel):
+    """Montaj oluşturma isteği."""
+    clip_paths: List[str] = Field(min_length=2)
+    transition_type: str = "fade"
+    transition_duration: float = 0.5
+    add_background_music: bool = True
+    background_music_path: Optional[str] = None
+    output_path: Optional[str] = None
+
+
+class MusicLibraryResponse(BaseModel):
+    """Müzik kütüphanesi yanıtı."""
+    tracks: List[Dict[str, Any]]
+    total: int
+
+
+class SFXLibraryResponse(BaseModel):
+    """SFX kütüphanesi yanıtı."""
+    clips: List[Dict[str, Any]]
+    total: int
+
+
+class AudioDuckingRequest(BaseModel):
+    """Ducking parametreleri hesaplama isteği."""
+    speech_level: float = Field(ge=0, le=1)
+    music_level: float = Field(ge=0, le=1)
+    target_ratio: float = Field(default=0.15, ge=0, le=1)
+
+
+class AudioDuckingResponse(BaseModel):
+    """Ducking parametreleri yanıtı."""
+    threshold: float
+    ratio: float
+    attack: int
+    release: int
+    filter_string: str

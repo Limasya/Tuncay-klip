@@ -9,7 +9,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 
-from api.routers import clips, system, preferences
+from api.routers import clips, system, preferences, edit
 from api.routers import pipeline as pipeline_router
 from services.database import init_db
 from config import get_settings
@@ -69,6 +69,7 @@ app.include_router(clips.router)
 app.include_router(system.router)
 app.include_router(preferences.router)
 app.include_router(pipeline_router.router)
+app.include_router(edit.router)
 
 
 @app.get("/", response_class=HTMLResponse)
