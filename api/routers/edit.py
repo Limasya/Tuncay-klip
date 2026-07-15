@@ -2,11 +2,13 @@
 Otomatik edit API endpoint'leri.
 Edit spec oluşturma, render, montaj, müzik/SFX kütüphanesi.
 Gelişmiş: sahne algılama, beat-sync, split-screen, end-screen,
-lower-third, sticker, emotion-arc endpoint'leri.
+lower-third, sticker, emotion-arc, word-timing, karaoke endpoint'leri.
 """
+import asyncio
 import logging
 import uuid
 from datetime import datetime
+from pathlib import Path
 from typing import Dict, List, Optional
 from fastapi import APIRouter, HTTPException, BackgroundTasks
 from pydantic import BaseModel
@@ -19,6 +21,8 @@ from models.schemas import (
     SceneDetectionRequest, SceneDetectionResponse, SceneInfo,
     SplitScreenRequest, EndScreenRequest, LowerThirdRequest,
     StickerOverlayRequest, EmotionArcRequest, AdvancedRenderRequest,
+    WordTimingRequest, WordTimingResponse, WordTimingInfo,
+    SceneAutoEffectsRequest, SceneAutoEffectsResponse,
 )
 from services.auto_editor import auto_editor
 from services.render_pipeline import render_pipeline
@@ -29,6 +33,11 @@ from services.edit_spec import (
     LowerThirdConfig, LowerThirdEntry, EndScreenConfig,
     EmotionArcConfig, EmotionSegment, SceneDetectionConfig,
 )
+
+EXPORTS_DIR = Path("data/exports")
+EXPORTS_DIR.mkdir(parents=True, exist_ok=True)
+TEMP_DIR = Path("data/temp")
+TEMP_DIR.mkdir(parents=True, exist_ok=True)
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/edit", tags=["auto-edit"])
@@ -757,3 +766,154 @@ async def _execute_advanced_render(job_id: str, request: AdvancedRenderRequest):
         job["status"] = "failed"
         job["error"] = str(e)
         logger.error("Advanced render job hatası (%s): %s", job_id, e)
+
+
+# --- Kelime Zamanlama ---
+
+@router.post("/word-timing", response_model=WordTimingResponse)
+async def extract_word_timing(request: WordTimingRequest):
+    """
+    Video/ses dosyasından kelime kelime zamanlama çıkarır.
+    Whisper word_timestamps kullanır (mevcut değilse segment bazlı tahmin).
+    Karaoke/word-highlight için gerekli.
+    """
+    from services.word_highlight import word_highlight
+
+    try:
+        words = await word_highlight.extract_timings_from_video(
+            request.source_path, request.language
+        )
+
+        word_infos = [
+            WordTimingInfo(
+                word=w.word, start=w.start,
+                end=w.end, confidence=w.confidence,
+            )
+            for w in words
+        ]
+
+        method = "segment_based"
+        if word_highlight._whisper_model is not None:
+            method = "whisper"
+
+        return WordTimingResponse(
+            source_path=request.source_path,
+            language=request.language,
+            total_words=len(word_infos),
+            words=word_infos,
+            method=method,
+        )
+    except Exception as e:
+        logger.error("Kelime zamanlama hatası: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# --- Sahne Bazlı Otomatik Efekt ---
+
+@router.post("/scene-auto-effects", response_model=SceneAutoEffectsResponse)
+async def scene_auto_effects(request: SceneAutoEffectsRequest):
+    """
+    Videoyu sahne analiz edip otomatik efekt üretir.
+    Kısa sahneler -> hızlı zoom/flash, uzun sahneler -> yavaş zoom/vignette,
+    hareketli sahneler -> shake, sakin sahneler -> slow-mo/cool ton.
+    """
+    from services.scene_detection import scene_detection
+
+    try:
+        result = await scene_detection.auto_generate_edit_spec(
+            request.source_path,
+            threshold=request.threshold,
+            min_scene_duration=request.min_scene_duration,
+        )
+
+        if not result:
+            raise HTTPException(status_code=400, detail="Sahne bulunamadı")
+
+        return SceneAutoEffectsResponse(
+            scene_count=result["scene_count"],
+            average_scene_duration=result["average_scene_duration"],
+            total_duration=result["total_duration"],
+            speed_segments=result["speed_segments"],
+            color_preset=result["color_preset"],
+            visual_effects=result["visual_effects"],
+            scene_transitions=result["scene_transitions"],
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Sahne otomatik efekt hatası: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# --- Kelime Zamanlama ile Hızlı Karaoke Render ---
+
+@router.post("/karaoke-render")
+async def karaoke_render(
+    source_path: str,
+    language: str = "tr",
+    palette: str = "neon",
+):
+    """
+    Videoyu Whisper ile analiz edip kelime vurgulu karaoke render üretir.
+    1. Whisper ile kelime zamanlaması çıkar
+    2. ASS karaoke dosyası üret
+    3. Videoya burn-in yap
+    """
+    from services.word_highlight import word_highlight
+
+    try:
+        words = await word_highlight.extract_timings_from_video(
+            source_path, language
+        )
+
+        if not words:
+            raise HTTPException(
+                status_code=400,
+                detail="Kelime zamanlama çıkarılamadı"
+            )
+
+        ass_content = word_highlight.generate_karaoke_ass(
+            words=words,
+            palette=palette,
+        )
+
+        ass_path = str(TEMP_DIR / f"karaoke_{Path(source_path).stem}.ass")
+        with open(ass_path, "w", encoding="utf-8") as f:
+            f.write(ass_content)
+
+        output_path = str(EXPORTS_DIR / f"karaoke_{Path(source_path).stem}.mp4")
+        cmd = [
+            "ffmpeg", "-y",
+            "-i", source_path,
+            "-vf", f"ass={ass_path}",
+            "-c:v", "libx264", "-preset", "fast",
+            "-c:a", "copy",
+            output_path,
+        ]
+
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        _, stderr = await asyncio.wait_for(proc.communicate(), timeout=300)
+
+        if proc.returncode != 0:
+            raise HTTPException(
+                status_code=500,
+                detail=f"FFmpeg hatası: {stderr.decode()[:500]}"
+            )
+
+        return {
+            "status": "completed",
+            "output_path": output_path,
+            "ass_path": ass_path,
+            "word_count": len(words),
+            "palette": palette,
+            "method": "whisper" if word_highlight._whisper_model else "segment_based",
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Karaoke render hatası: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))

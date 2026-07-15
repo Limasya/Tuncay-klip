@@ -444,3 +444,44 @@ class AdvancedRenderRequest(BaseModel):
     # Scene detection
     scene_detection_enabled: bool = False
     scene_detection_threshold: float = 0.3
+
+
+class WordTimingRequest(BaseModel):
+    """Kelime zamanlama cikarma istegi."""
+    source_path: str
+    language: Optional[str] = None
+
+
+class WordTimingInfo(BaseModel):
+    """Tek bir kelime zamanlama bilgisi."""
+    word: str
+    start: float
+    end: float
+    confidence: float
+
+
+class WordTimingResponse(BaseModel):
+    """Kelime zamanlama sonucu."""
+    source_path: str
+    language: Optional[str]
+    total_words: int
+    words: List[WordTimingInfo]
+    method: str  # whisper veya segment_based
+
+
+class SceneAutoEffectsRequest(BaseModel):
+    """Sahne bazli otomatik efekt istegi."""
+    source_path: str
+    threshold: float = 0.3
+    min_scene_duration: float = 0.5
+
+
+class SceneAutoEffectsResponse(BaseModel):
+    """Sahne bazli otomatik efekt sonucu."""
+    scene_count: int
+    average_scene_duration: float
+    total_duration: float
+    speed_segments: List[Dict[str, Any]]
+    color_preset: str
+    visual_effects: Dict[str, float]
+    scene_transitions: bool

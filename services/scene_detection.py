@@ -1,6 +1,7 @@
 """
-Sahne algılama ve sahne tabanlı düzenleme motoru.
-FFmpeg scene detection, sahne bazlı efekt uygulama.
+Sahne algilama ve sahne tabanli duzenleme motoru.
+FFmpeg scene detection, sahne bazli efekt uygulama,
+otomatik efekt uretimi (sahne ozelliklerine gore).
 """
 import asyncio
 import json
@@ -271,7 +272,7 @@ class SceneDetectionEngine:
         return selected
 
     async def _get_duration(self, path: str) -> float:
-        """Video süresini alır."""
+        """Video suresini alir."""
         cmd = [
             "ffprobe", "-v", "quiet",
             "-print_format", "json",
@@ -288,6 +289,82 @@ class SceneDetectionEngine:
             return float(data.get("format", {}).get("duration", 30.0))
         except Exception:
             return 30.0
+
+    async def auto_generate_edit_spec(
+        self,
+        video_path: str,
+        threshold: float = 0.3,
+        min_scene_duration: float = 0.5,
+    ) -> Optional[Dict]:
+        """
+        Videoyu analiz edip sahne ozelliklerine gore otomatik edit spec uretir.
+
+        Her sahne icin:
+        - Kisa sahne (<1.5s) -> hizli zoom + flash
+        - Uzun sahne (>4s)   -> yavas zoom + vignette
+        - Hareketli sahne    -> shake + renk canlandirma
+        - Sakin sahne        -> slow motion + cool ton
+        - Sahne gecisleri    -> fade/dissolve
+
+        Returns: ClipSpec icin dict veya None.
+        """
+        result = await self.detect_scenes(
+            video_path, threshold, min_scene_duration
+        )
+
+        if not result.scenes:
+            return None
+
+        effects = self.apply_scene_based_effects(result.scenes, {})
+
+        # Speed segmentleri uret
+        speed_segments = []
+        for eff in effects:
+            for fx in eff["effects"]:
+                if fx == "slow_mo":
+                    speed_segments.append({
+                        "start": eff["start"],
+                        "end": eff["end"],
+                        "speed": 0.7,
+                        "effect": "slow_mo",
+                    })
+                elif fx == "fast_cut":
+                    speed_segments.append({
+                        "start": eff["start"],
+                        "end": eff["end"],
+                        "speed": 1.3,
+                        "effect": "none",
+                    })
+
+        # Renk ayarlari uret
+        avg_dur = result.average_scene_duration
+        if avg_dur < 1.5:
+            color_preset = "high_contrast"
+        elif avg_dur > 4.0:
+            color_preset = "cinematic"
+        else:
+            color_preset = "vibrant"
+
+        # Video efektleri uret
+        visual_effects = {}
+        for eff in effects:
+            for fx in eff["effects"]:
+                if fx == "shake":
+                    visual_effects["shake"] = 0.3
+                elif fx == "slow_zoom":
+                    visual_effects["vignette"] = max(
+                        visual_effects.get("vignette", 0), 0.15
+                    )
+
+        return {
+            "speed_segments": speed_segments,
+            "color_preset": color_preset,
+            "visual_effects": visual_effects,
+            "scene_count": result.total_scenes,
+            "average_scene_duration": result.average_scene_duration,
+            "total_duration": result.total_duration,
+            "scene_transitions": result.total_scenes > 1,
+        }
 
 
 # Singleton
