@@ -1,0 +1,2215 @@
+{
+  "schemaVersion": "1.0.0",
+  "project": {
+    "projectId": "prj-social-highlight-20260715",
+    "revision": 3,
+    "idempotencyKey": "clipgen:stream-8421:highlight-17:rev-3",
+    "title": "Son Saniye Zaferi",
+    "locale": "tr-TR",
+    "timebase": {
+      "num": 1,
+      "den": 1000
+    },
+    "canvas": {
+      "aspectRatio": {
+        "width": 9,
+        "height": 16
+      },
+      "designResolution": {
+        "width": 1080,
+        "height": 1920
+      },
+      "backgroundColor": "#101014FF",
+      "safeArea": {
+        "x": 500,
+        "y": 500,
+        "width": 9000,
+        "height": 8600
+      }
+    },
+    "createdAt": "2026-07-15T14:32:10Z",
+    "correlationId": "corr-stream-8421-highlight-17",
+    "extensions": {
+      "x-acme.render": {
+        "campaign": "summer-finals",
+        "priority": 7
+      }
+    }
+  },
+  "assets": {
+    "items": [
+      {
+        "assetId": "asset-gameplay-a",
+        "kind": "video",
+        "locator": {
+          "provider": "s3",
+          "bucket": "video-engine-prod",
+          "key": "ingest/2026/07/15/gameplay-a.mp4",
+          "versionId": "3LgKp8YxA001"
+        },
+        "integrity": {
+          "sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+          "sizeBytes": 185420112
+        },
+        "mediaType": "video/mp4",
+        "declaredMetadata": {
+          "duration": {
+            "value": 30000,
+            "rate": {
+              "num": 1,
+              "den": 1000
+            }
+          },
+          "width": 1920,
+          "height": 1080,
+          "frameRate": {
+            "num": 30000,
+            "den": 1001
+          },
+          "hasAudio": true
+        }
+      },
+      {
+        "assetId": "asset-gameplay-b",
+        "kind": "video",
+        "locator": {
+          "provider": "s3",
+          "bucket": "video-engine-prod",
+          "key": "ingest/2026/07/15/gameplay-b.mp4",
+          "versionId": "3LgKp8YxA002"
+        },
+        "integrity": {
+          "sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+          "sizeBytes": 132804911
+        },
+        "mediaType": "video/mp4",
+        "declaredMetadata": {
+          "duration": {
+            "value": 20000,
+            "rate": {
+              "num": 1,
+              "den": 1000
+            }
+          },
+          "width": 1920,
+          "height": 1080,
+          "frameRate": {
+            "num": 30000,
+            "den": 1001
+          },
+          "hasAudio": true
+        }
+      },
+      {
+        "assetId": "asset-dialogue-clean",
+        "kind": "audio",
+        "locator": {
+          "provider": "s3",
+          "bucket": "video-engine-prod",
+          "key": "audio/2026/07/15/dialogue-clean.wav",
+          "versionId": "3LgKp8YxA003"
+        },
+        "integrity": {
+          "sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+          "sizeBytes": 3456128
+        },
+        "mediaType": "audio/wav",
+        "declaredMetadata": {
+          "duration": {
+            "value": 18000,
+            "rate": {
+              "num": 1,
+              "den": 1000
+            }
+          },
+          "sampleRateHz": 48000,
+          "channels": 2
+        }
+      },
+      {
+        "assetId": "asset-music-pulse",
+        "kind": "audio",
+        "locator": {
+          "provider": "s3",
+          "bucket": "video-engine-prod",
+          "key": "licensed/music/pulse-loop-12s.wav",
+          "versionId": "3LgKp8YxA004"
+        },
+        "integrity": {
+          "sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+          "sizeBytes": 2304128
+        },
+        "mediaType": "audio/wav",
+        "declaredMetadata": {
+          "duration": {
+            "value": 12000,
+            "rate": {
+              "num": 1,
+              "den": 1000
+            }
+          },
+          "sampleRateHz": 48000,
+          "channels": 2
+        }
+      },
+      {
+        "assetId": "asset-sfx-impact",
+        "kind": "audio",
+        "locator": {
+          "provider": "s3",
+          "bucket": "video-engine-prod",
+          "key": "licensed/sfx/impact-07.wav",
+          "versionId": "3LgKp8YxA005"
+        },
+        "integrity": {
+          "sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+          "sizeBytes": 388144
+        },
+        "mediaType": "audio/wav",
+        "declaredMetadata": {
+          "duration": {
+            "value": 2000,
+            "rate": {
+              "num": 1,
+              "den": 1000
+            }
+          },
+          "sampleRateHz": 48000,
+          "channels": 2
+        }
+      },
+      {
+        "assetId": "asset-emoji-fire",
+        "kind": "image",
+        "locator": {
+          "provider": "s3",
+          "bucket": "video-engine-prod",
+          "key": "brand/emoji/twemoji-fire-v15.png",
+          "versionId": "3LgKp8YxA006"
+        },
+        "integrity": {
+          "sha256": "6666666666666666666666666666666666666666666666666666666666666666",
+          "sizeBytes": 18240
+        },
+        "mediaType": "image/png",
+        "width": 512,
+        "height": 512
+      },
+      {
+        "assetId": "asset-font-inter-black",
+        "kind": "font",
+        "locator": {
+          "provider": "s3",
+          "bucket": "video-engine-prod",
+          "key": "fonts/inter/Inter-Black.ttf",
+          "versionId": "3LgKp8YxA007"
+        },
+        "integrity": {
+          "sha256": "7777777777777777777777777777777777777777777777777777777777777777",
+          "sizeBytes": 312840
+        },
+        "mediaType": "font/ttf",
+        "family": "Inter",
+        "style": "normal",
+        "weight": 900
+      },
+      {
+        "assetId": "asset-face-track-a",
+        "kind": "data",
+        "locator": {
+          "provider": "s3",
+          "bucket": "video-engine-prod",
+          "key": "analysis/2026/07/15/gameplay-a.face-track.v2.json",
+          "versionId": "3LgKp8YxA008"
+        },
+        "integrity": {
+          "sha256": "8888888888888888888888888888888888888888888888888888888888888888",
+          "sizeBytes": 84211
+        },
+        "mediaType": "application/json",
+        "purpose": "face-track"
+      },
+      {
+        "assetId": "asset-lut-social-pop",
+        "kind": "data",
+        "locator": {
+          "provider": "s3",
+          "bucket": "video-engine-prod",
+          "key": "color/luts/social-pop-v3.cube",
+          "versionId": "3LgKp8YxA009"
+        },
+        "integrity": {
+          "sha256": "9999999999999999999999999999999999999999999999999999999999999999",
+          "sizeBytes": 24118
+        },
+        "mediaType": "application/octet-stream",
+        "purpose": "lut"
+      }
+    ],
+    "extensions": {
+      "x-acme.licensing": {
+        "musicLicenseId": "lic-2026-4481",
+        "territories": [
+          "TR",
+          "DE",
+          "GB"
+        ]
+      }
+    }
+  },
+  "template": {
+    "templateId": "tpl-vertical-game-highlight",
+    "version": "2.4.1",
+    "expansionPolicy": "allow-overrides",
+    "parameters": [
+      {
+        "name": "headline",
+        "value": "SON SANIYE ZAFERI"
+      },
+      {
+        "name": "heroAsset",
+        "value": {
+          "assetId": "asset-gameplay-a"
+        }
+      },
+      {
+        "name": "showKaraoke",
+        "value": true
+      },
+      {
+        "name": "hookDurationTicks",
+        "value": 3000
+      }
+    ]
+  },
+  "timeline": {
+    "duration": {
+      "value": 18000,
+      "rate": {
+        "num": 1,
+        "den": 1000
+      }
+    },
+    "tracks": [
+      {
+        "trackId": "video-main",
+        "type": "video",
+        "name": "Primary gameplay",
+        "enabled": true,
+        "zIndex": 0,
+        "blendMode": "normal",
+        "opacityBasisPoints": 10000,
+        "clips": [
+          {
+            "clipId": "video-clip-a",
+            "type": "video",
+            "assetId": "asset-gameplay-a",
+            "timelineRange": {
+              "start": {
+                "value": 0,
+                "rate": {
+                  "num": 1,
+                  "den": 1000
+                }
+              },
+              "duration": {
+                "value": 9000,
+                "rate": {
+                  "num": 1,
+                  "den": 1000
+                }
+              }
+            },
+            "sourceRange": {
+              "start": {
+                "value": 4500,
+                "rate": {
+                  "num": 1,
+                  "den": 1000
+                }
+              },
+              "duration": {
+                "value": 9000,
+                "rate": {
+                  "num": 1,
+                  "den": 1000
+                }
+              }
+            },
+            "playback": {
+              "speed": {
+                "num": 1,
+                "den": 1
+              },
+              "reverse": false
+            },
+            "transform": {
+              "position": {
+                "x": 5000,
+                "y": 5000
+              },
+              "anchor": {
+                "x": 5000,
+                "y": 5000
+              },
+              "scaleBasisPoints": 10000,
+              "rotationMilliDegrees": 0,
+              "opacityBasisPoints": 10000
+            },
+            "crop": {
+              "mode": "smart-face",
+              "zoomBasisPoints": 11200,
+              "pan": {
+                "x": 5000,
+                "y": 4700
+              },
+              "backgroundColor": "#101014FF"
+            },
+            "faceTracking": {
+              "enabled": true,
+              "subject": "active-speaker",
+              "framing": "head-and-shoulders",
+              "trackingDataAssetId": "asset-face-track-a",
+              "smoothingBasisPoints": 7800,
+              "lookAhead": {
+                "value": 250,
+                "rate": {
+                  "num": 1,
+                  "den": 1000
+                }
+              },
+              "maxPanBasisPointsPerSecond": 3200
+            },
+            "effects": [
+              {
+                "effectId": "fx-color-a",
+                "type": "color-adjust",
+                "enabled": true,
+                "brightnessBasisPoints": 300,
+                "contrastBasisPoints": 900,
+                "saturationBasisPoints": 1400,
+                "temperatureMilliKelvin": 120000
+              },
+              {
+                "effectId": "fx-lut-a",
+                "type": "lut",
+                "enabled": true,
+                "assetId": "asset-lut-social-pop",
+                "intensityBasisPoints": 6500
+              }
+            ],
+            "transitionIn": {
+              "type": "fade",
+              "duration": {
+                "value": 250,
+                "rate": {
+                  "num": 1,
+                  "den": 1000
+                }
+              },
+              "color": "#101014FF"
+            },
+            "transitionOut": {
+              "type": "dissolve",
+              "duration": {
+                "value": 500,
+                "rate": {
+                  "num": 1,
+                  "den": 1000
+                }
+              }
+            },
+            "animations": [
+              {
+                "animationId": "anim-crop-zoom-a",
+                "property": "crop.zoom",
+                "timeOrigin": "clip-relative",
+                "keyframes": [
+                  {
+                    "at": {
+                      "value": 0,
+                      "rate": {
+                        "num": 1,
+                        "den": 1000
+                      }
+                    },
+                    "value": {
+                      "kind": "scalar",
+                      "value": 10800,
+                      "unit": "basis-points"
+                    },
+                    "interpolation": "linear"
+                  },
+                  {
+                    "at": {
+                      "value": 9000,
+                      "rate": {
+                        "num": 1,
+                        "den": 1000
+                      }
+                    },
+                    "value": {
+                      "kind": "scalar",
+                      "value": 12200,
+                      "unit": "basis-points"
+                    },
+                    "interpolation": "bezier",
+                    "bezier": {
+                      "x1": 2200,
+                      "y1": 1000,
+                      "x2": 7800,
+                      "y2": 10000
+                    }
+                  }
+                ]
+              },
+              {
+                "animationId": "anim-crop-pan-a",
+                "property": "crop.pan",
+                "timeOrigin": "clip-relative",
+                "keyframes": [
+                  {
+                    "at": {
+                      "value": 0,
+                      "rate": {
+                        "num": 1,
+                        "den": 1000
+                      }
+                    },
+                    "value": {
+                      "kind": "point",
+                      "value": {
+                        "x": 4300,
+                        "y": 4700
+                      }
+                    },
+                    "interpolation": "linear"
+                  },
+                  {
+                    "at": {
+                      "value": 9000,
+                      "rate": {
+                        "num": 1,
+                        "den": 1000
+                      }
+                    },
+                    "value": {
+                      "kind": "point",
+                      "value": {
+                        "x": 5700,
+                        "y": 4700
+                      }
+                    },
+                    "interpolation": "bezier",
+                    "bezier": {
+                      "x1": 3300,
+                      "y1": 0,
+                      "x2": 6700,
+                      "y2": 10000
+                    }
+                  }
+                ]
+              }
+            ],
+            "includeSourceAudio": false
+          },
+          {
+            "clipId": "video-clip-b",
+            "type": "video",
+            "assetId": "asset-gameplay-b",
+            "timelineRange": {
+              "start": {
+                "value": 8500,
+                "rate": {
+                  "num": 1,
+                  "den": 1000
+                }
+              },
+              "duration": {
+                "value": 9500,
+                "rate": {
+                  "num": 1,
+                  "den": 1000
+                }
+              }
+            },
+            "sourceRange": {
+              "start": {
+                "value": 1000,
+                "rate": {
+                  "num": 1,
+                  "den": 1000
+                }
+              },
+              "duration": {
+                "value": 9500,
+                "rate": {
+                  "num": 1,
+                  "den": 1000
+                }
+              }
+            },
+            "playback": {
+              "speed": {
+                "num": 1,
+                "den": 1
+              },
+              "reverse": false
+            },
+            "transform": {
+              "position": {
+                "x": 5000,
+                "y": 5000
+              },
+              "anchor": {
+                "x": 5000,
+                "y": 5000
+              },
+              "scaleBasisPoints": 10000,
+              "rotationMilliDegrees": 0,
+              "opacityBasisPoints": 10000
+            },
+            "crop": {
+              "mode": "manual",
+              "rect": {
+                "x": 3300,
+                "y": 0,
+                "width": 3375,
+                "height": 10000
+              },
+              "zoomBasisPoints": 11800,
+              "pan": {
+                "x": 5150,
+                "y": 5000
+              },
+              "backgroundColor": "#101014FF"
+            },
+            "faceTracking": {
+              "enabled": false,
+              "subject": "largest-face",
+              "framing": "upper-body",
+              "smoothingBasisPoints": 7000,
+              "lookAhead": {
+                "value": 200,
+                "rate": {
+                  "num": 1,
+                  "den": 1000
+                }
+              },
+              "maxPanBasisPointsPerSecond": 3000
+            },
+            "effects": [
+              {
+                "effectId": "fx-color-b",
+                "type": "color-adjust",
+                "enabled": true,
+                "brightnessBasisPoints": 100,
+                "contrastBasisPoints": 700,
+                "saturationBasisPoints": 1100,
+                "temperatureMilliKelvin": 0
+              },
+              {
+                "effectId": "fx-sharpen-b",
+                "type": "sharpen",
+                "enabled": true,
+                "amountBasisPoints": 1800
+              },
+              {
+                "effectId": "fx-vignette-b",
+                "type": "vignette",
+                "enabled": true,
+                "amountBasisPoints": 1400,
+                "softnessBasisPoints": 7200
+              }
+            ],
+            "transitionIn": {
+              "type": "dissolve",
+              "duration": {
+                "value": 500,
+                "rate": {
+                  "num": 1,
+                  "den": 1000
+                }
+              }
+            },
+            "transitionOut": {
+              "type": "fade",
+              "duration": {
+                "value": 300,
+                "rate": {
+                  "num": 1,
+                  "den": 1000
+                }
+              },
+              "color": "#101014FF"
+            },
+            "animations": [
+              {
+                "animationId": "anim-position-b",
+                "property": "transform.position",
+                "timeOrigin": "clip-relative",
+                "keyframes": [
+                  {
+                    "at": {
+                      "value": 0,
+                      "rate": {
+                        "num": 1,
+                        "den": 1000
+                      }
+                    },
+                    "value": {
+                      "kind": "point",
+                      "value": {
+                        "x": 5150,
+                        "y": 5000
+                      }
+                    },
+                    "interpolation": "hold"
+                  },
+                  {
+                    "at": {
+                      "value": 9500,
+                      "rate": {
+                        "num": 1,
+                        "den": 1000
+                      }
+                    },
+                    "value": {
+                      "kind": "point",
+                      "value": {
+                        "x": 4850,
+                        "y": 5000
+                      }
+                    },
+                    "interpolation": "bezier",
+                    "bezier": {
+                      "x1": 4200,
+                      "y1": 0,
+                      "x2": 5800,
+                      "y2": 10000
+                    }
+                  }
+                ]
+              }
+            ],
+            "includeSourceAudio": false
+          }
+        ]
+      },
+      {
+        "trackId": "audio-speech",
+        "type": "audio",
+        "name": "Clean speech",
+        "enabled": true,
+        "mixOrder": 0,
+        "gainMilliDb": 0,
+        "clips": [
+          {
+            "clipId": "audio-dialogue-main",
+            "type": "audio",
+            "assetId": "asset-dialogue-clean",
+            "role": "dialogue",
+            "timelineRange": {
+              "start": {
+                "value": 0,
+                "rate": {
+                  "num": 1,
+                  "den": 1000
+                }
+              },
+              "duration": {
+                "value": 18000,
+                "rate": {
+                  "num": 1,
+                  "den": 1000
+                }
+              }
+            },
+            "sourceRange": {
+              "start": {
+                "value": 0,
+                "rate": {
+                  "num": 1,
+                  "den": 1000
+                }
+              },
+              "duration": {
+                "value": 18000,
+                "rate": {
+                  "num": 1,
+                  "den": 1000
+                }
+              }
+            },
+            "playback": {
+              "speed": {
+                "num": 1,
+                "den": 1
+              },
+              "reverse": false
+            },
+            "gainMilliDb": 1500,
+            "loop": false,
+            "fadeIn": {
+              "duration": {
+                "value": 80,
+                "rate": {
+                  "num": 1,
+                  "den": 1000
+                }
+              },
+              "curve": "equal-power"
+            },
+            "fadeOut": {
+              "duration": {
+                "value": 120,
+                "rate": {
+                  "num": 1,
+                  "den": 1000
+                }
+              },
+              "curve": "equal-power"
+            },
+            "effects": [
+              {
+                "effectId": "fx-dialogue-nr",
+                "type": "noise-reduction",
+                "enabled": true,
+                "amountBasisPoints": 3200
+              },
+              {
+                "effectId": "fx-dialogue-comp",
+                "type": "compressor",
+                "enabled": true,
+                "thresholdMilliDb": -18000,
+                "ratioMilli": 3000,
+                "attack": {
+                  "value": 20,
+                  "rate": {
+                    "num": 1,
+                    "den": 1000
+                  }
+                },
+                "release": {
+                  "value": 180,
+                  "rate": {
+                    "num": 1,
+                    "den": 1000
+                  }
+                },
+                "makeupGainMilliDb": 2000
+              },
+              {
+                "effectId": "fx-dialogue-limit",
+                "type": "limiter",
+                "enabled": true,
+                "ceilingMilliDb": -1000,
+                "release": {
+                  "value": 100,
+                  "rate": {
+                    "num": 1,
+                    "den": 1000
+                  }
+                }
+              }
+            ],
+            "animations": []
+          }
+        ]
+      },
+      {
+        "trackId": "audio-music",
+        "type": "audio",
+        "name": "Music bed",
+        "enabled": true,
+        "mixOrder": 1,
+        "gainMilliDb": -3000,
+        "clips": [
+          {
+            "clipId": "audio-music-main",
+            "type": "audio",
+            "assetId": "asset-music-pulse",
+            "role": "music",
+            "timelineRange": {
+              "start": {
+                "value": 0,
+                "rate": {
+                  "num": 1,
+                  "den": 1000
+                }
+              },
+              "duration": {
+                "value": 18000,
+                "rate": {
+                  "num": 1,
+                  "den": 1000
+                }
+              }
+            },
+            "sourceRange": {
+              "start": {
+                "value": 0,
+                "rate": {
+                  "num": 1,
+                  "den": 1000
+                }
+              },
+              "duration": {
+                "value": 12000,
+                "rate": {
+                  "num": 1,
+                  "den": 1000
+                }
+              }
+            },
+            "playback": {
+              "speed": {
+                "num": 1,
+                "den": 1
+              },
+              "reverse": false
+            },
+            "gainMilliDb": -6000,
+            "loop": true,
+            "fadeIn": {
+              "duration": {
+                "value": 600,
+                "rate": {
+                  "num": 1,
+                  "den": 1000
+                }
+              },
+              "curve": "equal-power"
+            },
+            "fadeOut": {
+              "duration": {
+                "value": 900,
+                "rate": {
+                  "num": 1,
+                  "den": 1000
+                }
+              },
+              "curve": "equal-power"
+            },
+            "ducking": {
+              "sidechainTrackId": "audio-speech",
+              "reductionMilliDb": -9000,
+              "thresholdMilliDb": -32000,
+              "attack": {
+                "value": 80,
+                "rate": {
+                  "num": 1,
+                  "den": 1000
+                }
+              },
+              "release": {
+                "value": 450,
+                "rate": {
+                  "num": 1,
+                  "den": 1000
+                }
+              }
+            },
+            "effects": [
+              {
+                "effectId": "fx-music-eq",
+                "type": "eq-3band",
+                "enabled": true,
+                "lowGainMilliDb": -1500,
+                "midGainMilliDb": -2500,
+                "highGainMilliDb": 500
+              }
+            ],
+            "animations": [
+              {
+                "animationId": "anim-music-gain",
+                "property": "audio.gain",
+                "timeOrigin": "clip-relative",
+                "keyframes": [
+                  {
+                    "at": {
+                      "value": 0,
+                      "rate": {
+                        "num": 1,
+                        "den": 1000
+                      }
+                    },
+                    "value": {
+                      "kind": "scalar",
+                      "value": -12000,
+                      "unit": "milli-decibels"
+                    },
+                    "interpolation": "linear"
+                  },
+                  {
+                    "at": {
+                      "value": 1200,
+                      "rate": {
+                        "num": 1,
+                        "den": 1000
+                      }
+                    },
+                    "value": {
+                      "kind": "scalar",
+                      "value": -6000,
+                      "unit": "milli-decibels"
+                    },
+                    "interpolation": "bezier",
+                    "bezier": {
+                      "x1": 2500,
+                      "y1": 1000,
+                      "x2": 7500,
+                      "y2": 10000
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "trackId": "audio-sfx",
+        "type": "audio",
+        "name": "Impact SFX",
+        "enabled": true,
+        "mixOrder": 2,
+        "gainMilliDb": 0,
+        "clips": [
+          {
+            "clipId": "audio-sfx-impact",
+            "type": "audio",
+            "assetId": "asset-sfx-impact",
+            "role": "sfx",
+            "timelineRange": {
+              "start": {
+                "value": 8300,
+                "rate": {
+                  "num": 1,
+                  "den": 1000
+                }
+              },
+              "duration": {
+                "value": 1200,
+                "rate": {
+                  "num": 1,
+                  "den": 1000
+                }
+              }
+            },
+            "sourceRange": {
+              "start": {
+                "value": 100,
+                "rate": {
+                  "num": 1,
+                  "den": 1000
+                }
+              },
+              "duration": {
+                "value": 1200,
+                "rate": {
+                  "num": 1,
+                  "den": 1000
+                }
+              }
+            },
+            "playback": {
+              "speed": {
+                "num": 1,
+                "den": 1
+              },
+              "reverse": false
+            },
+            "gainMilliDb": -1500,
+            "loop": false,
+            "fadeIn": {
+              "duration": {
+                "value": 20,
+                "rate": {
+                  "num": 1,
+                  "den": 1000
+                }
+              },
+              "curve": "linear"
+            },
+            "fadeOut": {
+              "duration": {
+                "value": 120,
+                "rate": {
+                  "num": 1,
+                  "den": 1000
+                }
+              },
+              "curve": "exponential"
+            },
+            "effects": [],
+            "animations": []
+          }
+        ]
+      },
+      {
+        "trackId": "text-captions",
+        "type": "text",
+        "name": "Turkish karaoke captions",
+        "enabled": true,
+        "zIndex": 20,
+        "clips": [
+          {
+            "clipId": "text-hook",
+            "type": "text",
+            "timelineRange": {
+              "start": {
+                "value": 0,
+                "rate": {
+                  "num": 1,
+                  "den": 1000
+                }
+              },
+              "duration": {
+                "value": 3000,
+                "rate": {
+                  "num": 1,
+                  "den": 1000
+                }
+              }
+            },
+            "content": {
+              "kind": "plain",
+              "text": "SON SANIYE ZAFERI"
+            },
+            "style": {
+              "fontAssetId": "asset-font-inter-black",
+              "fontSizeMilliPixels": 88000,
+              "fontWeight": 900,
+              "italic": false,
+              "fillColor": "#FFFFFFFF",
+              "backgroundColor": "#101014CC",
+              "strokeColor": "#000000FF",
+              "strokeWidthMilliPixels": 5000,
+              "shadow": {
+                "color": "#00000099",
+                "offsetXMilliPixels": 0,
+                "offsetYMilliPixels": 7000,
+                "blurMilliPixels": 14000
+              },
+              "letterSpacingMilliPixels": 500,
+              "lineHeightBasisPoints": 10000,
+              "textTransform": "uppercase"
+            },
+            "layout": {
+              "box": {
+                "x": 700,
+                "y": 900,
+                "width": 8600,
+                "height": 1800
+              },
+              "horizontalAlign": "center",
+              "verticalAlign": "middle",
+              "maxLines": 2,
+              "overflow": "shrink",
+              "paddingBasisPoints": 250
+            },
+            "transitionIn": {
+              "type": "zoom",
+              "duration": {
+                "value": 250,
+                "rate": {
+                  "num": 1,
+                  "den": 1000
+                }
+              },
+              "direction": "in"
+            },
+            "transitionOut": {
+              "type": "fade",
+              "duration": {
+                "value": 250,
+                "rate": {
+                  "num": 1,
+                  "den": 1000
+                }
+              }
+            },
+            "animations": [
+              {
+                "animationId": "anim-hook-scale",
+                "property": "transform.scale",
+                "timeOrigin": "clip-relative",
+                "keyframes": [
+                  {
+                    "at": {
+                      "value": 0,
+                      "rate": {
+                        "num": 1,
+                        "den": 1000
+                      }
+                    },
+                    "value": {
+                      "kind": "scalar",
+                      "value": 8000,
+                      "unit": "basis-points"
+                    },
+                    "interpolation": "linear"
+                  },
+                  {
+                    "at": {
+                      "value": 300,
+                      "rate": {
+                        "num": 1,
+                        "den": 1000
+                      }
+                    },
+                    "value": {
+                      "kind": "scalar",
+                      "value": 10000,
+                      "unit": "basis-points"
+                    },
+                    "interpolation": "bezier",
+                    "bezier": {
+                      "x1": 1800,
+                      "y1": 12000,
+                      "x2": 6500,
+                      "y2": 10000
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "clipId": "text-karaoke",
+            "type": "text",
+            "timelineRange": {
+              "start": {
+                "value": 0,
+                "rate": {
+                  "num": 1,
+                  "den": 1000
+                }
+              },
+              "duration": {
+                "value": 18000,
+                "rate": {
+                  "num": 1,
+                  "den": 1000
+                }
+              }
+            },
+            "content": {
+              "kind": "subtitles",
+              "language": "tr-TR",
+              "timingOrigin": "clip-relative",
+              "karaokeMode": "word-highlight",
+              "cues": [
+                {
+                  "cueId": "cue-001",
+                  "range": {
+                    "start": {
+                      "value": 0,
+                      "rate": {
+                        "num": 1,
+                        "den": 1000
+                      }
+                    },
+                    "duration": {
+                      "value": 4000,
+                      "rate": {
+                        "num": 1,
+                        "den": 1000
+                      }
+                    }
+                  },
+                  "text": "Bu an\u0131 ka\u00e7\u0131rma, \u015fimdi ba\u015fl\u0131yor!",
+                  "speaker": "streamer",
+                  "words": [
+                    {
+                      "wordId": "word-001",
+                      "text": "Bu",
+                      "range": {
+                        "start": {
+                          "value": 0,
+                          "rate": {
+                            "num": 1,
+                            "den": 1000
+                          }
+                        },
+                        "duration": {
+                          "value": 400,
+                          "rate": {
+                            "num": 1,
+                            "den": 1000
+                          }
+                        }
+                      },
+                      "confidenceBasisPoints": 9970,
+                      "punctuation": false
+                    },
+                    {
+                      "wordId": "word-002",
+                      "text": "an\u0131",
+                      "range": {
+                        "start": {
+                          "value": 450,
+                          "rate": {
+                            "num": 1,
+                            "den": 1000
+                          }
+                        },
+                        "duration": {
+                          "value": 600,
+                          "rate": {
+                            "num": 1,
+                            "den": 1000
+                          }
+                        }
+                      },
+                      "confidenceBasisPoints": 9910,
+                      "punctuation": false
+                    },
+                    {
+                      "wordId": "word-003",
+                      "text": "ka\u00e7\u0131rma,",
+                      "range": {
+                        "start": {
+                          "value": 1100,
+                          "rate": {
+                            "num": 1,
+                            "den": 1000
+                          }
+                        },
+                        "duration": {
+                          "value": 900,
+                          "rate": {
+                            "num": 1,
+                            "den": 1000
+                          }
+                        }
+                      },
+                      "confidenceBasisPoints": 9840,
+                      "punctuation": true
+                    },
+                    {
+                      "wordId": "word-004",
+                      "text": "\u015fimdi",
+                      "range": {
+                        "start": {
+                          "value": 2400,
+                          "rate": {
+                            "num": 1,
+                            "den": 1000
+                          }
+                        },
+                        "duration": {
+                          "value": 600,
+                          "rate": {
+                            "num": 1,
+                            "den": 1000
+                          }
+                        }
+                      },
+                      "confidenceBasisPoints": 9880,
+                      "punctuation": false
+                    },
+                    {
+                      "wordId": "word-005",
+                      "text": "ba\u015fl\u0131yor!",
+                      "range": {
+                        "start": {
+                          "value": 3050,
+                          "rate": {
+                            "num": 1,
+                            "den": 1000
+                          }
+                        },
+                        "duration": {
+                          "value": 850,
+                          "rate": {
+                            "num": 1,
+                            "den": 1000
+                          }
+                        }
+                      },
+                      "confidenceBasisPoints": 9820,
+                      "punctuation": true
+                    }
+                  ]
+                },
+                {
+                  "cueId": "cue-002",
+                  "range": {
+                    "start": {
+                      "value": 4200,
+                      "rate": {
+                        "num": 1,
+                        "den": 1000
+                      }
+                    },
+                    "duration": {
+                      "value": 4000,
+                      "rate": {
+                        "num": 1,
+                        "den": 1000
+                      }
+                    }
+                  },
+                  "text": "Rakip geldi, son hamleyi izle.",
+                  "speaker": "streamer",
+                  "words": [
+                    {
+                      "wordId": "word-006",
+                      "text": "Rakip",
+                      "range": {
+                        "start": {
+                          "value": 4200,
+                          "rate": {
+                            "num": 1,
+                            "den": 1000
+                          }
+                        },
+                        "duration": {
+                          "value": 650,
+                          "rate": {
+                            "num": 1,
+                            "den": 1000
+                          }
+                        }
+                      },
+                      "confidenceBasisPoints": 9930,
+                      "punctuation": false
+                    },
+                    {
+                      "wordId": "word-007",
+                      "text": "geldi,",
+                      "range": {
+                        "start": {
+                          "value": 4900,
+                          "rate": {
+                            "num": 1,
+                            "den": 1000
+                          }
+                        },
+                        "duration": {
+                          "value": 650,
+                          "rate": {
+                            "num": 1,
+                            "den": 1000
+                          }
+                        }
+                      },
+                      "confidenceBasisPoints": 9860,
+                      "punctuation": true
+                    },
+                    {
+                      "wordId": "word-008",
+                      "text": "son",
+                      "range": {
+                        "start": {
+                          "value": 6100,
+                          "rate": {
+                            "num": 1,
+                            "den": 1000
+                          }
+                        },
+                        "duration": {
+                          "value": 450,
+                          "rate": {
+                            "num": 1,
+                            "den": 1000
+                          }
+                        }
+                      },
+                      "confidenceBasisPoints": 9950,
+                      "punctuation": false
+                    },
+                    {
+                      "wordId": "word-009",
+                      "text": "hamleyi",
+                      "range": {
+                        "start": {
+                          "value": 6600,
+                          "rate": {
+                            "num": 1,
+                            "den": 1000
+                          }
+                        },
+                        "duration": {
+                          "value": 800,
+                          "rate": {
+                            "num": 1,
+                            "den": 1000
+                          }
+                        }
+                      },
+                      "confidenceBasisPoints": 9780,
+                      "punctuation": false
+                    },
+                    {
+                      "wordId": "word-010",
+                      "text": "izle.",
+                      "range": {
+                        "start": {
+                          "value": 7450,
+                          "rate": {
+                            "num": 1,
+                            "den": 1000
+                          }
+                        },
+                        "duration": {
+                          "value": 650,
+                          "rate": {
+                            "num": 1,
+                            "den": 1000
+                          }
+                        }
+                      },
+                      "confidenceBasisPoints": 9890,
+                      "punctuation": true
+                    }
+                  ]
+                },
+                {
+                  "cueId": "cue-003",
+                  "range": {
+                    "start": {
+                      "value": 8500,
+                      "rate": {
+                        "num": 1,
+                        "den": 1000
+                      }
+                    },
+                    "duration": {
+                      "value": 4200,
+                      "rate": {
+                        "num": 1,
+                        "den": 1000
+                      }
+                    }
+                  },
+                  "text": "Tam zaman\u0131nda d\u00f6nd\u00fc ve kazand\u0131!",
+                  "speaker": "streamer",
+                  "words": [
+                    {
+                      "wordId": "word-011",
+                      "text": "Tam",
+                      "range": {
+                        "start": {
+                          "value": 8500,
+                          "rate": {
+                            "num": 1,
+                            "den": 1000
+                          }
+                        },
+                        "duration": {
+                          "value": 500,
+                          "rate": {
+                            "num": 1,
+                            "den": 1000
+                          }
+                        }
+                      },
+                      "confidenceBasisPoints": 9960,
+                      "punctuation": false
+                    },
+                    {
+                      "wordId": "word-012",
+                      "text": "zaman\u0131nda",
+                      "range": {
+                        "start": {
+                          "value": 9050,
+                          "rate": {
+                            "num": 1,
+                            "den": 1000
+                          }
+                        },
+                        "duration": {
+                          "value": 1050,
+                          "rate": {
+                            "num": 1,
+                            "den": 1000
+                          }
+                        }
+                      },
+                      "confidenceBasisPoints": 9760,
+                      "punctuation": false
+                    },
+                    {
+                      "wordId": "word-013",
+                      "text": "d\u00f6nd\u00fc",
+                      "range": {
+                        "start": {
+                          "value": 10200,
+                          "rate": {
+                            "num": 1,
+                            "den": 1000
+                          }
+                        },
+                        "duration": {
+                          "value": 750,
+                          "rate": {
+                            "num": 1,
+                            "den": 1000
+                          }
+                        }
+                      },
+                      "confidenceBasisPoints": 9710,
+                      "punctuation": false
+                    },
+                    {
+                      "wordId": "word-014",
+                      "text": "ve",
+                      "range": {
+                        "start": {
+                          "value": 11000,
+                          "rate": {
+                            "num": 1,
+                            "den": 1000
+                          }
+                        },
+                        "duration": {
+                          "value": 350,
+                          "rate": {
+                            "num": 1,
+                            "den": 1000
+                          }
+                        }
+                      },
+                      "confidenceBasisPoints": 9970,
+                      "punctuation": false
+                    },
+                    {
+                      "wordId": "word-015",
+                      "text": "kazand\u0131!",
+                      "range": {
+                        "start": {
+                          "value": 11400,
+                          "rate": {
+                            "num": 1,
+                            "den": 1000
+                          }
+                        },
+                        "duration": {
+                          "value": 1200,
+                          "rate": {
+                            "num": 1,
+                            "den": 1000
+                          }
+                        }
+                      },
+                      "confidenceBasisPoints": 9900,
+                      "punctuation": true
+                    }
+                  ]
+                },
+                {
+                  "cueId": "cue-004",
+                  "range": {
+                    "start": {
+                      "value": 13000,
+                      "rate": {
+                        "num": 1,
+                        "den": 1000
+                      }
+                    },
+                    "duration": {
+                      "value": 4500,
+                      "rate": {
+                        "num": 1,
+                        "den": 1000
+                      }
+                    }
+                  },
+                  "text": "Devam\u0131 i\u00e7in takip etmeyi unutma.",
+                  "speaker": "streamer",
+                  "words": [
+                    {
+                      "wordId": "word-016",
+                      "text": "Devam\u0131",
+                      "range": {
+                        "start": {
+                          "value": 13000,
+                          "rate": {
+                            "num": 1,
+                            "den": 1000
+                          }
+                        },
+                        "duration": {
+                          "value": 900,
+                          "rate": {
+                            "num": 1,
+                            "den": 1000
+                          }
+                        }
+                      },
+                      "confidenceBasisPoints": 9830,
+                      "punctuation": false
+                    },
+                    {
+                      "wordId": "word-017",
+                      "text": "i\u00e7in",
+                      "range": {
+                        "start": {
+                          "value": 13950,
+                          "rate": {
+                            "num": 1,
+                            "den": 1000
+                          }
+                        },
+                        "duration": {
+                          "value": 550,
+                          "rate": {
+                            "num": 1,
+                            "den": 1000
+                          }
+                        }
+                      },
+                      "confidenceBasisPoints": 9890,
+                      "punctuation": false
+                    },
+                    {
+                      "wordId": "word-018",
+                      "text": "takip",
+                      "range": {
+                        "start": {
+                          "value": 14600,
+                          "rate": {
+                            "num": 1,
+                            "den": 1000
+                          }
+                        },
+                        "duration": {
+                          "value": 650,
+                          "rate": {
+                            "num": 1,
+                            "den": 1000
+                          }
+                        }
+                      },
+                      "confidenceBasisPoints": 9920,
+                      "punctuation": false
+                    },
+                    {
+                      "wordId": "word-019",
+                      "text": "etmeyi",
+                      "range": {
+                        "start": {
+                          "value": 15300,
+                          "rate": {
+                            "num": 1,
+                            "den": 1000
+                          }
+                        },
+                        "duration": {
+                          "value": 750,
+                          "rate": {
+                            "num": 1,
+                            "den": 1000
+                          }
+                        }
+                      },
+                      "confidenceBasisPoints": 9870,
+                      "punctuation": false
+                    },
+                    {
+                      "wordId": "word-020",
+                      "text": "unutma.",
+                      "range": {
+                        "start": {
+                          "value": 16100,
+                          "rate": {
+                            "num": 1,
+                            "den": 1000
+                          }
+                        },
+                        "duration": {
+                          "value": 1250,
+                          "rate": {
+                            "num": 1,
+                            "den": 1000
+                          }
+                        }
+                      },
+                      "confidenceBasisPoints": 9810,
+                      "punctuation": true
+                    }
+                  ]
+                }
+              ]
+            },
+            "style": {
+              "fontAssetId": "asset-font-inter-black",
+              "fontSizeMilliPixels": 72000,
+              "fontWeight": 900,
+              "italic": false,
+              "fillColor": "#FFFFFFFF",
+              "backgroundColor": "#101014CC",
+              "strokeColor": "#000000FF",
+              "strokeWidthMilliPixels": 4500,
+              "shadow": {
+                "color": "#000000B3",
+                "offsetXMilliPixels": 0,
+                "offsetYMilliPixels": 6000,
+                "blurMilliPixels": 12000
+              },
+              "letterSpacingMilliPixels": 0,
+              "lineHeightBasisPoints": 10500,
+              "textTransform": "none"
+            },
+            "layout": {
+              "box": {
+                "x": 600,
+                "y": 7300,
+                "width": 8800,
+                "height": 1900
+              },
+              "horizontalAlign": "center",
+              "verticalAlign": "middle",
+              "maxLines": 2,
+              "overflow": "shrink",
+              "paddingBasisPoints": 300
+            },
+            "transitionIn": {
+              "type": "fade",
+              "duration": {
+                "value": 120,
+                "rate": {
+                  "num": 1,
+                  "den": 1000
+                }
+              }
+            },
+            "transitionOut": {
+              "type": "fade",
+              "duration": {
+                "value": 120,
+                "rate": {
+                  "num": 1,
+                  "den": 1000
+                }
+              }
+            },
+            "animations": [
+              {
+                "animationId": "anim-caption-opacity",
+                "property": "style.opacity",
+                "timeOrigin": "clip-relative",
+                "keyframes": [
+                  {
+                    "at": {
+                      "value": 0,
+                      "rate": {
+                        "num": 1,
+                        "den": 1000
+                      }
+                    },
+                    "value": {
+                      "kind": "scalar",
+                      "value": 0,
+                      "unit": "basis-points"
+                    },
+                    "interpolation": "linear"
+                  },
+                  {
+                    "at": {
+                      "value": 120,
+                      "rate": {
+                        "num": 1,
+                        "den": 1000
+                      }
+                    },
+                    "value": {
+                      "kind": "scalar",
+                      "value": 10000,
+                      "unit": "basis-points"
+                    },
+                    "interpolation": "bezier",
+                    "bezier": {
+                      "x1": 2000,
+                      "y1": 0,
+                      "x2": 8000,
+                      "y2": 10000
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "trackId": "graphics-reactions",
+        "type": "graphics",
+        "name": "Reaction graphics",
+        "enabled": true,
+        "zIndex": 30,
+        "blendMode": "normal",
+        "clips": [
+          {
+            "clipId": "graphic-fire-emoji",
+            "type": "graphics",
+            "timelineRange": {
+              "start": {
+                "value": 8100,
+                "rate": {
+                  "num": 1,
+                  "den": 1000
+                }
+              },
+              "duration": {
+                "value": 2600,
+                "rate": {
+                  "num": 1,
+                  "den": 1000
+                }
+              }
+            },
+            "content": {
+              "kind": "emoji",
+              "assetId": "asset-emoji-fire",
+              "unicode": "\ud83d\udd25",
+              "altText": "fire"
+            },
+            "transform": {
+              "position": {
+                "x": 8000,
+                "y": 2450
+              },
+              "anchor": {
+                "x": 5000,
+                "y": 5000
+              },
+              "scaleBasisPoints": 10000,
+              "rotationMilliDegrees": -8000,
+              "opacityBasisPoints": 10000
+            },
+            "blendMode": "normal",
+            "transitionIn": {
+              "type": "zoom",
+              "duration": {
+                "value": 180,
+                "rate": {
+                  "num": 1,
+                  "den": 1000
+                }
+              },
+              "direction": "in"
+            },
+            "transitionOut": {
+              "type": "fade",
+              "duration": {
+                "value": 240,
+                "rate": {
+                  "num": 1,
+                  "den": 1000
+                }
+              }
+            },
+            "animations": [
+              {
+                "animationId": "anim-emoji-scale",
+                "property": "transform.scale",
+                "timeOrigin": "clip-relative",
+                "keyframes": [
+                  {
+                    "at": {
+                      "value": 0,
+                      "rate": {
+                        "num": 1,
+                        "den": 1000
+                      }
+                    },
+                    "value": {
+                      "kind": "scalar",
+                      "value": 3000,
+                      "unit": "basis-points"
+                    },
+                    "interpolation": "linear"
+                  },
+                  {
+                    "at": {
+                      "value": 350,
+                      "rate": {
+                        "num": 1,
+                        "den": 1000
+                      }
+                    },
+                    "value": {
+                      "kind": "scalar",
+                      "value": 12000,
+                      "unit": "basis-points"
+                    },
+                    "interpolation": "bezier",
+                    "bezier": {
+                      "x1": 1800,
+                      "y1": 15000,
+                      "x2": 6200,
+                      "y2": 9500
+                    }
+                  },
+                  {
+                    "at": {
+                      "value": 700,
+                      "rate": {
+                        "num": 1,
+                        "den": 1000
+                      }
+                    },
+                    "value": {
+                      "kind": "scalar",
+                      "value": 10000,
+                      "unit": "basis-points"
+                    },
+                    "interpolation": "bezier",
+                    "bezier": {
+                      "x1": 3000,
+                      "y1": 10000,
+                      "x2": 7000,
+                      "y2": 10000
+                    }
+                  }
+                ]
+              },
+              {
+                "animationId": "anim-emoji-rotate",
+                "property": "transform.rotation",
+                "timeOrigin": "clip-relative",
+                "keyframes": [
+                  {
+                    "at": {
+                      "value": 0,
+                      "rate": {
+                        "num": 1,
+                        "den": 1000
+                      }
+                    },
+                    "value": {
+                      "kind": "scalar",
+                      "value": -12000,
+                      "unit": "milli-degrees"
+                    },
+                    "interpolation": "linear"
+                  },
+                  {
+                    "at": {
+                      "value": 700,
+                      "rate": {
+                        "num": 1,
+                        "den": 1000
+                      }
+                    },
+                    "value": {
+                      "kind": "scalar",
+                      "value": 8000,
+                      "unit": "milli-degrees"
+                    },
+                    "interpolation": "bezier",
+                    "bezier": {
+                      "x1": 3000,
+                      "y1": 0,
+                      "x2": 7000,
+                      "y2": 10000
+                    }
+                  }
+                ]
+              }
+            ],
+            "extensions": {
+              "x-acme.accessibility": {
+                "announce": false
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "markers": [
+      {
+        "markerId": "marker-hook",
+        "at": {
+          "value": 0,
+          "rate": {
+            "num": 1,
+            "den": 1000
+          }
+        },
+        "label": "Hook",
+        "kind": "chapter"
+      },
+      {
+        "markerId": "marker-impact",
+        "at": {
+          "value": 8500,
+          "rate": {
+            "num": 1,
+            "den": 1000
+          }
+        },
+        "label": "Winning move",
+        "kind": "highlight"
+      },
+      {
+        "markerId": "marker-cta",
+        "at": {
+          "value": 13000,
+          "rate": {
+            "num": 1,
+            "den": 1000
+          }
+        },
+        "label": "Follow CTA",
+        "kind": "chapter"
+      }
+    ]
+  },
+  "thumbnail": {
+    "strategy": "timeline-frame",
+    "at": {
+      "value": 8700,
+      "rate": {
+        "num": 1,
+        "den": 1000
+      }
+    },
+    "overlayText": "SON HAMLE!",
+    "resolution": {
+      "width": 1080,
+      "height": 1920
+    },
+    "format": "jpeg",
+    "qualityBasisPoints": 9200,
+    "extensions": {
+      "x-acme.thumbnail": {
+        "facePreference": "active-speaker",
+        "saliencyThreshold": 7600
+      }
+    }
+  },
+  "exportProfiles": [
+    {
+      "exportProfileId": "social-master-1080x1920",
+      "platformTargets": [
+        "youtube-shorts",
+        "tiktok",
+        "instagram-reels"
+      ],
+      "aspectRatio": {
+        "width": 9,
+        "height": 16
+      },
+      "resolution": {
+        "width": 1080,
+        "height": 1920
+      },
+      "frameRate": {
+        "num": 30,
+        "den": 1
+      },
+      "maxDuration": {
+        "value": 60000,
+        "rate": {
+          "num": 1,
+          "den": 1000
+        }
+      },
+      "encodingPreset": "social-quality",
+      "container": "mp4",
+      "video": {
+        "codec": "h264",
+        "profile": "high",
+        "level": "4.2",
+        "pixelFormat": "yuv420p",
+        "rateControl": {
+          "mode": "crf",
+          "crf": 18,
+          "maxBitrateKbps": 16000,
+          "bufferSizeKbits": 32000
+        },
+        "gopFrames": 60,
+        "colorSpace": "bt709",
+        "fastStart": true
+      },
+      "audio": {
+        "codec": "aac",
+        "sampleRateHz": 48000,
+        "channels": 2,
+        "bitrateKbps": 192,
+        "loudness": {
+          "integratedMilliLufs": -14000,
+          "truePeakMilliDbtp": -1000,
+          "loudnessRangeMilliLu": 7000
+        }
+      },
+      "captions": {
+        "mode": "burn-in-and-sidecar",
+        "sidecarFormats": [
+          "srt",
+          "webvtt"
+        ]
+      },
+      "filename": "son-saniye-zaferi-social.mp4"
+    },
+    {
+      "exportProfileId": "social-review-720x1280",
+      "platformTargets": [
+        "mobile-preview"
+      ],
+      "aspectRatio": {
+        "width": 9,
+        "height": 16
+      },
+      "resolution": {
+        "width": 720,
+        "height": 1280
+      },
+      "frameRate": {
+        "num": 30,
+        "den": 1
+      },
+      "maxDuration": {
+        "value": 60000,
+        "rate": {
+          "num": 1,
+          "den": 1000
+        }
+      },
+      "encodingPreset": "draft",
+      "container": "mp4",
+      "video": {
+        "codec": "h264",
+        "profile": "main",
+        "level": "4.0",
+        "pixelFormat": "yuv420p",
+        "rateControl": {
+          "mode": "vbr",
+          "targetBitrateKbps": 3500,
+          "maxBitrateKbps": 5000,
+          "bufferSizeKbits": 10000
+        },
+        "gopFrames": 60,
+        "colorSpace": "bt709",
+        "fastStart": true
+      },
+      "audio": {
+        "codec": "aac",
+        "sampleRateHz": 48000,
+        "channels": 2,
+        "bitrateKbps": 128,
+        "loudness": {
+          "integratedMilliLufs": -14000,
+          "truePeakMilliDbtp": -1000,
+          "loudnessRangeMilliLu": 7000
+        }
+      },
+      "captions": {
+        "mode": "burn-in",
+        "sidecarFormats": []
+      },
+      "filename": "son-saniye-zaferi-review.mp4"
+    }
+  ],
+  "extensions": {
+    "x-acme.moderation": {
+      "reviewed": true,
+      "policyVersion": "2026-06"
+    }
+  }
+}
