@@ -1400,3 +1400,1242 @@ Gerçek dünya: iki saatlik ProRes input önce geçici `bytes` nesnesine indiril
 Ölçeklenme: memory class'ları scheduler request/limit ve queue capability ile eşleşir. Küçük işler aynı node'da bin-pack edilir; xlarge işler taint/toleration ile ayrılır. Admission, `sum(reserved_working_set) <= node_allocatable - daemon_and_safety` invariantını uygular; overcommit yalnız ölçülmüş düşük korelasyonlu phase'lerde kontrollü ve kill-cost aware olabilir.
 
 Ownership: Media Runtime buffer lifecycle/streaming; Capacity Engineering envelope modeli ve class sizing; Kubernetes Platform cgroup/NUMA/eviction; Storage Platform multipart/spill; Workflow ekibi checkpoint; SRE OOM runbook sahibidir. Testler byte semaphore property/race, buffer zeroization, forced slow sink, cgroup pressure, OOM chaos, checkpoint resume, long soak leak ve golden chunk-boundary audio/video testlerini içerir.
+
+---
+
+## 65. Benchmark
+
+### Mekanizma, invariantlar ve gerekçe
+
+Benchmark sistemi, render motorunun kalite, hız ve kaynak tüketimini tekrarlanabilir biçimde ölçen kontrollü deney altyapısıdır. Her benchmark çalışması sabit bir environment fingerprint (image digest, driver, FFmpeg/libav/build revision, model/font hashes) ile ilişkilidir; böylece sonuçlar zaman içinde karşılaştırılabilir.
+
+Invariant'lar:
+
+- Benchmark sonucu yalnızca environment fingerprint ile birlikte anlamlıdır. Fingerprint olmadan sonuç geçersizdir.
+- Benchmark çalışması production workload'una etki etmez; ayrı worker pool veya time-window kullanılır.
+- Warm-up frame'leri ölçüm havuzuna dahil edilmez.
+- En az 3 warm-up ve 10 ölçüm; p50/p95/p99, peak RSS/VRAM, CPU/GPU seconds, output fps ve cache hit oranı kaydedilir.
+- Golden corpus lisanslı, privacy onaylı ve content hash ile sabittir.
+- Lossless veya intra-only referans profile ile kalite ölçümü yapılır; codec kaynaklı fark benchmark amacı dışında tutulur.
+- Regresyon eşiği: p95 latency/RTF'de `%10` kötüleşme merge'i bloklar; `%5-10` arası owner waiver gerektirir.
+
+Neden: Performans ölçümleri environment'a bağlıdır; fingerprint olmazsa regresyon tespiti imkansızdır. Golden corpus olmadan kalite karşılaştırması subjektif kalır.
+
+### Alternatifler ve tradeoff'lar
+
+- **Manuel benchmark (ffmpeg -benchmark):** Basit, tek seferlik. Otomasyon ve historical tracking yok. Opsiyonel quick-check olarak kalabilir.
+- **Benchmark.framework (pytest-benchmark):** Python-native, CI entegrasyonu kolay. Ancak media workload için custom harness gerekir.
+- **Custom benchmark harness:** Tam kontrol, domain-specific metric. Bakım maliyeti yüksek. Seçilen yol: framework + custom extension.
+
+### Veri akışı
+
+1. CI/CD veya scheduled trigger benchmark suite'i başlatır.
+2. Harness environment fingerprint'i hesaplar (image digest, binary versions, hardware identifiers).
+3. Golden corpus S3'ten indirilir (cold/warm cache senaryosu ayrı).
+4. Workload'lar parametrize edilir: resolution, codec, duration, filter count, parallelism level.
+5. Her workload warm-up çalıştırır (sonuçlar atılır).
+6. Ölçüm çalıştırılır; FFmpeg `-progress pipe:1` ile frame/fps/speed, cgroup ile memory/CPU, nvidia-smi ile GPU metrics toplanır.
+7. Sonuçlar environment fingerprint ile birlikte PostgreSQL'e yazılır.
+8. Regression kontrolü: önceki benchmark run ile p95 karşılaştırması.
+9. CI'da regresyon varsa pipeline block edilir.
+
+### API / Interface / Model
+
+```python
+class BenchmarkConfig(BaseModel):
+    env_fingerprint: str  # SHA-256 of environment
+    corpus_id: str
+    workloads: List[WorkloadSpec]
+    warmup_runs: int = 3
+    measure_runs: int = 10
+    regression_threshold_pct: float = 10.0
+
+class WorkloadSpec(BaseModel):
+    name: str
+    resolution: str  # "1080p", "4K"
+    codec: str  # "h264", "h265", "vp9"
+    duration_sec: float
+    filter_count: int
+    parallelism: int
+
+class BenchmarkResult(BaseModel):
+    run_id: str
+    env_fingerprint: str
+    workload: WorkloadSpec
+    p50_latency_ms: float
+    p95_latency_ms: float
+    p99_latency_ms: float
+    realtime_factor: float
+    peak_rss_bytes: int
+    peak_vram_bytes: Optional[int]
+    cpu_seconds: float
+    gpu_seconds: Optional[float]
+    output_fps: float
+    cache_hit_ratio: float
+    quality_psnr: Optional[float]
+    quality_ssim: Optional[float]
+    timestamp: datetime
+
+class RegressionReport(BaseModel):
+    baseline_run_id: str
+    current_run_id: str
+    regressions: List[RegressionItem]
+    improvements: List[RegressionItem]
+    verdict: Literal["pass", "warning", "fail"]
+```
+
+### Dosya / klasör organizasyonu ve render pipeline bağı
+
+```
+tests/benchmark/
+    harness.py              # BenchmarkRunner
+    workloads/              # Parametrized workload specs
+    golden_corpus/          # Content hash → S3 mapping
+    reports/                # Historical results
+    regression.py           # Regression detector
+deploy/benchmark/
+    cronjob.yaml            # Scheduled benchmark
+    config/                 # Corpus, workload definitions
+```
+
+Benchmark sonuçları release pipeline'ın bir gate'idir. Yeni FFmpeg/model/font güncellemesi benchmark'tan geçmeden production'a alınmaz.
+
+### Sequence diyagramı
+
+```mermaid
+sequenceDiagram
+    participant CI as CI/CD
+    participant BH as BenchmarkHarness
+    participant W as Worker
+    participant F as FFmpeg
+    participant S3 as S3 Corpus
+    participant DB as PostgreSQL
+    CI->>BH: trigger_benchmark(config)
+    BH->>BH: compute_env_fingerprint()
+    BH->>S3: download_golden_corpus(corpus_id)
+    S3-->>BH: corpus files
+    loop workload
+        BH->>W: run_workload(warmup=true)
+        W->>F: ffmpeg -benchmark
+        F-->>W: progress + metrics
+        BH->>W: run_workload(measure=true)
+        W->>F: ffmpeg -benchmark
+        F-->>W: frame/fps/speed/memory
+        BH->>BH: aggregate_stats()
+    end
+    BH->>DB: save_results(benchmark_result)
+    BH->>BH: check_regression(baseline)
+    BH->>CI: verdict(pass/warning/fail)
+```
+
+### Class diyagramı
+
+```mermaid
+classDiagram
+    class BenchmarkHarness {
+        +run_suite(config) List~BenchmarkResult~
+        +check_regression(baseline, current) RegressionReport
+    }
+    class EnvironmentFingerprint {
+        +compute() str
+        +image_digest: str
+        +ffmpeg_revision: str
+        +driver_version: str
+    }
+    class GoldenCorpus {
+        +download(corpus_id) Path
+        +verify_hash(files) bool
+    }
+    class WorkloadRunner {
+        +run(workload, warmup) MetricSet
+    }
+    class RegressionDetector {
+        +compare(baseline, current) RegressionReport
+    }
+    BenchmarkHarness --> EnvironmentFingerprint
+    BenchmarkHarness --> GoldenCorpus
+    BenchmarkHarness --> WorkloadRunner
+    BenchmarkHarness --> RegressionDetector
+```
+
+### State diyagramı
+
+```mermaid
+stateDiagram-v2
+    [*] --> Idle
+    Idle --> Preparing: trigger received
+    Preparing --> CorpusReady: corpus downloaded
+    CorpusReady --> WarmingUp: workload started
+    WarmingUp --> Measuring: warmup done
+    Measuring --> Aggregating: measurements done
+    Aggregating --> Reporting: stats computed
+    Reporting --> Pass: no regression
+    Reporting --> Warning: within threshold
+    Reporting --> Fail: regression detected
+    Pass --> Idle
+    Warning --> Idle
+    Fail --> Blocked: CI gate blocked
+```
+
+### Production sorunları ve recovery
+
+- Benchmark worker crash: Temporal retry ile yeniden çalıştırılır; warm-up tekrarlanır.
+- Golden corpus corrupted: hash mismatch; S3'ten yeniden indirilir.
+- Non-deterministic sonuçlar: environment drift, thermal throttling, noisy neighbor; benchmark cluster izole ve dedicated.
+- GPU VRAM measurement yanlışlığı: nvidia-smi sampling rate ayarı; cross-validation.
+- Benchmark süre aşımı: workload timeout, Partial result kaydedilir.
+
+### Performans optimizasyonları
+
+Benchmark harness'ı kendisi production'a equivalent performans gerektirmez fakat sonuçların güvenilirliği için determinism kritiktir. Cold cache ve warm cache benchmark'ları ayrı run olarak çalıştırılır. CI'da benchmark paralel çalıştırılabilir fakat her run ayrı resource group'a sahip olmalıdır.
+
+### Gerçek dünya uygulaması
+
+FFmpeg 7.1'e yükseltme sonrası benchmark: p95 latency %8 artmış, quality metric'ler değişmemiş. Investigasyon: yeni libx264 preset davranışı. Fix: encoder config ayarı. Benchmark regression'ı CI'da yakaladı ve merge'i engelledi.
+
+### Ölçeklenebilirlik
+
+Benchmark workload'ları horizontal scale edilebilir; her workload bağımsız worker'da çalışır. Historical results PostgreSQL'de partition edilir; long-term trend analysis için time-series DB entegrasyonu. Multi-region benchmark identical corpus ile karşılaştırma sağlar.
+
+### Ownership ve test
+
+**Ownership:** Release Engineering (harness/CI), Media Runtime (metric definitions), ML Platform (model benchmarks), GPU Platform (hardware fingerprint). **Testler:** harness self-test (fingerprint determinism, metric collection), regression detector (true positive/negative), corpus integrity, concurrent benchmark isolation, metric accuracy vs manual measurement.
+
+---
+
+## 66. Testing
+
+### Mekanizma, invariantlar ve gerekçe
+
+Test stratejisi çok katmanlıdır: unit → contract → integration → golden → property → fuzz → chaos → load. Her katman farklı riski hedefler. Render motoru için testler yalnız "code works" değil, "output is deterministic, quality is acceptable, and failure is recoverable" doğrular.
+
+Invariant'lar:
+
+- Her PR unit + contract + integration testlerini geçmek zorundadır.
+- Golden testler her release'de çalıştırılır; golden corpus update owner approval gerektirir.
+- Property testler invariant ihlalini rastgele girdilerle tespit eder.
+- Fuzz testler malformed input ve edge case'leri hedefler.
+- Chaos testler infrastructure failure (pod kill, network partition, disk full) senaryolarını simüle eder.
+- Testler production code path'ini kullanır; mock yalnız external boundary'dedir (S3, YouTube API, TikTok API).
+- Her test environment fingerprint raporlar.
+- Test coverage metric'i release gate değildir; risk-based coverage hedeflenir.
+
+### Alternatifler ve tradeoff'lar
+
+- **Golden-only testing:** Kalite garantisi güçlü fakat regression detection zayıf. Property/fuzz ile desteklenir.
+- **Full mock testing:** Hızlı fakat integration bug'larını kaçırır. External boundary'de sınırlı kullanılır.
+- **Manual QA:** Yaratıcı edge case tespit eder fakat tekrarlanabilirliği düşük. Automation-first, manual validation limited.
+
+### Test tipleri ve kapsamı
+
+**Unit tests:** Her modül için bağımsız. Time normalization, color math, coordinate transform, audio gain staging, Bezier evaluation, keyframe interpolation. Mock yalnız native subprocess (FFmpeg) için.
+
+**Contract tests:** API endpoint, Pydantic schema, database migration, FFmpeg CLI contract, plugin ABI, cache key format. Her contract değişikliğinde çalıştırılır.
+
+**Integration tests:** End-to-end pipeline (ClipSpec → RenderPlan → FFmpeg → output). Real FFmpeg subprocess, real database (test container), mock S3 (localstack veya minio).
+
+**Golden tests:** Referans output ile karşılaştırma. Frame-level pixel tolerance (SSIM > 0.999 lossless, > 0.995 lossy). Audio sample-level comparison. SRT/ASS subtitle byte-level comparison. Thumbnail exact PTS extraction.
+
+**Property tests:** Hypothesis ile random ClipSpec generated. Invariant'lar: timeline duration == output duration (±1 frame), rational time roundtrip, all tracks rendered, no orphan frames. Fuzz corpus'u regression suite'e eklenir.
+
+**Fuzz tests:** Malformed JSON, extreme values (duration = 0, duration = MAX), missing required fields, circular references, oversized assets, binary-in-text. AFL/libFuzzer edge case detection.
+
+**Chaos tests:** Pod kill during render, network partition during upload, disk full during encode, Redis failure during cache, PostgreSQL failover during job creation. Temporal recovery correctness doğrulanır.
+
+**Load tests:** Concurrent 100/500/1000 render job submission. Queue backpressure, worker saturation, database connection pool. Latency degradation curve.
+
+### API / Interface / Model
+
+```python
+class TestSuiteConfig(BaseModel):
+    environment_fingerprint: str
+    suites: List[str]  # ["unit", "contract", "integration", "golden", "property", "fuzz", "chaos"]
+    golden_corpus_version: str
+    fuzz_duration_sec: int = 300
+    chaos_scenarios: List[str]
+    load_concurrency: int = 100
+
+class TestResult(BaseModel):
+    suite: str
+    passed: int
+    failed: int
+    skipped: int
+    duration_sec: float
+    env_fingerprint: str
+    coverage_percent: Optional[float]
+    failures: List[TestFailure]
+
+class GoldenTestResult(BaseModel):
+    test_name: str
+    reference_hash: str
+    output_hash: str
+    ssim: Optional[float]
+    psnr: Optional[float]
+    audio_lufs_diff: Optional[float]
+    passed: bool
+    tolerance_exceeded_by: Optional[float]
+```
+
+### Dosya / klasör organizasyonu ve render pipeline bağı
+
+```
+tests/
+    unit/                   # Unit tests per module
+    contract/               # API, schema, CLI contracts
+    integration/            # Pipeline integration
+    golden/                 # Golden reference comparison
+    property/               # Hypothesis property tests
+    fuzz/                   # Fuzz corpus and harness
+    chaos/                  # Chaos test scenarios
+    load/                   # Load test scripts
+    fixtures/               # Test data, mock assets
+    conftest.py             # Shared fixtures
+tests/benchmark/            # Separate benchmark (§65)
+deploy/test/
+    ci-pipeline.yaml        # GitHub Actions / GitLab CI
+    test-containers/        # PostgreSQL, Redis, MinIO
+    gpu-test-runner/        # NVIDIA GPU CI runner
+```
+
+### Sequence diyagramı
+
+```mermaid
+sequenceDiagram
+    participant CI as CI Pipeline
+    participant TU as Test Unit Runner
+    participant IR as Integration Runner
+    participant GR as Golden Runner
+    participant PR as Property Runner
+    participant CH as Chaos Runner
+    participant DB as Test DB
+    participant S3 as Test S3
+    CI->>TU: run_unit_tests()
+    TU-->>CI: pass/fail
+    CI->>IR: run_integration_tests()
+    IR->>DB: setup test database
+    IR->>S3: upload test assets
+    IR->>IR: run_full_pipeline()
+    IR-->>CI: pass/fail
+    CI->>GR: run_golden_tests()
+    GR->>S3: load golden corpus
+    GR->>GR: render_and_compare()
+    GR-->>CI: ssim/psnr results
+    CI->>PR: run_property_tests()
+    PR->>PR: hypothesis generate/render
+    PR-->>CI: invariant violations
+    CI->>CH: run_chaos_tests()
+    CH->>CH: inject_failures()
+    CH-->>CI: recovery verification
+```
+
+### Class diyagramı
+
+```mermaid
+classDiagram
+    class TestOrchestrator {
+        +run_suite(config) List~TestResult~
+        +generate_report() TestReport
+    }
+    class GoldenComparator {
+        +compare(reference, output) GoldenTestResult
+        +compute_ssim(ref, out) float
+        +compute_psnr(ref, out) float
+    }
+    class PropertyValidator {
+        +validate_invariants(spec, output) bool
+        +generate_random_spec() ClipSpec
+    }
+    class ChaosInjector {
+        +inject(scenario) ChaosResult
+        +verify_recovery() bool
+    }
+    class FuzzHarness {
+        +run(corpus, duration) List~FuzzResult~
+    }
+    TestOrchestrator --> GoldenComparator
+    TestOrchestrator --> PropertyValidator
+    TestOrchestrator --> ChaosInjector
+    TestOrchestrator --> FuzzHarness
+```
+
+### State diyagramı
+
+```mermaid
+stateDiagram-v2
+    [*] --> UnitTests
+    UnitTests --> ContractTests: unit pass
+    UnitTests --> Failed: unit fail
+    ContractTests --> IntegrationTests: contract pass
+    ContractTests --> Failed: contract fail
+    IntegrationTests --> GoldenTests: integration pass
+    IntegrationTests --> Failed: integration fail
+    GoldenTests --> PropertyTests: golden pass
+    GoldenTests --> Failed: golden fail
+    PropertyTests --> FuzzTests: property pass
+    PropertyTests --> Failed: property fail
+    FuzzTests --> ChaosTests: fuzz pass
+    FuzzTests --> Failed: fuzz fail
+    ChaosTests --> LoadTests: chaos pass
+    ChaosTests --> Failed: chaos fail
+    LoadTests --> Passed: load pass
+    LoadTests --> Failed: load fail
+    Failed --> Blocked: CI blocked
+```
+
+### Production sorunları ve recovery
+
+- Test DB/Redis cleanup: her test sonrası transaction rollback veya container recreate.
+- Golden corpus drift: hash-based versioning; update require owner approval + semantic diff review.
+- GPU test non-determinism:同一 input tolerance ile karşılaştırma; RTF thresholdları relaxed.
+- Chaos test produção etkisi: izole namespace, ayrı cluster veya time-window.
+- Flaky test: retry policy, quarantine, root cause investigation.
+- Fuzz crash: crash reproducer kaydedilir; fuzzing durdurulur ve fix önceliklendirilir.
+
+### Performans optimizasyonları
+
+Unit testler paralel çalıştırılır (pytest-xdist). Integration testleri test container ile parallelize edilir. Golden testler lazy corpus loading ile memory-efficient. Property testler max example ile sınırlandırılır. Chaos testler time-budget ile çalışır.
+
+### Gerçek dünya uygulaması
+
+FFmpeg upgrade sonrası golden test: SSIM 0.9998 → 0.9995. Tolerance 0.999 altında fail. Investigation: encoder internal dithering değişikliği. Tolerance update approved.
+
+### Ölçeklenebilirlik
+
+Test parallelism CI runner sayısı ile orantılı. GPU testleri ayrı runner pool'a sahip. Test results historical PostgreSQL'de tutulur; trend analysis ve flaky test detection.
+
+### Ownership ve test
+
+**Ownership:** Quality Engineering (test framework), Media Runtime (golden corpus), Security (fuzz/chaos), Platform (integration containers). **Testlerin testi:** Test harness self-test, golden comparator accuracy, property invariant soundness, chaos scenario coverage, fuzz corpus effectiveness.
+
+---
+
+## 67. CI/CD
+
+### Mekanizma, invariantlar ve gerekçe
+
+CI/CD pipeline'ı, kod değişikliklerinden production deploy'a kadar tüm süreci otomatikleştiren kontrollü teslimat hattıdır. Her commit test, build, scan, sign, publish ve deploy adımlarından geçer.
+
+Invariant'lar:
+
+- Production'a yalnız signed ve scanlenmiş image yayınlanır.
+- Image digest immutable'dır; aynı digest ile her deploy tekrarlanabilir.
+- Build reproducibility: aynı source + aynı build input = aynı binary (deterministic build).
+- CVE vulnerability scanning critical ise build block edilir; high için waiver süreci vardır.
+- Artifact signing key Vault/KMS'te saklanır; CI runner'da plaintext bulunmaz.
+- Canary deploy %1 trafik ile başlar; SLO burn-rate alarm yoksa kademeli artırılır.
+- Rollback tek komutla yapılabilir; database migration backward-compatible olmalıdır.
+- Branch protection: main branch'e doğrudan push yasak; PR + review + CI pass zorunlu.
+- Secret'lar CI environment'ta inject edilir; repo veya log'da plaintext saklanmaz.
+
+### Alternatifler ve tradeoff'lar
+
+- **GitHub Actions:** Kolay setup, marketplace actions. Self-hosted runner gerektirir (GPU). Opsiyon: Kubernetes runner.
+- **GitLab CI:** Built-in container registry, self-hosted runners. Daha ağır setup.
+- **ArgoCD + GitHub Actions:** GitOps deployment. ArgoCD progressive delivery (canary/rolling). Kubernetes native.
+- **Tek CD tool (Spinnaker/Flux):** Ek bağımlılık, öğrenme eğrisi. Gerek yok: ArgoCD yeterli.
+
+Tradeoff: GitHub Actions + ArgoCD kombinasyonu build/test'i CI'da, deploy'u GitOps ile yönetir. Self-hosted GPU runner maliyetli fakat gerekli.
+
+### Pipeline stages
+
+```
+1. Lint & Type Check (ruff, mypy)
+2. Unit Tests (pytest parallel)
+3. Contract Tests (API, schema, CLI)
+4. Build Docker Image (multi-stage, GPU variants)
+5. SBOM Generation (syft)
+6. CVE Scan (grype/trivy) → block on critical
+7. Container Test (capability smoke, codec parity)
+8. Artifact Signing (cosign, key in Vault)
+9. Push to Registry (GCR/ECR, digest-labeled)
+10. Integration Tests (test containers)
+11. Golden Tests (if golden corpus changed)
+12. Benchmark (if codec/filter/runtime changed)
+13. Canary Deploy (ArgoCD, %1 traffic)
+14. SLO Verification (30 min observation)
+15. Progressive Rollout (10% → 50% → 100%)
+16. Post-deploy Smoke Tests
+```
+
+### API / Interface / Model
+
+```python
+class PipelineConfig(BaseModel):
+    trigger: Literal["push", "pr", "scheduled", "manual"]
+    branch: str
+    commit_sha: str
+    stages: List[PipelineStage]
+    gpu_required: bool = False
+    golden_test_required: bool = False
+    benchmark_required: bool = False
+
+class PipelineStage(BaseModel):
+    name: str
+    status: Literal["pending", "running", "passed", "failed", "skipped", "blocked"]
+    duration_sec: Optional[float]
+    artifacts: List[str]
+    logs_url: str
+
+class DeployManifest(BaseModel):
+    image_digest: str
+    environment: str  # "staging", "production"
+    canary_percent: int
+    rollback_digest: Optional[str]
+    slo_burn_rate: Optional[float]
+```
+
+### Dosya / klasör organizasyonu ve render pipeline bağı
+
+```
+.github/workflows/
+    ci.yaml                 # Main CI pipeline
+    benchmark.yaml          # Scheduled benchmark
+    deploy.yaml             # Deploy pipeline
+    chaos-test.yaml         # Weekly chaos tests
+deploy/
+    argocd/
+        application.yaml    # ArgoCD app definition
+        rollout.yaml        # Canary config
+    k8s/
+        base/               # Base manifests
+        overlays/           # Per-environment
+tests/ci/
+    container-test/         # Image smoke tests
+    capability-test/        # FFmpeg/GPU capability
+    deploy-test/            # Post-deploy smoke
+scripts/
+    sign-image.sh           # Cosign signing
+    rollback.sh             # Emergency rollback
+    sbom-generate.sh        # SBOM creation
+```
+
+### Sequence diyagramı
+
+```mermaid
+sequenceDiagram
+    participant DEV as Developer
+    participant GH as GitHub
+    participant CI as CI Pipeline
+    participant REG as Container Registry
+    participant AR as ArgoCD
+    participant K8 as Kubernetes
+    participant MON as Monitoring
+    DEV->>GH: PR + commit
+    GH->>CI: trigger pipeline
+    CI->>CI: lint + type check
+    CI->>CI: unit + contract tests
+    CI->>CI: build + scan + sign
+    CI->>REG: push image (digest-labeled)
+    CI->>CI: integration + golden tests
+    CI->>GH: PR status check
+    DEV->>GH: merge after approval
+    GH->>CI: trigger deploy pipeline
+    CI->>REG: verify image signature
+    CI->>AR: update manifest (canary %1)
+    AR->>K8: rollout canary
+    MON->>MON: observe SLO (30 min)
+    alt SLO healthy
+        AR->>K8: progressive rollout 10→50→100
+    else SLO degraded
+        AR->>K8: rollback to previous digest
+    end
+    MON->>GH: deploy status
+```
+
+### Class diyagramı
+
+```mermaid
+classDiagram
+    class CIPipeline {
+        +run(config) PipelineResult
+        +block_on_critical(finding) bool
+    }
+    class ImageBuilder {
+        +build(dockerfile, context) ImageDigest
+        +scan(image) ScanReport
+        +sign(image, key) SignedImage
+    }
+    class DeployController {
+        +canary(deploy_manifest)
+        +progressive_rollout()
+        +rollback(digest)
+    }
+    class SLOVerifier {
+        +observe(window_sec) SLOReport
+        +should_progress() bool
+        +should_rollback() bool
+    }
+    CIPipeline --> ImageBuilder
+    DeployController --> SLOVerifier
+```
+
+### State diyagramı
+
+```mermaid
+stateDiagram-v2
+    [*] --> Linting
+    Linting --> Testing: lint pass
+    Linting --> Failed: lint fail
+    Testing --> Building: tests pass
+    Testing --> Failed: tests fail
+    Building --> Scanning: image built
+    Scanning --> Signed: no critical CVE
+    Scanning --> Blocked: critical CVE
+    Signed --> Integrating: pushed to registry
+    Integrating --> GoldenTesting: integration pass
+    GoldenTesting --> Benchmarking: golden pass / skipped
+    Benchmarking --> Deploying: benchmark pass / skipped
+    Deploying --> Canary: %1 traffic
+    Canary --> Progressive: SLO healthy 30 min
+    Canary --> RolledBack: SLO degraded
+    Progressive --> Deployed: 100% traffic
+    RolledBack --> [*]
+    Deployed --> [*]
+    Failed --> [*]
+```
+
+### Production sorunları ve recovery
+
+- GPU runner unavailable: CPU-only tests çalışır; GPU-dependent tests skip edilir; alert tetiklenir.
+- Registry outage: image push retry; fallback olarak manuel image pull + deploy.
+- ArgoCD sync failure: manual kubectl rollout;事后 ArgoCD reconciliation.
+- Canary SLO alarm: automatic rollback; incident ticket açılır.
+- SBOM generation failure: build block; SBOM tool upgrade.
+- Signing key rotation: dual-key transition; old key retain for in-flight deploys.
+- Database migration backward-incompatibility: expand/contract pattern; old version tolerance window.
+
+### Performans optimizasyonları
+
+Build cache (BuildKit layer cache) ile incremental build. Test parallelism (pytest-xdist). Image scan parallel. Canary observation window minimum 30 dk fakat SLO-based adaptive. Post-deploy smoke tests quick (< 2 dk).
+
+### Gerçek dünya uygulaması
+
+FFmpeg 7.1 upgrade: PR opened → CI green → merge → canary %1 deploy → 30 dk SLO observation → no regression → progressive 10% → 50% → 100% → deployed. Total: ~45 dakika.
+
+### Ölçeklenebilirlik
+
+Multi-region deploy: her region ayrı ArgoCD application. Image replication cross-region. Feature flags ile gradual feature rollout. Multi-tenant deploy: per-tenant canary. Disaster recovery: cross-region failover with DNS.
+
+### Ownership ve test
+
+**Ownership:** Developer Platform (CI/CD pipeline), Security (signing, CVE), Media Runtime (golden tests), SRE (deploy, rollback, monitoring). **Testler:** pipeline self-test, container smoke test, signing verification, rollback drill, SBOM accuracy, canary behavior, multi-region sync.
+
+---
+
+## 68. Production Deployment
+
+### Mekanizma, invariantlar ve gerekçe
+
+Production deployment, Kubernetes cluster'ına kademeli ve kontrollü biçimde yeni versiyon yayımlama sürecidir. Deployment strategy rolling update + canary ile yapılır. Her deployment backward-compatible, rollback mümkün ve SLO-correlated olmalıdır.
+
+Invariant'lar:
+
+- Deployment yalnızca signed image ile yapılır; unsigned image deploy edilemez.
+- Database migration backward-compatible (expand/contract pattern); eski ve yeni version aynı anda çalışabilir.
+- PodDisruptionBudget (PDB) minimum availability'yi korur.
+- Resource requests/limits job planından gelir; limitsiz pod deploy edilemez.
+- Canary %1 ile başlar; SLO burn-rate alarm yoksa kademeli (10→50→100%).
+- Rollback tek komutla yapılabilir; database migration rollback separately managed.
+- Secret rotation deployment sırasında graceful; old secret retain window.
+- Health checks (liveness, readiness, startup) zorunlu.
+- Graceful shutdown: in-flight jobs drain edilir; SIGTERM → drain → SIGKILL timeout.
+
+### Alternatifler ve tradeoff'lar
+
+- **Rolling update:** Kubernetes native, basit. Canary kontrolü sınırlı.
+- **ArgoCD Rollout:** Canary, blue-green, A/B destekler. Progressive delivery.
+- **Spinnaker:** Multi-cloud, advanced strategies. Ek bağımlılık, heavyweight.
+- **Helm/Kustomize + manual:** Basit, scriptable. Automation eksik.
+
+Seçilen: ArgoCD Rollout ile Kubernetes-native progressive delivery.
+
+### Cluster topolojisi
+
+```
+production-cluster/
+  control-plane/          # API server, etcd, scheduler
+  node-pools/
+    general/              # FastAPI API pods, stateless
+    cpu-render/           # FFmpeg CPU workers
+    nvidia-render/        # NVIDIA GPU workers (T4/A10G)
+    vaapi-render/         # Intel/AMD VAAPI workers
+    windows-render/       # Windows D3D11VA workers (ayrı cluster)
+    temporal/             # Temporal workers
+    monitoring/           # Prometheus, Loki, collectors
+  storage/
+    nvme-local/           # Scratch per-node
+    shared-filesystem/    # Optional NFS/EFS for shared scratch
+  networking/
+    service-mesh/         # Optional: Istio/Linkerd
+    network-policy/       # Pod-to-pod restrictions
+    egress-gateway/       # Controlled external access
+```
+
+### API / Interface / Model
+
+```python
+class DeploymentManifest(BaseModel):
+    image_digest: str
+    version: str
+    environment: str
+    canary_percent: int = 1
+    rollback_to_digest: Optional[str]
+    migration_mode: Literal["expand", "contract", "none"]
+    resource_requests: Dict[str, str]
+    resource_limits: Dict[str, str]
+    node_pool: str
+    pdb_min_available: int
+
+class DeploymentStatus(BaseModel):
+    deployment_id: str
+    version: str
+    phase: Literal["pending", "migrating", "canary", "progressing", "deployed", "rolled_back"]
+    canary_percent: int
+    slo_burn_rate: Optional[float]
+    pods_ready: int
+    pods_total: int
+    started_at: datetime
+    completed_at: Optional[datetime]
+```
+
+### Dosya / klasör organizasyonu ve render pipeline bağı
+
+```
+deploy/
+    argocd/
+        application.yaml
+        rollout-strategy.yaml
+    k8s/
+        base/
+            api-deployment.yaml
+            worker-deployment.yaml
+            hpa.yaml
+            pdb.yaml
+            network-policy.yaml
+            service-account.yaml
+        overlays/
+            staging/
+            production/
+            canary/
+    helm/
+        chart.yaml
+        values.yaml
+        values-production.yaml
+    migration/
+        alembic/            # Database migrations
+        expand-contract.md  # Migration guide
+scripts/
+    deploy.sh               # Deploy automation
+    rollback.sh             # Emergency rollback
+    health-check.sh         # Post-deploy verification
+    drain.sh                # Graceful shutdown
+```
+
+### Sequence diyagramı
+
+```mermaid
+sequenceDiagram
+    participant REL as Release Manager
+    participant AR as ArgoCD
+    participant K8 as Kubernetes
+    participant PG as PostgreSQL
+    participant MON as Monitoring
+    participant SRE as SRE On-Call
+    REL->>AR: update_manifest(digest, canary=1%)
+    AR->>K8: rollout canary pods
+    K8->>K8: liveness/readiness checks
+    MON->>MON: observe SLO (30 min)
+    alt SLO healthy
+        REL->>AR: increase canary (1→10%)
+        MON->>MON: observe SLO (15 min)
+        REL->>AR: increase canary (10→50%)
+        MON->>MON: observe SLO (15 min)
+        REL->>AR: full rollout (100%)
+    else SLO degraded
+        SRE->>AR: rollback(previous_digest)
+        AR->>K8: restore previous version
+    end
+    Note over PG: expand migration (old+new compatible)
+    REL->>PG: run expand migration
+    REL->>AR: mark deployed
+    Note over PG: contract migration (after drain)
+```
+
+### State diyagramı
+
+```mermaid
+stateDiagram-v2
+    [*] --> Pending: release triggered
+    Pending --> MigratingExpand: migration needed
+    MigratingExpand --> Canary: expand complete
+    Pending --> Canary: no migration
+    Canary --> Progressive: SLO healthy
+    Canary --> RollingBack: SLO degraded
+    Progressive --> Progressive: canary increased
+    Progressive --> Deployed: 100% + stable
+    Deployed --> ContractingExpand: expand cleanup
+    ContractingExpand --> Done: contract complete
+    RollingBack --> Done: previous version restored
+    Done --> [*]
+```
+
+### Production sorunları ve recovery
+
+- Pod crash loop: liveness probe restart; escalation alert.
+- Resource exhaustion: HPA scaled up; capacity planning review.
+- Database connection pool exhaustion: connection pool tuning; read replica offload.
+- Graceful shutdown timeout: SIGKILL after drain window; job checkpoint ile recovery.
+- Secret rotation during deployment: dual-secret window; old secret retained.
+- Network policy blocking new pods: policy audit; pre-deploy validation.
+- Node pool capacity insufficient: cluster autoscaler; pre-provisioning for large deploys.
+- Cross-region DNS failover: health check TTL; manual override option.
+
+### Performans optimizasyonları
+
+Node pre-provisioning: canary öncesi yeni node pool hazırlanır. Image pre-pull: DaemonSet ile yeni image tüm node'lara indirilir. Startup probe optimization: FFmpeg binary warm cache. Readiness gate: traffic yalnızca ready pod'lara yönlendirilir.
+
+### Gerçek dünya uygulaması
+
+Yeni versiyon deployment: expand migration (3 dk) → canary %1 (30 dk SLO) → %10 (15 dk) → %50 (15 dk) → %100. Toplam: ~65 dakika. Rollback: tek komut, ~3 dk (previous pods ready).
+
+### Ölçeklenebilirlik
+
+Multi-cluster: active-active veya active-passive. Cluster autoscaler ile dynamic node provisioning. Regional deployment: her region bağımsız canary cycle. Feature flags: gradual feature activation independent of deploy.
+
+### Ownership ve test
+
+**Ownership:** SRE (deployment orchestration, rollback), Platform Engineering (cluster, node pools), Media Runtime (worker config), Security (secret rotation, network policy). **Testler:** deploy drill (quarterly), rollback drill (monthly), PDB verification, resource limit enforcement, health check validation, graceful shutdown verification, migration backward-compatibility test.
+
+---
+
+## 69. Error Recovery
+
+### Mekanizma, invariantlar ve gerekçe
+
+Hata kurtarma sistemi, render motorunun her katmanında meydana gelen hataları sınıflandıran, izole eden ve kurtaran kontrollü mekanizmadır. Her hata sınıfı için tanımlı bir recovery politikası vardır; retry-blind değil, hata-sınıfına-bağlı retry uygulanır.
+
+Invariant'lar:
+
+- Her hata bir `ErrorClass`'e atanır: `transient`, `resource`, `input`, `policy`, `determinism`.
+- `transient` hatalar exponential backoff ile retry edilir; deadline sınırlıdır.
+- `resource` hatalar farklı worker/node/storage class ile retry edilebilir.
+- `input` hataları retry edilmez; kullanıcıya alanlı hata mesajı döner.
+- `policy` hataları retry edilmez; policy update veya manual intervention gerektirir.
+- `determinism` hataları en yüksek şiddettir: cache quarantine, alert, incident.
+- Dead letter queue (DLQ) terminal failure'ları tutar; periyodik audit ve cleanup yapılır.
+- Compensation/saga pattern: dış dünyadaki etkiler (upload, publish) geri alınamıyorsa orphan resource GC yapılır.
+- Checkpoint-based recovery: her render phase'inin checkpoint'i kalıcıdır; crash sonrası son checkpoint'ten devam edilir.
+- Her hata detayı trace_id, job_id, attempt_id ile ilişkilidir.
+
+### Alternatifler ve tradeoff'lar
+
+- **Blind retry (max_retries=3):** Basit fakat pahalı hatalarda gereksiz tekrar, Determinism hatalarında tehlikeli. Kullanılmaz.
+- **Circuit breaker:** External service hatalarında faydalı; fakat kendi internal hatalarını kapsamaz. API adapter'larında kullanılır.
+- **Saga/compensation:** Multi-step operasyonlarda partial failure recovery. Render pipeline için checkpoint-based approach tercih edilir.
+- **Dead letter queue:** Terminal hatalar için audit trail ve retry queue'dan ayrıştırma. Gerekli.
+
+### Hata sınıflandırması tablosu
+
+| Sınıf | Örnek | Retry | Compensation | Escalation |
+|---|---|---|---|---|
+| transient | S3 503, network timeout, pod eviction | exp backoff + jitter | Yok (idempotent) | Yok (otomatik) |
+| resource | OOM, GPU OOM, disk full, connection pool exhausted | farklı worker/node/class | Checkpoint-based resume | Alert |
+| input | Bozuk video, bilinmeyen codec, invalid ClipSpec | Yok | Yok | Kullanıcıya hata |
+| policy | License revoke, TOS violation, quota exceeded | Yok | Delivery abort | Manual intervention |
+| determinism | Cache fingerprint mismatch, same input different output | Yok | Cache quarantine | P0 incident |
+
+### API / Interface / Model
+
+```python
+class ErrorClassification(BaseModel):
+    error_class: Literal["transient", "resource", "input", "policy", "determinism"]
+    error_code: str
+    message: str
+    retryable: bool
+    requires_compensation: bool
+    escalation_level: Literal["none", "alert", "page", "incident"]
+    checkpoint_resumable: bool
+    suggested_action: str
+
+class RetryPolicy(BaseModel):
+    max_attempts: int
+    backoff_base_sec: float
+    backoff_max_sec: float
+    jitter: bool
+    deadline_sec: float
+    different_worker_required: bool
+
+class CompensationAction(BaseModel):
+    action_type: Literal["checkpoint_resume", "asset_cleanup", "delivery_abort", "cache_quarantine"]
+    target: str
+    details: Dict[str, Any]
+
+class DeadLetterEntry(BaseModel):
+    job_id: str
+    error_classification: ErrorClassification
+    attempts: int
+    last_error: str
+    created_at: datetime
+    compensation_actions: List[CompensationAction]
+    audit_metadata: Dict[str, Any]
+```
+
+### Dosya / klasör organizasyonu ve render pipeline bağı
+
+```
+video_engine/recovery/
+    error_classifier.py     # Error classification
+    retry_manager.py        # Per-class retry logic
+    checkpoint_manager.py   # Phase checkpoint/restore
+    compensation.py         # Saga/compensation actions
+    dead_letter.py          # DLQ management
+    alert_classifier.py     # Escalation routing
+    runbook_index.py        # Runbook lookup
+deploy/
+    alerts/
+        error-classification.yaml
+        escalation-policies.yaml
+    runbooks/
+        transient-error.md
+        resource-exhaustion.md
+        determinism-incident.md
+        input-validation.md
+```
+
+### Sequence diyagramı
+
+```mermaid
+sequenceDiagram
+    participant W as Worker
+    participant EC as ErrorClassifier
+    participant RM as RetryManager
+    participant CM as CheckpointManager
+    participant DLQ as DeadLetterQueue
+    participant ALT as AlertManager
+    participant PG as PostgreSQL
+    W->>EC: classify(error)
+    EC-->>W: ErrorClassification
+    alt transient
+        W->>RM: schedule_retry(policy)
+        RM-->>W: retry_token
+        W->>W: wait + retry
+    else resource
+        W->>CM: save_checkpoint()
+        CM->>PG: persist checkpoint
+        W->>RM: schedule_retry(different_worker=true)
+    else input
+        W->>PG: update_job_status(failed, user_message)
+    else policy
+        W->>DLQ: enqueue(entry)
+        W->>ALT: escalate(alert)
+    else determinism
+        W->>DLQ: enqueue(entry, severity=critical)
+        W->>ALT: escalate(incident)
+        W->>PG: quarantine_cache(fingerprint)
+    end
+```
+
+### Class diyagramı
+
+```mermaid
+classDiagram
+    class ErrorClassifier {
+        +classify(error) ErrorClassification
+    }
+    class RetryManager {
+        +should_retry(classification) bool
+        +schedule_retry(policy) RetryToken
+    }
+    class CheckpointManager {
+        +save_checkpoint(phase, state) CheckpointId
+        +restore_checkpoint(id) PhaseState
+    }
+    class CompensationEngine {
+        +execute(actions) CompensationResult
+        +rollback_if_possible(actions) bool
+    }
+    class DeadLetterQueue {
+        +enqueue(entry) void
+        +audit_entries() List~DeadLetterEntry~
+        +cleanup(retention_days) int
+    }
+    ErrorClassifier --> RetryManager
+    ErrorClassifier --> CompensationEngine
+    ErrorClassifier --> DeadLetterQueue
+    CheckpointManager --> CompensationEngine
+```
+
+### State diyagramı
+
+```mermaid
+stateDiagram-v2
+    [*] --> Running
+    Running --> ErrorDetected: error occurs
+    ErrorDetected --> RetryingTransient: transient
+    ErrorDetected --> RetryingResource: resource
+    ErrorDetected --> FailedInput: input
+    ErrorDetected --> EscalatingPolicy: policy
+    ErrorDetected --> EscalatingDeterminism: determinism
+    RetryingTransient --> Running: retry success
+    RetryingTransient --> FailedRetryExhausted: deadline exceeded
+    RetryingResource --> Running: retry success (new worker)
+    RetryingResource --> FailedRetryExhausted: exhausted
+    FailedInput --> DeadLetter
+    EscalatingPolicy --> DeadLetter
+    EscalatingDeterminism --> IncidentCreated: P0
+    DeadLetter --> [*]
+    IncidentCreated --> [*]
+    FailedRetryExhausted --> DeadLetter
+```
+
+### Production sorunları ve recovery
+
+- Retry storm: exponential backoff + jitter ile engellenir; global rate limit.
+- Checkpoint corruption: checksum doğrulama; corrupt ise son safe GOP başından yeniden render.
+- Dead letter queue growth: retention policy (30 gün); periyodik audit ve cleanup.
+- Escalation fatigue: alarm grouping, severity-based threshold tuning.
+- Compensation partial failure: orphan resource GC; manual cleanup runbook.
+- OOM during checkpoint save: micro-checkpoint (minimal state) ile kurtarma.
+- Network partition recovery: Temporal activity timeout + heartbeat ile detection.
+
+### Performans optimizasyonları
+
+Checkpoint frequency tuning: çok sık overhead yaratır, çok seyrek data loss artırır. Optimal: her GOP sınırında veya 30 sn aralıkla. Error classification fast-path: known error codes için classification < 1 ms. DLQ async: error handling path'i render path'i bloklamaz.
+
+### Gerçek dünya uygulaması
+
+Render worker GPU OOM: error classified as `resource`. Checkpoint kaydedilir. Retry farklı worker'da (daha büyük GPU class). Başarılı. Dead letter'a düşen YouTube upload (TOS violation): audit, manual review, user notification.
+
+### Ölçeklenebilirlik
+
+Error classification service horizontal scale. DLQ partition by error_class ve tenant. Checkpoint store PostgreSQL partitioned by job. Alert routing multi-region; escalation per region's on-call.
+
+### Ownership ve test
+
+**Ownership:** Media Runtime (error classification, checkpoint), SRE (escalation, runbook), Security (determinism incidents), Platform (DLQ infrastructure). **Testler:** error injection (per class), retry behavior, checkpoint save/restore, dead letter lifecycle, compensation correctness, escalation routing, determinism quarantine drill, chaos-based end-to-end recovery.
+
+---
+
+## 70. Scalability
+
+### Mekanizma, invariantlar ve gerekçe
+
+Ölçeklenebilirlik, render motorunun talep artışını yatay resource expansion ile karşılayabilme kapasitesidir. Ölçekleme yalnız worker sayısı değil, queue routing, admission control, cache hit ratio ve storage tiering'i de kapsar.
+
+Invariant'lar:
+
+- Horizontal scaling stateless worker'larla yapılır; stateful bileşenler (PostgreSQL, Redis) için replication/cluster.
+- Admission control: yeni job kabulü `sum(reserved_working_set) <= node_allocatable - safety_margin` invariantını korur.
+- Backpressure: queue byte limit, tenant quota ve global capacity signal ile yukarı doğru yayılır.
+- Hot tenant isolation: tek bir yoğun tenant diğerlerini etkilemez; separate queue veya dedicated worker pool.
+- Cache hit ratio scaling ile orantılı artmalıdır; cache miss oranı太高 ise capacity plan wrong.
+- Storage tiering: hot (NVMe) → warm (S3 Standard) → cold (S3 Glacier) lifecycle.
+- Auto-scaling: HPA (CPU/memory), KEDA (queue depth), cluster autoscaler (node).
+- Capacity forecasting: historical workload pattern ile gelecek kapasite ihtiyacı tahmini.
+
+### Alternatifler ve tradeoff'lar
+
+- **Vertical scaling (daha büyük makine):** Basit fakat ceiling var; single point of failure. GPU worker için bounding box.
+- **Horizontal scaling (daha fazla makine):** Stateless worker ile kolay; orchestration overhead. Seçilen yol.
+- **Serverless (Lambda/Cloud Run):** Cold start sorunları, GPU desteksiz, timeout limits. Media processing için uygun değil.
+- **Hybrid (cloud burst):** On-prem base + cloud peak. Cost/complexity tradeoff. Large event için faydalı.
+
+### Kapasite denklemleri
+
+```
+worker_count = ceil(peak_concurrent_jobs * avg_rt_factor * target_sla / worker_capacity)
+
+worker_capacity = min(
+    cpu_throughput * cpu_cores,
+    gpu_throughput * gpu_count,
+    network_throughput * nic_bandwidth,
+    storage_iops * disk_bandwidth
+)
+
+cache_hit_ratio > 0.8 threshold: capacity plan doğru
+cache_hit_ratio < 0.6 threshold: capacity veya cache strategy yanlış
+```
+
+### Scale sinyalleri
+
+| Sinyal | Metrik | Eşik | Aksiyon |
+|---|---|---|---|
+| CPU utilization | node CPU avg | > %70 | Scale out worker |
+| Memory pressure | cgroup P95 | > %80 | Scale up class |
+| Queue depth | job queue length | > 2x worker | Add workers |
+| GPU utilization | GPU compute % | > %85 | Add GPU workers |
+| Cache miss rate | L1+L2 miss ratio | > %40 | Review cache strategy |
+| S3 egress | bytes/day per tenant | > budget | Throttle/defer |
+| NIC saturation | network util | > %80 | Scale egress capacity |
+| DB connection pool | active/total | > %80 | Add replicas |
+| Latency P95 | render duration | > SLO | Capacity review |
+
+### API / Interface / Model
+
+```python
+class CapacityPlan(BaseModel):
+    region: str
+    node_pools: List[NodePoolConfig]
+    total_cpu_workers: int
+    total_gpu_workers: int
+    storage_tier_distribution: Dict[str, float]
+    cache_hit_target: float
+    monthly_cost_estimate: float
+
+class ScalingPolicy(BaseModel):
+    metric: str
+    scale_up_threshold: float
+    scale_down_threshold: float
+    min_replicas: int
+    max_replicas: int
+    cooldown_sec: int
+    scaling_factor: float  # 1.5 = 50% increase
+
+class TenantQuota(BaseModel):
+    tenant_id: str
+    max_concurrent_jobs: int
+    max_daily_jobs: int
+    max_egress_bytes: int
+    priority_class: Literal["standard", "high", "critical"]
+    dedicated_worker_pool: Optional[str]
+
+class AdmissionDecision(BaseModel):
+    accepted: bool
+    reason: Optional[str]
+    estimated_wait_sec: Optional[float]
+    suggested_queue: str
+```
+
+### Dosya / klasör organizasyonu ve render pipeline bağı
+
+```
+platform/scaling/
+    capacity_planner.py     # Capacity forecasting
+    admission_controller.py # Job admission
+    auto_scaler.py          # HPA/KEDA integration
+    backpressure.py         # Queue-based backpressure
+    tenant_isolation.py     # Hot tenant management
+    storage_tier.py         # NVMe/S3/Glacier lifecycle
+    cost_tracker.py         # Per-tenant cost tracking
+deploy/
+    autoscaling/
+        hpa.yaml            # CPU/memory HPA
+        keda.yaml           # Queue depth scaler
+        cluster-autoscaler.yaml
+    capacity/
+        node-pool-config.yaml
+        tenant-quotas.yaml
+        storage-tier-policy.yaml
+tests/scaling/
+    test_admission.py
+    test_backpressure.py
+    test_tenant_isolation.py
+```
+
+### Sequence diyagramı
+
+```mermaid
+sequenceDiagram
+    participant API as API
+    participant AC as AdmissionController
+    participant Q as Task Queue
+    participant SC as Scaler
+    participant K8 as Kubernetes
+    participant S3 as S3 Storage
+    participant MON as Monitoring
+    API->>AC: submit_job(job_spec)
+    AC->>AC: check_capacity()
+    AC->>AC: check_tenant_quota()
+    alt capacity available
+        AC->>Q: enqueue(job)
+        AC-->>API: accepted
+    else capacity insufficient
+        AC->>SC: request_scale_out()
+        SC->>K8: hpa_scale()
+        AC-->>API: queued (wait est.)
+    end
+    Q->>Q: dispatch to worker
+    MON->>SC: scale_signal(metric)
+    SC->>K8: adjust_replicas()
+    MON->>S3: tier_migration(aging_artifacts)
+```
+
+### Class diyagramı
+
+```mermaid
+classDiagram
+    class AdmissionController {
+        +check_capacity() bool
+        +check_tenant_quota(tenant_id) bool
+        +admit(job_spec) AdmissionDecision
+    }
+    class CapacityPlanner {
+        +forecast(workload_pattern) CapacityPlan
+        +current_utilization() UtilizationReport
+    }
+    class AutoScaler {
+        +scale_up(pool, factor)
+        +scale_down(pool, factor)
+        +get_replica_count() int
+    }
+    class BackpressureManager {
+        +check_pressure() PressureLevel
+        +apply_throttle(action)
+    }
+    class TenantIsolation {
+        +assign_queue(tenant_id) str
+        +isolate_hot_tenant(tenant_id)
+    }
+    class StorageTierManager {
+        +migrate_aging_artifacts()
+        +get_tier_distribution() Dict
+    }
+    AdmissionController --> CapacityPlanner
+    AdmissionController --> TenantIsolation
+    AutoScaler --> BackpressureManager
+    StorageTierManager --> AutoScaler
+```
+
+### State diyagramı
+
+```mermaid
+stateDiagram-v2
+    [*] --> Normal: baseline capacity
+    Normal --> ScalingUp: load increasing
+    ScalingUp --> Normal: capacity adequate
+    ScalingUp --> Saturated: scaling limit reached
+    Saturated --> Backpressured: queue growing
+    Backpressured --> Throttled: tenant quota exceeded
+    Throttled --> Normal: load decreasing
+    Saturated --> Degraded: SLO at risk
+    Degraded --> EmergencyScaling: auto-scale burst
+    EmergencyScaling --> Normal: burst capacity ready
+    Normal --> ScalingDown: load decreasing
+    ScalingDown --> Normal: right-sized
+```
+
+### Production sorunları ve recovery
+
+- Scale-out storm: rapid scaling → cost spike; cooldown + max_replicas limit.
+- Hot tenant: tek tenant tüm kuyruğu doldurur; admission throttle ve dedicated queue.
+- Cache stampede: cold start'ta binlerce miss; cache warming strategy.
+- Storage tiering latency: cold→warm migration gecikmesi; hot tier retention policy.
+- Kubernetes HPA flapping: metric smoothing, stable window, cooldown tuning.
+- Cluster autoscaler slow: node provisioning 3-5 dk; pre-provisioning for predicted peaks.
+- Cross-region capacity imbalance: weighted DNS routing, regional quota.
+
+### Performans optimizasyonları
+
+HPA custom metrics (queue depth, GPU utilization) ile daha hassas scale. KEDA ScaledObject ile event-driven scaling. Predictive scaling: historical pattern ile peak öncesi scale. Bin-packing optimization: small jobs packed, large jobs isolated.
+
+### Gerçek dünya uygulaması
+
+Black Friday: 3x normal load. Predictive scaling 1 saat öncesinden node pool prepare. Admission controller tenant throttle uygular. Cache warming cold assets. Sonuç: SLO korundu, maliyet %40 arttı (budget içinde).
+
+### Ölçeklenebilirlik
+
+Multi-region: active-active with weighted routing. Cross-region cache: global L2 S3, regional L1 NVMe. Database: read replicas per region, write primary. Storage: lifecycle policies auto-tier. Cost: per-tenant billing, reserved capacity.
+
+### Ownership ve test
+
+**Ownership:** Capacity Engineering (planning, forecasting), Platform (autoscaling, HPA/KEDA), Media Runtime (admission, backpressure), Storage (tiering), FinOps (cost tracking). **Testler:** admission under load, backpressure behavior, tenant isolation, scaling accuracy, cost tracking accuracy, cold start performance, tier migration correctness, disaster recovery drill.

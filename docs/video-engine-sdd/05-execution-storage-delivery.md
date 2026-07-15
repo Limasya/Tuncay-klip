@@ -1568,3 +1568,850 @@ Upload worker'ları render worker'larından ayrıdır. Global NIC, tenant, desti
 
 **Sahip:** Delivery Infrastructure; S3 source için Storage Platform, Vault/KMS için Security, adapter session sözleşmesi için ilgili Platform Integrations ekibi.  
 **Testler:** chunk boundary/property, resume offset reconciliation, secret redaction, signed URL expiry/scope, finalize ambiguity, session expiry, bandwidth fairness, cancellation, lifecycle pin, checksum corruption ve 20 GiB fault-injection soak.
+
+---
+
+## 54. YouTube Export
+
+### Çalışma Modeli ve Invariant'lar
+
+YouTube export, render motorunun ürettiği final artifact'ı YouTube Data API v3 ve Resumable Upload protokolü üzerinden yükleyen bir contract adapter'dır. Adapter sabit platform limiti varsaymaz; capability discovery, OAuth2 token yönetimi ve processing state polling ile çalışır.
+
+Invariant'lar:
+
+- Upload yalnızca artifact `READY` ve checksum doğrulanmış olduktan sonra başlar.
+- OAuth2 access token'ları Vault/KMS'ten kısa ömürlü alınır; refresh token'ları log veya Temporal payload'da saklanmaz.
+- Resumable upload session'ı `delivery_id` ile eşleşir; retry önce remote offset'i sorgular.
+- Video processing durumu `terminal` (processed/failed/rejected) olana kadar polling devam eder.
+- Metadata (title, description, tags, category, privacy) ClipSpec export profile'dan compile edilir; template injection'e izin verilmez.
+- Thumbnail S3 CAS'ten extract edilir veya generated frame'den üretilir; exact PTS kullanılır.
+- Content rating ve age restriction, template'deki explicit policy'den gelir; platform ToS uyumlu olmalıdır.
+- Upload succeeded ancak processing failed ise retry değil, manuel intervention tetiklenir.
+
+### Neden ve Alternatifler
+
+YouTube en büyük sosyal video platformudur; doğrudan upload API'si en güvenilir yoldur. Alternatifler:
+
+- **Browser automation (Selenium/Playwright):** Platform değişikliklerinde kırılır, TOS ihlali riski, rate limit zor. Kullanılmaz.
+- **Third-party aggregator (Sprout Social, Buffer):** Ek bağımlılık, maliyet, API kapsamı sınırlı. Opsiyonel entegrasyon katmanı olarak tutulabilir.
+- **Manual upload + webhook notification:** En basit fakat real-time değil. Starter/low-volume için fallback.
+
+Tradeoff: Resumable upload büyük dosya güvenilirliği sağlar fakat session lifecycle yönetimi ek karmaşıklık yaratır. Large file strategy (multipart/chunked) yerine YouTube'un kendi resumable mekanizması tercih edilir çünkü platform-specific optimization sağlar.
+
+### Veri Akışı
+
+```
+RenderJob(completed) → DeliveryWorkflow → YouTubeAdapter
+  1. Vault'tan OAuth2 access/refresh token al
+  2. Capability check: upload scope, quota remaining
+  3. Metadata compile (ClipSpec exportProfile → YouTube Metadata)
+  4. Resumable upload init (POST /upload/v3/videos?uploadType=resumable)
+  5. Chunk upload (S3 CAS → YouTube endpoint, retryable)
+  6. Upload finalize (200 OK)
+  7. Processing poll (videos.get with processingDetails)
+  8. Terminal state → delivery status update
+```
+
+### API / Interface / Model
+
+```python
+class YouTubeAdapterConfig(BaseModel):
+    capability_version: str
+    max_upload_retries: int = 5
+    processing_poll_interval_sec: float = 30.0
+    processing_poll_timeout_sec: float = 3600.0
+    chunk_size_bytes: int = 10 * 1024 * 1024  # 10 MiB
+    quota_reserve_percent: float = 10.0
+
+class YouTubeMetadata(BaseModel):
+    title: str = Field(max_length=100)
+    description: str = Field(max_length=5000)
+    tags: List[str] = Field(max_length=30)
+    category_id: str  # YouTube category ID
+    privacy_status: Literal["public", "private", "unlisted"]
+    embeddable: bool = True
+    license: Literal["youtube", "creativeCommon"]
+    self_declared_made_for_kids: bool = False
+    default_language: str = "en"
+
+class YouTubeDeliveryResult(BaseModel):
+    delivery_id: str
+    remote_video_id: str
+    remote_url: str
+    processing_status: Literal["processing", "completed", "failed", "rejected"]
+    uploaded_at: datetime
+    quota_cost_estimate: int
+```
+
+### Dosya / Klasör Organizasyonu
+
+```
+video_engine/delivery/adapters/
+  youtube/
+    __init__.py
+    adapter.py              # YouTubeAdapter class
+    oauth.py                # Vault-backed OAuth2 flow
+    metadata_compiler.py    # ClipSpec → YouTubeMetadata
+    resumable_upload.py     # Session lifecycle
+    processing_poller.py    # Terminal state polling
+    quota_tracker.py        # Daily quota budget
+tests/contract/delivery/youtube/
+    test_adapter_contract.py
+    test_oauth_flow.py
+    test_quota_budget.py
+deploy/adapters/youtube/
+    capability.yaml          # Supported scopes, limits
+    sandbox_test_account.yaml
+```
+
+### Render Pipeline Bağlantısı
+
+YouTube adapter'ı render pipeline'ın en son halkasıdır. RenderPlan DAG'inin `output` düğümü tamamlandıktan sonra Temporal child workflow olarak başlar. Artifact S3 CAS'te atomik olarak `READY` durumuna geçtikten sonra delivery activity tetiklenir. Adapter artifact'ı render etmez, yalnızca mevcut final output'u yükler.
+
+### Sequence Diyagramı
+
+```mermaid
+sequenceDiagram
+    participant WF as DeliveryWorkflow
+    participant AD as YouTubeAdapter
+    participant V as Vault/KMS
+    participant S3 as S3 CAS
+    participant YT as YouTube API
+    participant PG as PostgreSQL
+    WF->>AD: start_delivery(job_id, artifact_id)
+    AD->>V: get_oauth_token(youtube_scope)
+    V-->>AD: access_token (short-lived)
+    AD->>S3: stream_artifact(artifact_id)
+    AD->>YT: POST /upload/resumable (metadata)
+    YT-->>AD: session_uri
+    loop chunk upload
+        AD->>YT: PUT chunk (offset, data)
+        YT-->>AD: 308 Resume Incomplete
+        AD->>AD: checkpoint offset
+    end
+    AD->>YT: PUT finalize
+    YT-->>AD: video_id
+    AD->>PG: update_delivery(remote_id=video_id)
+    loop processing poll
+        AD->>YT: GET videos.get(processingDetails)
+        YT-->>AD: status
+    end
+    AD->>WF: delivery_complete
+```
+
+### Class Diyagramı
+
+```mermaid
+classDiagram
+    class YouTubeAdapter {
+        +upload(artifact, metadata)
+        +poll_processing(video_id)
+    }
+    class OAuthManager {
+        +get_token(scope)
+        +refresh_if_expired()
+    }
+    class ResumableSession {
+        +session_uri: str
+        +offset: int
+        +upload_chunk(data)
+        +finalize()
+    }
+    class MetadataCompiler {
+        +compile(exportProfile) YouTubeMetadata
+    }
+    class QuotaTracker {
+        +estimate_cost(operation)
+        +check_budget()
+    }
+    YouTubeAdapter --> OAuthManager
+    YouTubeAdapter --> ResumableSession
+    YouTubeAdapter --> MetadataCompiler
+    YouTubeAdapter --> QuotaTracker
+```
+
+### State Diyagramı
+
+```mermaid
+stateDiagram-v2
+    [*] --> Preflight: delivery initiated
+    Preflight --> TokenRefresh: capability OK
+    Preflight --> Rejected: scope/quota missing
+    TokenRefresh --> Uploading: token acquired
+    Uploading --> Uploading: chunk accepted
+    Uploading --> Paused: rate limit/5xx
+    Paused --> Uploading: retry after backoff
+    Uploading --> Finalizing: all chunks sent
+    Finalizing --> Uploaded: 200 OK
+    Finalizing --> Uploading: ambiguous (inspect)
+    Uploaded --> Processing: video_id known
+    Processing --> Completed: processed
+    Processing --> Failed: processing error
+    Processing --> Rejected: policy violation
+    Completed --> [*]
+    Failed --> [*]
+    Rejected --> [*]
+```
+
+### Production Problemleri
+
+- OAuth2 token süresinin dolması upload ortasında; retry token yenileyip offset'ten devam eder.
+- YouTube processing quota exhaustion: günlük quota limiti aşıldığında delivery deferred olur.
+- Rate limit (429): exponential backoff + jitter, quota tracker aktualize edilir.
+- Processing rejection (TOS violation): appeal flow tetiklenir, audit log yazılır.
+- Network partition chunk upload'u bozarsa session offset'i corrupted olabilir; session lookup ile doğrulanır.
+- Thumbnail upload fail: optional fallback olarak platform otomatik frame seçer; critical ise retry.
+- Concurrent same video upload: idempotency key ile engellenir.
+
+### Recovery
+
+Delivery workflow'u Temporal'ın durable execution modeliyle korunur. Worker crash'inde activity heartbeat son offset'i saklar; yeni attempt Vault'tan taze token alır, YouTube'dan mevcut session'ı inspect eder ve kalan chunk'ları yükler. Partial upload Temporal timer ile timeout edilir; abort edilip orphan resource GC tetiklenir. Processing failure retry değil, dead letter queue'a düşer.
+
+### Performans
+
+- Hedef: 1 GiB video upload p95 `< 8 dk` (100 Mbps uplink), processing completion `< 30 dk`.
+- Throughput: available bandwidth'in `>= %70`'i utilize edilir.
+- Chunk retry overhead `< %5` toplam upload süresinin.
+- Daily quota utilization dashboard'da izlenir; `%80`'e ulaşıldığında alert.
+
+### Benchmark
+
+Senaryo: 100 MiB/1 GiB/10 GiB artifact, farklı uplink hızları (50/100/500 Mbps), %1/%5 chunk failure, token expiry during upload, concurrent 1/5/10 upload. Metrikler: throughput, resume success rate, processing completion rate, quota consumption, end-to-end latency.
+
+### Gerçek Dünya Senaryosu
+
+5 GiB'lik bir highlight videosu gece 02:00'de render tamamlanır. YouTube adapter token'ı alır, resumable session açar. 3. GiB'de upload worker crash olur. Yeni pod heartbeat offset'i 3.07 GiB olarak görür, Vault'tan taze token alır, YouTube session'ı sorgular ve 3.07 GiB'ten devam eder. Upload 02:18'de tamamlanır. Processing 02:41'de biter.
+
+### Ölçeklenme
+
+Çoklu YouTube kanalı için adapter multi-tenant config ile çalışır. Her kanal ayrı OAuth2 credentials ve quota budget'a sahiptir. Upload worker'ları render worker'larından ayrıdır; NIC bandwidth'i adapter concurrency ile sınırlanır. High-volume yayıncılar için daily quota forecasting, upload scheduling (off-peak) ve priority queue kullanılır.
+
+### Ownership ve Test
+
+**Sahip:** Platform Integrations (YouTube adapter), Security (OAuth2/token lifecycle), Media Runtime (artifact readiness). **Testler:** sandbox upload with test account, OAuth2 refresh/expiry, chunk boundary/resume, processing poll timeout, quota exhaustion, concurrent upload dedup, TOS rejection simulation, end-to-end golden video upload/verify.
+
+---
+
+## 55. TikTok Export
+
+### Çalışma Modeli ve Invariant'lar
+
+TikTok export, Content Posting API üzerinden video yükleyen contract adapter'dır. TikTok'un API erişimi sınırlıdır ve onay süreci (app review) gerektirir. Adapter bu kısıtlamaları capability gate olarak yönetir.
+
+Invariant'lar:
+
+- TikTok API erişimi `capability_gate` ile kontrol edilir; approved scopes ve endpoint matrisi capability config'de tutulur.
+- Upload öncesi TikTok Content Posting API v2'nin mevcut olduğunu doğrula; desteklenmiyorsa fallback (manual delivery instruction) üretilir.
+- Video boyutu/süre/solution TikTok spesifikasyonuna uygun olmalıdır (max 10 dk, max 287.6 MB, H.264/HEVC).
+- Privacy settings (public/friends/private) export profile'dan gelir; override izin verilmez.
+- Caption ve hashtag'ler ClipSpec'ten compile edilir; mention injection'e izin verilmez.
+- Draft olarak yükleme ve manuel publish onayı desteklenir.
+- Comment/duet/stitch/discoverable ayarları explicit policy'den gelir.
+
+### Neden ve Alternatifler
+
+TikTok kısa form sosyal videonun en büyük platformudur. Content Posting API resmi yoldur.
+
+- **Manual upload:** Basit ama otomatasyon gerektirmez. Low-volume için fallback.
+- **Third-party (Later, Hootsuite):** Ek bağımlılık, TikTok API coverage sınırlı.
+- **Deep link (tiktok://):** Upload'u tetikler fakat manuel adımlar gerektirir. Fallback olarak tutulur.
+
+Tradeoff: TikTok API approval süreci uzun sürer ve kapasite kısıtları vardır. Adapter capability gate ile bu kısıtlamaları şeffaf biçimde yönetir.
+
+### Veri Akışı
+
+```
+RenderJob(completed) → DeliveryWorkflow → TikTokAdapter
+  1. Capability gate check (API approved? scopes valid?)
+  2. Vault'tan OAuth2 token
+  3. Metadata compile (title, hashtags, privacy, comment/stitch policy)
+  4. POST /v2/post/publish/video/init/ (upload URL)
+  5. Upload video (direct or S3→TikTok)
+  6. POST /v2/post/publish/video/complete/
+  7. Poll publish status
+  8. Terminal state → delivery update
+```
+
+### API / Interface / Model
+
+```python
+class TikTokAdapterConfig(BaseModel):
+    capability_version: str
+    api_approved: bool = False
+    max_file_size_mb: int = 287
+    max_duration_sec: int = 600
+    supported_codecs: List[str] = ["h264", "hevc"]
+    supported_resolutions: List[str] = ["1080p", "720p"]
+
+class TikTokMetadata(BaseModel):
+    title: str = Field(max_length=150)
+    privacy_level: Literal["PUBLIC_TO_EVERYONE", "FRIENDS_ONLY", "SELF_ONLY"]
+    disable_duet: bool = False
+    disable_stitch: bool = False
+    disable_comment: bool = False
+    brand_content_toggle: bool = False
+    brand_organic_toggle: bool = False
+
+class TikTokDeliveryResult(BaseModel):
+    delivery_id: str
+    publish_id: str
+    deep_link: str
+    publish_status: Literal["uploading", "processing", "publishing", "published", "failed"]
+    uploaded_at: datetime
+```
+
+### Dosya / Klasör Organizasyonu
+
+```
+video_engine/delivery/adapters/tiktok/
+    __init__.py
+    adapter.py              # TikTokAdapter
+    oauth.py                # TikTok OAuth2
+    metadata_compiler.py    # ClipSpec → TikTokMetadata
+    capability_gate.py      # API approval check
+    content_posting.py      # Init/upload/complete flow
+    publish_poller.py
+tests/contract/delivery/tiktok/
+    test_adapter_contract.py
+    test_capability_gate.py
+deploy/adapters/tiktok/
+    capability.yaml
+```
+
+### Render Pipeline Bağlantısı
+
+Aynı YouTube adapter'ında olduğu gibi, TikTok adapter'ı render pipeline'ın terminal halkasıdır. RenderPlan output node tamamlandıktan sonra delivery workflow child olarak başlar. Codec/çözünürlük/TBR TikTok constraint'lerine uygun olmalıdır; render profile bu constraint'leri encode eder.
+
+### Sequence Diyagramı
+
+```mermaid
+sequenceDiagram
+    participant WF as DeliveryWorkflow
+    participant AD as TikTokAdapter
+    participant CG as CapabilityGate
+    participant V as Vault/KMS
+    participant TT as TikTok API
+    WF->>AD: start_delivery(job_id)
+    AD->>CG: check_api_status()
+    CG-->>AD: approved/endpoints
+    AD->>V: get_oauth_token(tiktok_scope)
+    V-->>AD: access_token
+    AD->>TT: POST /video/init/
+    TT-->>AD: upload_url, publish_id
+    AD->>TT: PUT video_data (direct upload)
+    AD->>TT: POST /video/complete/
+    TT-->>AD: processing_started
+    loop publish poll
+        AD->>TT: GET publish_status
+        TT-->>AD: status
+    end
+    AD->>WF: delivery_complete
+```
+
+### Class Diyagramı
+
+```mermaid
+classDiagram
+    class TikTokAdapter {
+        +upload(artifact, metadata)
+        +poll_publish(publish_id)
+    }
+    class CapabilityGate {
+        +check_api_status() bool
+        +get_endpoints() List
+    }
+    class ContentPostingClient {
+        +init_upload()
+        +upload_video(data)
+        +complete_upload()
+    }
+    class PublishPoller {
+        +poll_until_terminal(publish_id)
+    }
+    TikTokAdapter --> CapabilityGate
+    TikTokAdapter --> ContentPostingClient
+    TikTokAdapter --> PublishPoller
+```
+
+### State Diyagramı
+
+```mermaid
+stateDiagram-v2
+    [*] --> GateCheck: delivery initiated
+    GateCheck --> Approved: API approved
+    GateCheck --> ManualFallback: API not approved
+    Approved --> Uploading: init succeeded
+    Uploading --> Processing: upload complete
+    Uploading --> Failed: upload error
+    Processing --> Published: success
+    Processing --> Failed: processing error
+    Processing --> Rejected: content policy
+    ManualFallback --> [*]: manual instructions generated
+    Published --> [*]
+    Failed --> [*]
+    Rejected --> [*]
+```
+
+### Production Problemleri
+
+- TikTok API approval reddedilme veya revocation: capability gate kapanır, manuel fallback devreye girer.
+- Video processing red (TOS violation): audit log, dead letter, appeal tetikleme.
+- Upload boyut limiti aşımı: render profile zaten sınırlandırılmış olmalı, sanity check wrapper.
+- OAuth token expiry: refresh flow, long-lived refresh token Vault'ta saklanır.
+- Rate limit (429): exponential backoff, daily quota tracking.
+- TikTok region kısıtlamaları: upload endpoint'i region'a göre değişir; capability config'de tutulur.
+
+### Recovery
+
+Temporal durable execution. Upload failure'da retry offset-based. Processing rejection retry değil, dead letter. Capability gate kapanırsa tüm Tiktok delivery'lar `DEFERRED` durumuna geçer ve manuel fallback message üretilir.
+
+### Performans
+
+- Hedef: 100 MiB video upload p95 `< 3 dk`, publish completion `< 60 dk`.
+- Throughput available bandwidth'in `>= %60`'ı (TikTok upload endpoint latency'si YouTube'dan yüksek olabilir).
+- Dual delivery (YouTube + TikTok) paralel çalışır, birbirini bloklemez.
+
+### Benchmark
+
+Senaryo: 50 MiB/100 MiB/280 MiB, farklı privacy levels, hashtag sayısı, comment/duet/stitch kombinasyonları, API approved/not-approved, token expiry. Metrikler: upload throughput, publish success rate, content rejection rate, end-to-end latency.
+
+### Gerçek Dünya Senaryosu
+
+Bir klip aynı anda YouTube'a ve TikTok'a yüklenir. TikTok 80 MiB'lik H.264 9:16 videoyu 2 dakikada yükler. Processing 25 dakika sürer. YouTube tarafı 4.5 dakikada upload'u tamamlar. İki platform da 35 dakika içinde published durumdadır.
+
+### Ölçeklenme
+
+Multi-account TikTok adapter'ları ayrı OAuth scopes ve capability gates ile çalışır. Upload concurrency global NIC ve tenant bazında sınırlanır. High-volume yayıncılar için programmatic upload scheduling (off-peak) ve batch delivery desteklenir.
+
+### Ownership ve Test
+
+**Sahip:** Platform Integrations (TikTok adapter), Security (OAuth), Media Runtime (codec/resolution compliance). **Testler:** sandbox upload, capability gate toggle, OAuth refresh, chunk resume, content rejection, privacy level, comment/duet/stitch policy, concurrent multi-platform, size limit enforcement.
+
+---
+
+## 56. Instagram Export
+
+### Çalışma Modeli ve Invariant'lar
+
+Instagram export, Instagram Graph API üzerinden Reels yükleyen contract adapter'dır. Instagram Reels Container API, videoyu önce bir container olarak oluşturur, ardından publish eder. Bu iki aşamalı süreç adapter tarafından yönetilir.
+
+Invariant'lar:
+
+- Instagram Graph API erişimi capability gate ile kontrol edilir; Business/Creator account gerekliliği, Media ID container lifecycle.
+- Container creation upload ve metadata birlikte gönderilir; container publish edilmeden önce status kontrolü yapılır.
+- Video boyutu/süre/rezisyon Instagram spesifikasyonuna uygun olmalıdır (max 90 sn, max 250 MB, H.264).
+- Caption max 2200 karakter; hashtag'ler caption içinde.
+- Cover photo (thumbnail) container creation sırasında gönderilebilir.
+- Collab mention, branded content tag, location explicit policy'den gelir.
+- Container TTL: oluşturulduktan sonra belirli süre içinde publish edilmelidir, aksi halde expire olur.
+
+### Neden ve Alternatifler
+
+Instagram Reels kısa form videonun en büyük ikinci platformudur. Graph API resmi yoldur.
+
+- **Browser automation:** TOS ihlali, kırılgan. Kullanılmaz.
+- **Creator Studio:** Manuel, API değil.
+- **Third-party:** Sınırlı API coverage, ek bağımlılık.
+
+Tradeoff: Container → Publish iki aşamalı süreç ek state management gerektirir fakat intermediate retry ve status polling sağlar.
+
+### Veri Akışı
+
+```
+RenderJob(completed) → DeliveryWorkflow → InstagramAdapter
+  1. Capability gate check
+  2. Vault'tan Instagram Graph API token
+  3. Container creation (POST /media, video_url, caption, thumbnail)
+  4. Container status poll (GET /media/{id}, processing_status)
+  5. Container ready → Publish (POST /media_publish)
+  6. Published status poll
+  7. Terminal state → delivery update
+```
+
+### API / Interface / Model
+
+```python
+class InstagramAdapterConfig(BaseModel):
+    capability_version: str
+    api_approved: bool = False
+    max_video_duration_sec: int = 90
+    max_file_size_mb: int = 250
+    container_ttl_sec: int = 24 * 3600
+    supported_codecs: List[str] = ["h264"]
+
+class InstagramMetadata(BaseModel):
+    caption: str = Field(max_length=2200)
+    location_id: Optional[str] = None
+    user_tags: List[str] = Field(default_factory=list)
+    collab_accounts: List[str] = Field(default_factory=list)
+    branded_content: bool = False
+    cover_frame_seconds: Optional[float] = None
+
+class InstagramDeliveryResult(BaseModel):
+    delivery_id: str
+    container_id: str
+    media_id: Optional[str]  # published media
+    permalink: Optional[str]
+    container_status: Literal["created", "processing", "ready", "published", "expired", "failed"]
+    published_at: Optional[datetime]
+```
+
+### Dosya / Klasör Organizasyonu
+
+```
+video_engine/delivery/adapters/instagram/
+    __init__.py
+    adapter.py              # InstagramAdapter
+    oauth.py                # Graph API token
+    container_manager.py    # Create/poll/publish
+    metadata_compiler.py    # ClipSpec → InstagramMetadata
+    capability_gate.py
+    cover_extractor.py      # Thumbnail → cover photo
+tests/contract/delivery/instagram/
+    test_adapter_contract.py
+    test_container_lifecycle.py
+deploy/adapters/instagram/
+    capability.yaml
+```
+
+### Render Pipeline Bağlantısı
+
+Instagram adapter'ı render pipeline'ın son halkasıdır. Output artifact_READY olduktan sonra delivery workflow başlar. Instagram codec/resolution/duration kısıtlamaları render profile'da encode edilir; adapter sanity check ile uyumluluğu doğrular.
+
+### Sequence Diyagramı
+
+```mermaid
+sequenceDiagram
+    participant WF as DeliveryWorkflow
+    participant AD as InstagramAdapter
+    participant V as Vault/KMS
+    participant S3 as S3 CAS
+    participant IG as Graph API
+    participant PG as PostgreSQL
+    WF->>AD: start_delivery(job_id, artifact_id)
+    AD->>V: get_instagram_token()
+    V-->>AD: access_token
+    AD->>S3: get_signed_url(artifact_id)
+    AD->>IG: POST /media (container, video_url, caption)
+    IG-->>AD: container_id
+    AD->>PG: store_container(container_id)
+    loop container status poll
+        AD->>IG: GET /media/{container_id}
+        IG-->>AD: processing_status
+    end
+    AD->>IG: POST /media_publish (container_id)
+    IG-->>AD: media_id
+    AD->>PG: delivery_complete(media_id, permalink)
+```
+
+### Class Diyagramı
+
+```mermaid
+classDiagram
+    class InstagramAdapter {
+        +create_container(artifact, metadata)
+        +publish_container(container_id)
+        +poll_status(container_id)
+    }
+    class ContainerManager {
+        +create() container_id
+        +poll_until_ready() status
+        +publish() media_id
+        +cleanup_expired()
+    }
+    class CapabilityGate {
+        +check_graph_api_access() bool
+    }
+    class CoverExtractor {
+        +extract_frame(artifact, time_sec) image_bytes
+    }
+    InstagramAdapter --> ContainerManager
+    InstagramAdapter --> CapabilityGate
+    InstagramAdapter --> CoverExtractor
+```
+
+### State Diyagramı
+
+```mermaid
+stateDiagram-v2
+    [*] --> GateCheck: delivery initiated
+    GateCheck --> ContainerCreating: API approved
+    GateCheck --> ManualFallback: API not approved
+    ContainerCreating --> Processing: container_id received
+    Processing --> Ready: processing complete
+    Processing --> Expired: container TTL exceeded
+    Processing --> Failed: processing error
+    Ready --> Publishing: publish request
+    Publishing --> Published: media_id received
+    Publishing --> Failed: publish error
+    ManualFallback --> [*]
+    Published --> [*]
+    Expired --> [*]
+    Failed --> [*]
+```
+
+### Production Problemleri
+
+- Container expiry: uzun processing süresinde container expire olabilir; retry ile yeni container oluşturulur.
+- Token expiry: Instagram access token kısa ömürlüdür (60 gün); refresh flow Vault'ta yönetilir.
+- Rate limit (429): Graph API rate limiting; backoff ve daily quota tracking.
+- Content rejection: TOS violation; audit log, dead letter.
+- Cover photo extraction failure: fallback olarak platform otomatik frame seçer.
+- S3 signed URL expiry: container creation sırasında URL geçerliliğini doğrula.
+- Concurrent same content: idempotency key ile engellenir.
+
+### Recovery
+
+Temporal durable execution. Container lifecycle state'i PostgreSQL'de saklanır. Worker crash'inde workflow mevcut container'ı sorgular, expired ise yeniden oluşturur. Publish failure retry değil, dead letter.
+
+### Performans
+
+- Hedef: Container creation p95 `< 30 sn`, publish completion `< 15 dk`.
+- Upload: Instagram'a doğrudan S3 signed URL ile; additional chunking yok (tek seferde upload).
+- YouTube + TikTok + Instagram triple delivery paralel çalışır.
+
+### Benchmark
+
+Senaryo: 30 sn/60 sn/90 sn video, farklı caption uzunlukları, branded content toggle, location/tag kombinasyonları. Metrikler: container creation latency, processing duration, publish success rate, end-to-end latency.
+
+### Gerçek Dünya Senaryosu
+
+Aynı klip YouTube/TikTok/Instagram'a paralel yüklenir. Instagram 50 MiB'lik 60 sn'lik videoyu 45 sn'de yükler, container processing 8 dk sürer, publish 1 dk. Toplam: 10 dk.
+
+### Ölçeklenme
+
+Multi-account Instagram Business API adapter'ları. Container lifecycle state management scalability için PostgreSQL partitioning. Upload concurrency NIC ve token bucket ile sınırlanır.
+
+### Ownership ve Test
+
+**Sahip:** Platform Integrations (Instagram adapter), Security (OAuth), Media Runtime (codec compliance). **Testler:** sandbox publish, container lifecycle (create/ready/publish/expired), token refresh, cover extraction, content rejection, concurrent multi-platform, size/duration limit, branded content policy.
+
+---
+
+## 57. Kick Export
+
+### Çalışma Modeli ve Invariant'lar
+
+Kick platformu için export, mevcut durumda resmi programmatic upload API'si sunmamaktadır. Bu nedenle Kick adapter bir **capability gate** ve **manual delivery fallback** pattern'ı uygular. Adapter mevcut Kick API'sinin sunduğu clip/VOD endpoints'lerini capability olarak keşfeder ve desteklenen operasyonları otomatikleştirir; desteklenmeyenler için manuel talimat üretir.
+
+Invariant'lar:
+
+- Kick adapter capability gate ile çalışır; mevcut API'nin clip upload, VOD management ve thumbnail set destekleyip desteklemediğini keşfeder.
+- Resmi upload API'si mevcut değilse adapter otomatik upload gerçekleştirmez; manuel delivery instructions (dosya adı, boyut, format, optimizasyon notları) üretir.
+- VOD clip retrieval/update API mevcutsa metadata sync, thumbnail update ve clip description yönetimi otomatikleştirilir.
+- OAuth/client credential yönetimi Vault'tan yapılır.
+- Kick ToS ve content policy uyumlu davranılır.
+- Capability config periyodik olarak test edilir; API değişikliklerinde adapter capability'yi düşürür veya devre dışı bırakır.
+- Rate limiting ve backoff Kick API rate limitlerine uygun biçimde uygulanır.
+
+### Neden ve Alternatifler
+
+Kick hızla büyüyen bir livestream platformudur ancak resmi upload API'si henüz sınırlıdır veya mevcut değildir.
+
+- **Resmi API (mevcutsa):** En güvenilir yol. Capability gate ile desteklenir.
+- **YouTube/Twitch VOD import:** Kick'e doğrudan geçerli değil.
+- **Manual upload:** En basit fallback; adapter dosyayı hazırlar ve kullanıcıya sunar.
+- **Browser automation:** TOS ihlali, kırılgan. Kullanılmaz.
+
+Tradeoff: Capability gate ile esnek tasarım, API gelişiminin öncesinde sistemi hazırlıklı tutar. Adapter API geldiğinde manuel fallback'i kaldırabilir.
+
+### Veri Akışı
+
+```
+RenderJob(completed) → DeliveryWorkflow → KickAdapter
+  1. Capability gate: discover available endpoints
+  2. If upload API available:
+     a. Vault'tan credentials
+     b. Upload artifact
+     c. Set metadata/thumbnail
+  3. If upload API NOT available:
+     a. Generate manual delivery instructions
+     b. Prepare optimized file (format, codec, size)
+     c. Store in accessible location (S3 signed URL)
+     d. Notify user with instructions
+  4. If VOD clip API available:
+     a. Update clip metadata
+     b. Sync thumbnail
+```
+
+### API / Interface / Model
+
+```python
+class KickCapability(BaseModel):
+    upload_api_available: bool = False
+    vod_clip_api_available: bool = False
+    thumbnail_set_api_available: bool = False
+    max_file_size_mb: Optional[int] = None
+    supported_codecs: List[str] = Field(default_factory=list)
+    last_verified: datetime
+    verification_method: str  # "probe", "sandbox_test", "manual"
+
+class KickAdapterConfig(BaseModel):
+    capability_version: str
+    capability_check_interval_sec: float = 3600.0
+    manual_delivery_cdn_base_url: Optional[str] = None
+    retry_max: int = 3
+
+class KickDeliveryResult(BaseModel):
+    delivery_id: str
+    delivery_mode: Literal["automated", "manual_instructions", "partial_metadata"]
+    clip_url: Optional[str]  # Kick clip URL if available
+    manual_instructions: Optional[Dict[str, str]]  # step-by-step
+    signed_url: Optional[str]  # S3 signed URL for download
+    metadata_synced: bool
+    thumbnail_synced: bool
+    completed_at: datetime
+
+class ManualDeliveryInstructions(BaseModel):
+    file_location: str
+    file_size_mb: float
+    recommended_codec: str
+    recommended_resolution: str
+    upload_url: str  # Kick creator dashboard URL
+    step_by_step: List[str]
+    expires_at: datetime
+```
+
+### Dosya / Klasör Organizasyonu
+
+```
+video_engine/delivery/adapters/kick/
+    __init__.py
+    adapter.py              # KickAdapter
+    capability_gate.py      # API discovery
+    credential_manager.py   # Vault-backed auth
+    vod_sync.py             # VOD clip metadata sync
+    manual_instructions.py  # Fallback instruction generator
+    capability_monitor.py   # Periodic capability verification
+tests/contract/delivery/kick/
+    test_adapter_contract.py
+    test_capability_gate.py
+    test_manual_fallback.py
+deploy/adapters/kick/
+    capability.yaml
+    manual_delivery_template.md
+```
+
+### Render Pipeline Bağlantısı
+
+Kick adapter'ı render pipeline'ın son halkasıdır. RenderPlan output tamamlandıktan sonra delivery workflow başlar. Adapter capability check yapar, upload API mevcutsa doğrudan yükler, değilse manual instructions üretir. Her iki durumda da artifact S3 CAS'te atomik READY durumuna geçer.
+
+### Sequence Diyagramı
+
+```mermaid
+sequenceDiagram
+    participant WF as DeliveryWorkflow
+    participant AD as KickAdapter
+    participant CG as CapabilityGate
+    participant V as Vault/KMS
+    participant KK as Kick API
+    participant S3 as S3 CAS
+    participant U as User/Notifier
+    WF->>AD: start_delivery(job_id, artifact_id)
+    AD->>CG: discover_capabilities()
+    CG-->>AD: KickCapability
+    alt upload API available
+        AD->>V: get_kick_credentials()
+        V-->>AD: credentials
+        AD->>S3: get_signed_url(artifact_id)
+        AD->>KK: upload(artifact_url, metadata)
+        KK-->>AD: clip_id
+        AD->>WF: delivery_complete(clip_id)
+    else upload API NOT available
+        AD->>S3: create_signed_url(expires=48h)
+        S3-->>AD: signed_url
+        AD->>AD: generate_manual_instructions()
+        AD->>U: notify(instructions + signed_url)
+        AD->>WF: delivery_complete(manual_mode)
+    end
+    opt vod clip API available
+        AD->>KK: update_clip_metadata(clip_id, metadata)
+        AD->>KK: set_thumbnail(clip_id, thumbnail)
+    end
+```
+
+### Class Diyagramı
+
+```mermaid
+classDiagram
+    class KickAdapter {
+        +deliver(artifact, metadata)
+        +sync_metadata(clip_id, metadata)
+    }
+    class CapabilityGate {
+        +discover_capabilities() KickCapability
+        +verify_periodically()
+    }
+    class CredentialManager {
+        +get_credentials() dict
+    }
+    class ManualInstructionGenerator {
+        +generate(artifact, signed_url) ManualDeliveryInstructions
+    }
+    class VodSync {
+        +update_metadata(clip_id, metadata)
+        +set_thumbnail(clip_id, image)
+    }
+    KickAdapter --> CapabilityGate
+    KickAdapter --> CredentialManager
+    KickAdapter --> ManualInstructionGenerator
+    KickAdapter --> VodSync
+```
+
+### State Diyagramı
+
+```mermaid
+stateDiagram-v2
+    [*] --> CapabilityDiscovery: delivery initiated
+    CapabilityDiscovery --> AutomatedUpload: upload API available
+    CapabilityDiscovery --> ManualMode: upload API not available
+    AutomatedUpload --> Uploaded: success
+    AutomatedUpload --> Failed: upload error
+    ManualMode --> InstructionsGenerated: signed URL created
+    InstructionsGenerated --> PendingManual: user notified
+    PendingManual --> SyncMetadata: user uploaded manually
+    SyncMetadata --> Completed: metadata synced
+    SyncMetadata --> PartialSync: metadata sync failed
+    Uploaded --> SyncMetadata
+    Completed --> [*]
+    PartialSync --> [*]
+    Failed --> [*]
+    PendingManual --> [*]
+```
+
+### Production Problemleri
+
+- Kick API capability değişikliği: periyodik capability probe değişikliği tespit eder; automated→manual veya tersi geçiş yapar.
+- Credential expiry: Vault rotation ile otomatik yenileme.
+- Signed URL expiry: instructions expire olduktan sonra yenisi üretilir.
+- Rate limit: exponential backoff.
+- Content rejection: Kick content policy audit.
+- VOD metadata sync failure: partial delivery; retry.
+- Concurrent upload: deduplication idempotency key ile.
+
+### Recovery
+
+Temporal durable execution. Capability gate başarısızsa manual mode'a fallback. Upload failure retry. Manual mode'da user action beklenir; Temporal timer ile periodic reminder gönderilir. VOD sync failure retry.
+
+### Performans
+
+- Automated upload: bandwidth'in `>= %60`'ı (eğer API mevcutsa).
+- Manual mode latency: user-dependent; SLA yok.
+- Capability discovery p95 `< 2 sn`.
+- VOD metadata sync p95 `< 5 sn`.
+
+### Benchmark
+
+Senaryo: API available/not-available, upload success/failure, capability transition, concurrent deliveries, credential expiry, signed URL expiry. Metrikler: delivery mode ratio, automated success rate, manual completion rate, capability change frequency.
+
+### Gerçek Dünya Senaryosu
+
+Sistem 3 platforma paralel export yapar: YouTube (automated), TikTok (automated), Kick (manual mode). Kick için S3'te 48 saat geçerli signed URL oluşturulur, kullanıcıya e-posta ile manuel upload talimatları gönderilir. Kullanıcı 2 saat içinde Kick creator dashboard'a yükler. Sistem VOD metadata sync ile clip description'ı günceller.
+
+### Ölçeklenme
+
+Multi-channel Kick desteği: her kanal ayrı capability config. Capability discovery periyodik ve incremental; API değişikliklerinde graceful degradation. Manual mode batch notification ile desteklenir.
+
+### Ownership ve Test
+
+**Sahip:** Platform Integrations (Kick adapter), Security (credentials), Media Runtime (artifact). **Testler:** capability gate toggle, credential rotation, signed URL lifecycle, manual instruction generation, VOD metadata sync, concurrent multi-platform, capability transition (auto→manual→auto), end-to-end golden delivery.
