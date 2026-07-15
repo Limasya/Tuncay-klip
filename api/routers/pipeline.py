@@ -334,13 +334,14 @@ async def upload_video(
     return results
 
 
-<<<<<<< Updated upstream
-=======
 # ── Post-Clip Pipeline Endpoints ──────────────────────────
 
 @router.post("/export")
 async def export_clip(request: ExportRequest):
     """Export a clip to multiple platform aspect ratios."""
+    orchestrator = _get_orch()
+    if orchestrator is None:
+        raise HTTPException(503, "Orchestrator unavailable")
     if not orchestrator.event_bus:
         await orchestrator.initialize()
 
@@ -374,6 +375,9 @@ async def export_clip(request: ExportRequest):
 @router.post("/generate-subtitles")
 async def generate_subtitles(request: SubtitleRequest):
     """Generate subtitles for a clip via Whisper."""
+    orchestrator = _get_orch()
+    if orchestrator is None:
+        raise HTTPException(503, "Orchestrator unavailable")
     if not orchestrator.event_bus:
         await orchestrator.initialize()
 
@@ -397,6 +401,9 @@ async def generate_metadata(
     platform: str = "youtube",
 ):
     """Generate AI title, description, and hashtags for a clip."""
+    orchestrator = _get_orch()
+    if orchestrator is None:
+        raise HTTPException(503, "Orchestrator unavailable")
     if not orchestrator.event_bus:
         await orchestrator.initialize()
 
@@ -413,6 +420,9 @@ async def generate_metadata(
 @router.post("/upload-clip")
 async def upload_clip(request: UploadRequest):
     """Manually upload a clip to a social platform."""
+    orchestrator = _get_orch()
+    if orchestrator is None:
+        raise HTTPException(503, "Orchestrator unavailable")
     if not orchestrator.event_bus:
         await orchestrator.initialize()
 
@@ -434,7 +444,6 @@ async def upload_clip(request: UploadRequest):
 
 # ── DB Integration: Save pipeline clips ─────────────────────
 
->>>>>>> Stashed changes
 async def save_pipeline_clip_to_db(clip_data: dict):
     """Save a pipeline-generated clip to the database."""
     try:
@@ -469,10 +478,7 @@ async def save_pipeline_clip_to_db(clip_data: dict):
             await session.commit()
             logger.info("Clip saved to DB: %s - %s", clip.id, cat)
     except Exception as e:
-<<<<<<< Updated upstream
         logger.error("Failed to save clip to DB: %s", e)
-=======
-        logger.error(f"Failed to save clip to DB: {e}")
 
 
 # ── Notification Endpoints ────────────────────────────────
@@ -480,7 +486,10 @@ async def save_pipeline_clip_to_db(clip_data: dict):
 @router.get("/notifications")
 async def get_notifications():
     """Get notification service status and webhook list."""
-    svc = orchestrator.notification_service
+    orch = _get_orch()
+    if orch is None:
+        return {"status": "not_configured", "webhooks": []}
+    svc = orch.notification_service
     if svc is None:
         return {"status": "not_configured", "webhooks": []}
     return svc.get_status()
@@ -493,10 +502,14 @@ async def add_webhook(request: WebhookAddRequest):
         NotificationService, WebhookConfig, WebhookType,
     )
 
-    svc = orchestrator.notification_service
+    orch = _get_orch()
+    if orch is None:
+        raise HTTPException(503, "Orchestrator unavailable")
+
+    svc = orch.notification_service
     if svc is None:
-        svc = NotificationService(event_bus=orchestrator.event_bus)
-        orchestrator.notification_service = svc
+        svc = NotificationService(event_bus=orch.event_bus)
+        orch.notification_service = svc
 
     wt_map = {"discord": WebhookType.DISCORD, "telegram": WebhookType.TELEGRAM, "generic": WebhookType.GENERIC}
     wh = WebhookConfig(
@@ -514,7 +527,10 @@ async def add_webhook(request: WebhookAddRequest):
 @router.delete("/notifications/webhook/{label}")
 async def remove_webhook(label: str):
     """Remove a webhook by label."""
-    svc = orchestrator.notification_service
+    orch = _get_orch()
+    if orch is None:
+        raise HTTPException(503, "Orchestrator unavailable")
+    svc = orch.notification_service
     if svc is None:
         raise HTTPException(404, "No notification service configured")
     removed = svc.remove_webhook(label)
@@ -526,11 +542,13 @@ async def remove_webhook(label: str):
 @router.post("/notifications/test/{label}")
 async def test_webhook(label: str):
     """Send a test notification to a specific webhook."""
-    svc = orchestrator.notification_service
+    orch = _get_orch()
+    if orch is None:
+        raise HTTPException(503, "Orchestrator unavailable")
+    svc = orch.notification_service
     if svc is None:
         raise HTTPException(404, "No notification service configured")
     sent = await svc.send_test(label)
     if not sent:
         raise HTTPException(404, f"Webhook '{label}' not found")
     return {"status": "test_sent", "label": label}
->>>>>>> Stashed changes

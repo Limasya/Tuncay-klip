@@ -2,7 +2,7 @@
 Merkezi yapılandırma modülü - tüm ortam değişkenlerini yönetir.
 Pydantic v1 uyumlu.
 """
-from pydantic import BaseSettings
+from pydantic_settings import BaseSettings
 from functools import lru_cache
 
 

@@ -43,6 +43,9 @@ class UploaderMicroservice:
         self._failed = 0
         self._pending = 0
 
+        # Lazy-init AutoPublisher with our event bus
+        self._publisher = None
+
         # Subscribe to EDIT_READY and AI_METADATA_READY
         self.event_bus.subscribe(
             EventType.EDIT_READY.value,
@@ -54,6 +57,13 @@ class UploaderMicroservice:
         )
 
         logger.info("UploaderMicroservice initialized (auto=%s)", auto_upload)
+
+    def _get_publisher(self):
+        """Lazy-init AutoPublisher sharing our event bus."""
+        if self._publisher is None:
+            from src.uploader import AutoPublisher
+            self._publisher = AutoPublisher(event_bus=self.event_bus)
+        return self._publisher
 
     async def _on_ai_metadata(self, event: SystemEvent):
         """Cache AI metadata for use during upload."""
@@ -77,38 +87,29 @@ class UploaderMicroservice:
         description = metadata.get("description", "")
         hashtags = metadata.get("hashtags", [])
 
+        publisher = self._get_publisher()
+
         for platform, file_path in exports.items():
             if not os.path.exists(file_path):
                 logger.warning("Export file not found: %s", file_path)
                 continue
 
             try:
-                from src.uploader import auto_publisher
-
-                result = await auto_publisher.publish(
+                # AutoPublisher.publish() now emits CLIP_PUBLISHED
+                # and handles retry/backoff internally
+                result = await publisher.publish(
                     video_path=file_path,
                     title=title,
                     description=description,
                     tags=hashtags,
                     platform=platform,
                     privacy="private",
+                    clip_id=clip_id,
+                    stream_id=event.stream_id,
                 )
 
                 if result:
                     self._uploaded += 1
-                    await self.event_bus.publish_quick(
-                        EventType.CLIP_PUBLISHED,
-                        payload={
-                            "clip_id": clip_id,
-                            "platform": platform,
-                            "video_id": result.get("video_id", ""),
-                            "url": result.get("url", ""),
-                            "file_path": file_path,
-                        },
-                        source_service="uploader",
-                        stream_id=event.stream_id,
-                        causation_id=event.event_id,
-                    )
                     logger.info("Uploaded to %s: %s", platform, result.get("url"))
                 else:
                     self._failed += 1
@@ -126,9 +127,8 @@ class UploaderMicroservice:
         tags: list[str] = None,
     ) -> Optional[dict]:
         """Manually upload a clip to a platform."""
-        from src.uploader import auto_publisher
-
-        return await auto_publisher.publish(
+        publisher = self._get_publisher()
+        return await publisher.publish(
             video_path=clip_path,
             title=title or "Auto-generated clip",
             description=description,

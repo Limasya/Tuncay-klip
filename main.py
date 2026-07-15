@@ -42,8 +42,9 @@ async def lifespan(app: FastAPI):
         os.makedirs(d, exist_ok=True)
 
     yield
-<<<<<<< Updated upstream
-    # Cleanup — stop both orchestrators if running
+
+    # Graceful shutdown — stop both orchestrators if running
+    logger.info("Shutting down pipeline...")
     try:
         from services.orchestrator import orchestrator as svc_orch
         if svc_orch.is_monitoring:
@@ -54,19 +55,8 @@ async def lifespan(app: FastAPI):
         from microservices.orchestrator import orchestrator as pipe_orch
         if pipe_orch._is_running:
             await pipe_orch.stop()
-    except Exception:
-        pass
-=======
-
-    # Graceful shutdown
-    logger.info("Shutting down pipeline...")
-    from microservices.orchestrator import orchestrator as pipe_orch
-    if pipe_orch._is_running:
-        try:
-            await pipe_orch.stop()
-        except Exception as e:
-            logger.error("Pipeline shutdown error: %s", e)
->>>>>>> Stashed changes
+    except Exception as e:
+        logger.error("Pipeline shutdown error: %s", e)
     logger.info("Sistem kapatıldı.")
 
 
