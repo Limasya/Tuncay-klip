@@ -74,29 +74,67 @@ class ChatSpikeDetector:
 
 
 class SentimentAnalyzer:
-    """Simple keyword-based sentiment (replace with model in production)."""
+    """Multi-language keyword-based sentiment (Turkish + English gaming/streaming)."""
 
     POSITIVE_WORDS = {
+        # English gaming
         "pog", "pogchamp", "hype", "gg", "nice", "amazing", "wow",
         "lets go", "let's go", "insane", "epic", "love", "best",
         "fire", "goat", "w", "win", "victory", "clutch",
+        "legendary", "god", "godlike", "based", "sigma",
+        # Turkish positive
+        "helal", "bravo", "süper", "super", "harika", "mükemmel", "mukemmel",
+        "efsane", "baba", "kral", "kanka", "müthis", "muhtesem",
+        "asıl", "asil", "adam", "deli", "ateş", "ates", "müthis",
+        "eyw", "eyvallah", "çok iyi", "cok iyi", "büyük", "buyuk",
+        "güzel", "guzel", "mükemmel", "muhteşem", "harika",
+        "yakışıklı", "yakışıklı", "aşk", "ask", "seviyorum",
+        "eşşiz", "essiz", "inanılmaz", "inanilmaz",
+        "aferin", "helal olsun", "adamsın", "kralısın",
     }
     NEGATIVE_WORDS = {
+        # English gaming
         "lul", "l", "lose", "fail", "bad", "cringe", "rip",
         "cope", "ratio", "mad", "angry", "rage", "toxic",
+        "ez", "trash", "dog water", "washed",
+        # Turkish negative
+        "kötü", "kotu", "berbat", "rezalet", "saçma", "sacma",
+        "bok", "lanet", "siktir", "sikeyim", "amk",
+        "bırak", "birak", "yeter", "sıkıcı", "sikici",
+        "korkak", "ezik", "zayıf", "zayif", "boktan",
+        "kötüsün", "kotusun", "rezaletsin", "yapma",
+        "sinir", "kızgın", "kizgin", "moral bozuk",
+    }
+
+    # Words with higher weight (strong signal)
+    HIGH_WEIGHT_WORDS = {
+        "pogchamp": 2.0, "pog": 1.5, "clutch": 1.5,
+        "efsane": 2.0, "helal": 1.5, "kral": 1.5,
+        "amk": 2.0, "siktir": 2.0, "rezalet": 2.0,
+        "godlike": 2.0, "insane": 1.5,
     }
 
     def analyze(self, text: str) -> SentimentResult:
         text_lower = text.lower()
 
-        pos_count = sum(1 for w in self.POSITIVE_WORDS if w in text_lower)
-        neg_count = sum(1 for w in self.NEGATIVE_WORDS if w in text_lower)
+        pos_score = 0.0
+        neg_score = 0.0
 
-        total = pos_count + neg_count
+        for w in self.POSITIVE_WORDS:
+            if w in text_lower:
+                weight = self.HIGH_WEIGHT_WORDS.get(w, 1.0)
+                pos_score += weight
+
+        for w in self.NEGATIVE_WORDS:
+            if w in text_lower:
+                weight = self.HIGH_WEIGHT_WORDS.get(w, 1.0)
+                neg_score += weight
+
+        total = pos_score + neg_score
         if total == 0:
             return SentimentResult(label="NEUTRAL", score=0.0, confidence=0.5)
 
-        score = (pos_count - neg_count) / total
+        score = (pos_score - neg_score) / total
         if score > 0.1:
             return SentimentResult(label="POSITIVE", score=score, confidence=0.7)
         elif score < -0.1:
@@ -122,8 +160,19 @@ class ChatAnalysisService:
     async def process_message(self, text: str, user: str = "") -> SentimentResult:
         now = time.time()
 
-        # Sentiment analysis
-        sentiment = self.sentiment_analyzer.analyze(text)
+        # Donation detection (before normal sentiment)
+        donation = self._detect_donation(text, user)
+        if donation:
+            await self.event_bus.publish_quick(
+                EventType.DONATION_RECEIVED,
+                donation,
+                source_service="chat-analysis",
+            )
+            # Donations are always positive signals
+            sentiment = SentimentResult(label="POSITIVE", score=1.0, confidence=0.95)
+        else:
+            # Sentiment analysis
+            sentiment = self.sentiment_analyzer.analyze(text)
         self._sentiment_window.append(sentiment.score)
 
         # Chat spike detection
@@ -155,6 +204,51 @@ class ChatAnalysisService:
         )
 
         return sentiment
+
+    @staticmethod
+    def _detect_donation(text: str, user: str) -> Optional[dict]:
+        """
+        Detect donation/tip messages in chat.
+        Kick donations often come as system messages or contain amount patterns.
+        """
+        import re
+        text_lower = text.lower()
+
+        # Common donation patterns
+        amount_patterns = [
+            r'\$(\d+(?:\.\d+)?)',           # $10, $5.50
+            r'(\d+(?:\.\d+)?)\s*(?:tl|try|₺)', # 50TL, 100₺
+            r'(\d+(?:\.\d+)?)\s*(?:usd|eur|€)', # 10 USD
+            r'donated\s+(\d+(?:\.\d+)?)',    # donated 5
+            r'tip(?:ped)?\s+(\d+(?:\.\d+)?)', # tipped 10
+            r'ba(?:ğ|g)ı(?:ş|s)\s+(\d+)',    # bağış 50
+        ]
+
+        for pattern in amount_patterns:
+            match = re.search(pattern, text_lower)
+            if match:
+                try:
+                    amount = float(match.group(1))
+                except (ValueError, IndexError):
+                    continue
+                return {
+                    "user": user,
+                    "amount": amount,
+                    "currency": "USD" if "$" in text else "TRY" if "tl" in text_lower or "₺" in text else "OTHER",
+                    "message": text[:200],
+                }
+
+        # Keyword-only donations
+        donation_keywords = {"donation", "tip", "bağış", "bagis", "support", "destek"}
+        if any(kw in text_lower for kw in donation_keywords):
+            return {
+                "user": user,
+                "amount": 0.0,
+                "currency": "UNKNOWN",
+                "message": text[:200],
+            }
+
+        return None
 
     def get_sentiment_trend(self) -> dict:
         if len(self._sentiment_window) < 5:

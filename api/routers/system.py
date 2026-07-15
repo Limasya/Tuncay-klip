@@ -1,24 +1,46 @@
 """
 Sistem kontrol API router'ı.
 Başlat/durdur, durum, ayarlar.
+
+This uses the **pipeline orchestrator** (event-driven microservice architecture)
+as the single production path. The legacy services/orchestrator is kept for
+backward compatibility but is no longer the primary control surface.
 """
+import logging
 from fastapi import APIRouter, HTTPException
 from models.schemas import SystemStatus
-from services.orchestrator import orchestrator
 from config import get_settings
 
 router = APIRouter(prefix="/api/system", tags=["system"])
 settings = get_settings()
+logger = logging.getLogger(__name__)
 
 
 @router.post("/start")
 async def start_monitoring():
     """Yayın izlemeyi ve otomatik klip yakalamayı başlatır."""
-    if orchestrator.is_monitoring:
+    from microservices.orchestrator import orchestrator as pipeline
+    from services.kick_api import kick_service
+
+    if pipeline._is_running:
         raise HTTPException(400, "Sistem zaten çalışıyor")
 
+    # Get stream URL from Kick API
+    try:
+        stream_url = await kick_service.get_stream_url()
+        if not stream_url:
+            raise HTTPException(503, "Stream URL alınamadı (yayın offline olabilir)")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(503, f"Kick API hatası: {e}")
+
     import asyncio
-    asyncio.create_task(orchestrator.start())
+    asyncio.create_task(pipeline.start_stream(
+        stream_url=stream_url,
+        target_fps=settings.analysis_fps,
+        buffer_seconds=settings.stream_buffer_seconds,
+    ))
 
     return {"message": "Sistem başlatılıyor...", "channel": settings.kick_channel_slug}
 
@@ -26,27 +48,37 @@ async def start_monitoring():
 @router.post("/stop")
 async def stop_monitoring():
     """Sistemi durdurur."""
-    if not orchestrator.is_monitoring:
+    from microservices.orchestrator import orchestrator as pipeline
+
+    if not pipeline._is_running:
         raise HTTPException(400, "Sistem zaten durmuş")
 
-    await orchestrator.stop()
+    await pipeline.stop()
     return {"message": "Sistem durduruldu."}
 
 
-@router.get("/status", response_model=SystemStatus)
+@router.get("/status")
 async def get_status():
     """Anlık sistem durumunu döndürür."""
-    status = orchestrator.get_status()
+    from microservices.orchestrator import orchestrator as pipeline
+    import psutil
+    import torch
+
+    status = pipeline.get_full_status()
+    is_running = status.get("pipeline", {}).get("is_running", False)
+    capture_status = status.get("stream_capture", {})
+    frames = capture_status.get("buffer_frames", 0)
+
     return SystemStatus(
-        is_monitoring=status["is_monitoring"],
-        target_channel=status["target_channel"],
-        stream_active=status["stream_active"],
-        clips_today=status["clips_today"],
-        buffer_usage_mb=status["buffer_frames"] * 1280 * 720 * 3 / (1024 * 1024),
+        is_monitoring=is_running,
+        target_channel=settings.kick_channel_slug,
+        stream_active=capture_status.get("is_capturing", False),
+        clips_today=status.get("clip_generator", {}).get("clips_generated", 0),
+        buffer_usage_mb=frames * 1280 * 720 * 3 / (1024 * 1024),
         analysis_fps=settings.analysis_fps,
-        cpu_usage=status["cpu_usage"],
-        memory_usage=status["memory_usage"],
-        gpu_available=status["gpu_available"],
+        cpu_usage=psutil.cpu_percent(),
+        memory_usage=psutil.virtual_memory().percent,
+        gpu_available=torch.cuda.is_available(),
     )
 
 

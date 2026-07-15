@@ -4,25 +4,25 @@ Pipeline Orchestrator
 Wires all microservices together into a running pipeline.
 
 Architecture:
-┌─────────────────────────────────────────────────────────────┐
-│                      EVENT BUS                               │
-│  (in-memory pub/sub — swap to Redis Streams in production)  │
-└──────┬──────────┬──────────┬──────────┬──────────┬──────────┘
-       │          │          │          │          │
-  ┌────▼────┐ ┌──▼───┐ ┌───▼───┐ ┌───▼───┐ ┌───▼────┐
-  │ Stream  │ │Video │ │Audio  │ │ Chat  │ │ Event  │
-  │Capture  │ │Anal. │ │Anal.  │ │ Anal. │ │Detect  │
-  └────┬────┘ └──────┘ └───────┘ └───────┘ └───┬────┘
-       │                                        │
-       │         ┌────────────┐                 │
-       └────────►│  Decision  │◄────────────────┘
+┌─────────────────────────────────────────────────────────────────────┐
+│                          EVENT BUS                                    │
+│   (in-memory / Redis Streams)                                         │
+└──────┬───────┬───────┬───────┬───────┬───────┬───────┬───────┬──────┘
+       │       │       │       │       │       │       │       │
+  ┌────▼───┐ ┌─▼────┐ ┌▼─────┐ ┌▼─────┐ ┌▼──────┐ ┌▼─────┐ ┌▼─────┐ ┌▼────────┐
+  │ Stream │ │Video │ │Audio │ │ Chat │ │ Event │ │Trans │ │Sub-  │ │Thumb/AI │
+  │Capture │ │Anal. │ │Anal. │ │ Anal │ │Detect │ │cript │ │title │ │Editor   │
+  └────┬───┘ └──────┘ └──────┘ └──────┘ └───┬───┘ └──────┘ └──────┘ └─────────┘
+       │                                      │
+       │         ┌────────────┐               │
+       └────────►│  Decision  │◄──────────────┘
                  │  Engine    │
                  └─────┬──────┘
                        │
-                 ┌─────▼──────┐
-                 │    Clip    │
-                 │ Generator  │
-                 └────────────┘
+                 ┌─────▼──────┐    ┌──────────┐    ┌──────────┐
+                 │    Clip    │───►│  Upload  │───►│ Publish  │
+                 │ Generator  │    │  (opt)   │    │          │
+                 └────────────┘    └──────────┘    └──────────┘
 """
 from __future__ import annotations
 
@@ -44,6 +44,13 @@ from microservices.chat_analysis.service import ChatAnalysisService
 from microservices.event_detector.service import EventDetectorService
 from microservices.decision_engine.service import DecisionEngineService
 from microservices.clip_generator.service import ClipGeneratorService
+from microservices.chat_source import KickChatSource
+from microservices.transcription.service import TranscriptionService
+from microservices.subtitle.service import SubtitleMicroservice
+from microservices.video_editor.service import VideoEditorMicroservice
+from microservices.ai_generator.service import AIGeneratorMicroservice
+from microservices.uploader.service import UploaderMicroservice
+from microservices.thumbnail.service import ThumbnailMicroservice
 
 logger = logging.getLogger("orchestrator")
 
@@ -70,6 +77,13 @@ class PipelineOrchestrator:
         self.event_detector: Optional[EventDetectorService] = None
         self.decision_engine: Optional[DecisionEngineService] = None
         self.clip_generator: Optional[ClipGeneratorService] = None
+        self.chat_source: Optional[KickChatSource] = None
+        self.transcription: Optional[TranscriptionService] = None
+        self.subtitle: Optional[SubtitleMicroservice] = None
+        self.video_editor: Optional[VideoEditorMicroservice] = None
+        self.ai_generator: Optional[AIGeneratorMicroservice] = None
+        self.uploader: Optional[UploaderMicroservice] = None
+        self.thumbnail: Optional[ThumbnailMicroservice] = None
 
         self._is_running = False
         self._start_time: Optional[datetime] = None
@@ -99,7 +113,17 @@ class PipelineOrchestrator:
             self._on_clip_created,
         )
 
-        logger.info("Lightweight services initialized")
+        # Start transcription service (subscribes to CLIP_CREATED)
+        self.transcription = TranscriptionService(event_bus=self.event_bus)
+
+        # Start post-clip pipeline services
+        self.subtitle = SubtitleMicroservice(event_bus=self.event_bus)
+        self.video_editor = VideoEditorMicroservice(event_bus=self.event_bus)
+        self.ai_generator = AIGeneratorMicroservice(event_bus=self.event_bus)
+        self.uploader = UploaderMicroservice(event_bus=self.event_bus)
+        self.thumbnail = ThumbnailMicroservice(event_bus=self.event_bus)
+
+        logger.info("All microservices initialized")
 
     async def _ensure_video_analysis(self):
         """Lazily initialize video analysis (downloads ML models)."""
@@ -141,8 +165,20 @@ class PipelineOrchestrator:
         # Register frame callback
         self.stream_capture.on_frame(self._on_new_frame)
 
+        # Register audio callback
+        self.stream_capture.on_audio_chunk(self._on_new_audio)
+
         # Start capture
         await self.stream_capture.start()
+
+        # Start chat source (if Kick API is available)
+        if self.chat_analysis:
+            self.chat_source = KickChatSource(
+                event_bus=self.event_bus,
+                chat_analysis=self.chat_analysis,
+            )
+            await self.chat_source.start()
+
         self._is_running = True
         self._start_time = datetime.utcnow()
 
@@ -151,6 +187,9 @@ class PipelineOrchestrator:
     async def stop(self):
         """Stop the pipeline gracefully."""
         self._is_running = False
+
+        if self.chat_source:
+            await self.chat_source.stop()
 
         if self.stream_capture:
             await self.stream_capture.stop()
@@ -181,11 +220,14 @@ class PipelineOrchestrator:
                 frame.image, frame.frame_id
             )
 
-        # Generate synthetic audio features (in production, real audio chunks)
+    async def _on_new_audio(self, samples: np.ndarray, stream_time: float):
+        """
+        Called for each 1-second audio chunk from stream capture.
+
+        Real audio replaces the synthetic random-noise path.
+        """
         if self.audio_analysis:
-            # Simulate audio: use frame motion as proxy
-            audio_data = np.random.randn(16000).astype(np.float32) * 0.01
-            await self.audio_analysis.analyze_chunk(audio_data)
+            await self.audio_analysis.analyze_chunk(samples)
 
     async def _on_clip_created(self, event: SystemEvent):
         """Handle clip creation events — log + save to DB."""
@@ -250,6 +292,20 @@ class PipelineOrchestrator:
             status["decision_engine"] = self.decision_engine.get_status()
         if self.clip_generator:
             status["clip_generator"] = self.clip_generator.get_status()
+        if self.transcription:
+            status["transcription"] = self.transcription.get_status()
+        if self.chat_source:
+            status["chat_source"] = self.chat_source.get_status()
+        if self.subtitle:
+            status["subtitle"] = self.subtitle.get_status()
+        if self.video_editor:
+            status["video_editor"] = self.video_editor.get_status()
+        if self.ai_generator:
+            status["ai_generator"] = self.ai_generator.get_status()
+        if self.uploader:
+            status["uploader"] = self.uploader.get_status()
+        if self.thumbnail:
+            status["thumbnail"] = self.thumbnail.get_status()
 
         return status
 

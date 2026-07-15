@@ -31,11 +31,7 @@ async def lifespan(app: FastAPI):
     await init_db()
     logger.info("Klip Yakalama Sistemi hazır!")
     yield
-    # Cleanup — old orchestrator
-    from services.orchestrator import orchestrator as old_orch
-    if old_orch.is_monitoring:
-        await old_orch.stop()
-    # Cleanup — new pipeline orchestrator
+    # Cleanup — pipeline orchestrator (single production path)
     from microservices.orchestrator import orchestrator as pipe_orch
     if pipe_orch._is_running:
         await pipe_orch.stop()

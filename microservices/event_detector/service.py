@@ -48,10 +48,11 @@ class ScoringEngine:
         "emotion_change": 0.10,
         "pose_gesture": 0.12,
         "pose_motion": 0.08,
-        "chat_sentiment": 0.07,
-        "viewer_delta": 0.05,
-        "ocr_keyword": 0.03,
+        "chat_sentiment": 0.05,
+        "viewer_delta": 0.03,
+        "ocr_keyword": 0.02,
         "speech_content": 0.02,
+        "donation": 0.05,
     }
 
     DECAY_HALFLIFE = 5.0  # seconds
@@ -110,6 +111,10 @@ class StreamStateMachine:
     Tracks stream state. State affects clip threshold.
 
     OFFLINE → STARTING → WARMING_UP → STEADY ←→ HIGH_ENERGY → PEAK
+                                                    ↓
+                                               COOLING_DOWN → STEADY
+                                                              ↓
+                                                           ENDING → OFFLINE
     """
 
     THRESHOLD_ADJUSTMENTS = {
@@ -123,9 +128,15 @@ class StreamStateMachine:
         StreamState.ENDING: 1.3,
     }
 
+    # Time in current state before considering auto-transition
+    WARMING_UP_DURATION = 120.0      # 2 min warm-up after start
+    COOLING_DOWN_DURATION = 30.0     # 30s cooling after energy drop
+    ENDING_DETECTION_WINDOW = 60.0   # 60s of near-zero activity = ending
+
     def __init__(self):
         self.state = StreamState.OFFLINE
         self._entered_at = 0.0
+        self._peak_score_history: list[tuple[float, float]] = []  # (time, score)
 
     def transition(self, new_state: StreamState):
         if new_state != self.state:
@@ -133,6 +144,62 @@ class StreamStateMachine:
             self.state = new_state
             self._entered_at = time.time()
             logger.info(f"Stream state: {old.value} → {new_state.value}")
+
+    def update_from_score(self, score: float):
+        """
+        Update state based on composite score + time.
+
+        Logic:
+          - After STARTING, auto-transition to WARMING_UP
+          - WARMING_UP lasts WARMING_UP_DURATION seconds → STEADY
+          - Score > 0.8 → PEAK_MOMENT
+          - Score > 0.5 → HIGH_ENERGY
+          - Score drops below 0.3 from HIGH_ENERGY/PEAK → COOLING_DOWN
+          - COOLING_DOWN lasts COOLING_DOWN_DURATION → STEADY
+          - Near-zero activity for ENDING_DETECTION_WINDOW → ENDING
+        """
+        now = time.time()
+        self._peak_score_history.append((now, score))
+        # Keep last 120 entries
+        self._peak_score_history = self._peak_score_history[-120:]
+
+        time_in_state = now - self._entered_at if self._entered_at else 0
+
+        # STARTING → WARMING_UP (automatic after 10s)
+        if self.state == StreamState.STARTING and time_in_state > 10:
+            self.transition(StreamState.WARMING_UP)
+            return
+
+        # WARMING_UP → STEADY (after warm-up period)
+        if self.state == StreamState.WARMING_UP and time_in_state > self.WARMING_UP_DURATION:
+            self.transition(StreamState.STEADY)
+            return
+
+        # COOLING_DOWN → STEADY (after cooling period)
+        if self.state == StreamState.COOLING_DOWN and time_in_state > self.COOLING_DOWN_DURATION:
+            self.transition(StreamState.STEADY)
+            return
+
+        # Score-based transitions
+        if score > 0.8:
+            if self.state not in (StreamState.PEAK_MOMENT,):
+                self.transition(StreamState.PEAK_MOMENT)
+        elif score > 0.5:
+            if self.state not in (StreamState.HIGH_ENERGY, StreamState.PEAK_MOMENT):
+                self.transition(StreamState.HIGH_ENERGY)
+        elif score < 0.2 and self.state in (
+            StreamState.HIGH_ENERGY, StreamState.PEAK_MOMENT
+        ):
+            # Energy dropped significantly → cooling down
+            self.transition(StreamState.COOLING_DOWN)
+        elif score < 0.1 and self.state == StreamState.STEADY:
+            # Check for ending: sustained near-zero activity
+            recent = [
+                s for t, s in self._peak_score_history
+                if now - t < self.ENDING_DETECTION_WINDOW
+            ]
+            if len(recent) >= 5 and all(s < 0.1 for s in recent):
+                self.transition(StreamState.ENDING)
 
     def get_threshold_multiplier(self) -> float:
         return self.THRESHOLD_ADJUSTMENTS.get(self.state, 1.0)
@@ -181,6 +248,7 @@ class EventDetectorService:
             EventType.VIEWER_COUNT.value: self._on_viewer,
             EventType.STREAM_STARTED.value: self._on_stream_start,
             EventType.STREAM_ENDED.value: self._on_stream_end,
+            EventType.DONATION_RECEIVED.value: self._on_donation,
         }
         for event_type, handler in handlers.items():
             self.event_bus.subscribe(event_type, handler)
@@ -267,6 +335,15 @@ class EventDetectorService:
         self.state_machine.transition(StreamState.OFFLINE)
         self._metrics["stream_state"] = self.state_machine.state.value
 
+    async def _on_donation(self, event: SystemEvent):
+        """Donation = strong highlight signal."""
+        amount = event.payload.get("amount", 0.0)
+        # Scale: $1 = 0.3, $5 = 0.6, $10+ = 1.0
+        value = min(amount / 10.0, 1.0) if amount > 0 else 0.5
+        self.scoring.update_signal("donation", max(value, 0.5))
+        self._metrics["events_processed"] += 1
+        await self._maybe_emit_score()
+
     async def _maybe_emit_score(self):
         """Emit score if enough time has passed since last emission."""
         now = time.time()
@@ -276,13 +353,8 @@ class EventDetectorService:
         self._last_score_time = now
         score = self.scoring.compute_score()
 
-        # Update state based on score
-        if score.composite_score > 0.8:
-            self.state_machine.transition(StreamState.PEAK_MOMENT)
-        elif score.composite_score > 0.5:
-            self.state_machine.transition(StreamState.HIGH_ENERGY)
-        elif score.active_signals == 0:
-            self.state_machine.transition(StreamState.STEADY)
+        # Update state using full state machine logic
+        self.state_machine.update_from_score(score.composite_score)
 
         self._metrics["current_score"] = score.composite_score
         self._metrics["stream_state"] = self.state_machine.state.value

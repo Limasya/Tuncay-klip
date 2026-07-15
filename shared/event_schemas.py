@@ -59,7 +59,13 @@ class EventType(str, Enum):
     CLIP_CREATED = "clip.created"
     CLIP_CLASSIFIED = "clip.classified"
     SUBTITLE_READY = "clip.subtitle_ready"
+    EDIT_READY = "clip.edit_ready"
+    THUMBNAIL_READY = "clip.thumbnail_ready"
+    AI_METADATA_READY = "clip.ai_metadata_ready"
     CLIP_PUBLISHED = "clip.published"
+
+    # Viewer / donation events
+    DONATION_RECEIVED = "viewer.donation"
 
 
 # ─── Base Event ───────────────────────────────────────────────
