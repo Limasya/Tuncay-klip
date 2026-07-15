@@ -117,6 +117,10 @@
             <button class="btn btn-secondary" onclick="refreshStatus()">Durumu Guncelle</button>
             <button class="btn btn-secondary" onclick="testClip()">Test Klibi</button>
             <button class="btn btn-secondary" onclick="loadClips()">Klipleri Yukle</button>
+            <span style="border-left:1px solid #555;margin:0 5px"></span>
+            <input type="text" id="streamUrlInput" placeholder="Stream URL (kick.com/...)" style="padding:8px 12px;background:#0f0f23;border:1px solid #2a2a4a;border-radius:6px;color:#fff;font-size:0.85rem;width:250px">
+            <button class="btn btn-primary" onclick="startPipelineStream()">Pipeline Start</button>
+            <button class="btn btn-danger" onclick="stopPipelineStream()">Pipeline Stop</button>
         </div>
 
         <!-- Status Cards -->
@@ -176,6 +180,7 @@
                         <div class="signal-row"><span class="signal-label">viewer_delta</span><div class="signal-bar-bg"><div class="signal-bar-fill" id="bar_viewer_delta" style="width:0%;background:#42a5f5"></div></div><span class="signal-value" id="val_viewer_delta">0</span></div>
                         <div class="signal-row"><span class="signal-label">ocr_keyword</span><div class="signal-bar-bg"><div class="signal-bar-fill" id="bar_ocr_keyword" style="width:0%;background:#ffa726"></div></div><span class="signal-value" id="val_ocr_keyword">0</span></div>
                         <div class="signal-row"><span class="signal-label">speech_content</span><div class="signal-bar-bg"><div class="signal-bar-fill" id="bar_speech_content" style="width:0%;background:#ab47bc"></div></div><span class="signal-value" id="val_speech_content">0</span></div>
+                        <div class="signal-row"><span class="signal-label">donation</span><div class="signal-bar-bg"><div class="signal-bar-fill" id="bar_donation" style="width:0%;background:#ffd740"></div></div><span class="signal-value" id="val_donation">0</span></div>
                     </div>
                 </div>
                 <!-- Event Log -->
@@ -205,11 +210,84 @@
                         <div class="stat"><span class="stat-label">Bus Published</span><span class="stat-value" id="svcBusPub">0</span></div>
                         <div class="stat"><span class="stat-label">Bus Dispatched</span><span class="stat-value" id="svcBusDisp">0</span></div>
                     </div>
+                    <div style="margin-top:12px">
+                        <h3 style="margin-bottom:8px">Post-Clip Pipeline</h3>
+                        <div class="stat"><span class="stat-label">SRT Generated</span><span class="stat-value" id="svcSrtGen">0</span></div>
+                        <div class="stat"><span class="stat-label">Subtitles Burned</span><span class="stat-value" id="svcSubBurn">0</span></div>
+                        <div class="stat"><span class="stat-label">Exports Done</span><span class="stat-value" id="svcExportDone">0</span></div>
+                        <div class="stat"><span class="stat-label">Exports Failed</span><span class="stat-value" id="svcExportFail">0</span></div>
+                        <div class="stat"><span class="stat-label">Thumbnails</span><span class="stat-value" id="svcThumbs">0</span></div>
+                        <div class="stat"><span class="stat-label">Uploads</span><span class="stat-value" id="svcUploads">0</span></div>
+                        <div class="stat"><span class="stat-label">Transcriptions</span><span class="stat-value" id="svcTranscribe">0</span></div>
+                    </div>
                 </div>
             </div>
         </div>
 
-        <!-- Clips Section -->
+        <!-- Notification Webhooks Section -->
+        <h2 class="section-title">Webhook Notifications</h2>
+        <div class="grid">
+            <div class="card">
+                <h3>Notification Status</h3>
+                <div class="stat"><span class="stat-label">Webhooks</span><span class="stat-value" id="notifyCount">0</span></div>
+                <div class="stat"><span class="stat-label">Sent</span><span class="stat-value" id="notifySent">0</span></div>
+                <div class="stat"><span class="stat-label">Failed</span><span class="stat-value" id="notifyFailed">0</span></div>
+                <div id="webhookList" style="margin-top:10px"></div>
+            </div>
+            <div class="card">
+                <h3>Add Webhook</h3>
+                <label style="color:#888;font-size:0.85rem">URL</label>
+                <input type="text" id="whUrl" placeholder="https://discord.com/api/webhooks/..." style="width:100%;padding:8px 12px;background:#0f0f23;border:1px solid #2a2a4a;border-radius:6px;color:#fff;margin-bottom:8px">
+                <label style="color:#888;font-size:0.85rem">Type</label>
+                <select id="whType" style="width:100%;padding:8px 12px;background:#0f0f23;border:1px solid #2a2a4a;border-radius:6px;color:#fff;margin-bottom:8px">
+                    <option value="discord">Discord</option>
+                    <option value="telegram">Telegram</option>
+                    <option value="generic">Generic</option>
+                </select>
+                <label style="color:#888;font-size:0.85rem">Label</label>
+                <input type="text" id="whLabel" placeholder="my-webhook" style="width:100%;padding:8px 12px;background:#0f0f23;border:1px solid #2a2a4a;border-radius:6px;color:#fff;margin-bottom:8px">
+                <button class="btn btn-primary" onclick="addWebhook()" style="margin-top:5px">Add Webhook</button>
+                <button class="btn btn-secondary" onclick="refreshNotifications()" style="margin-top:5px">Refresh</button>
+            </div>
+        </div>
+
+        <!-- Analytics Section -->
+        <h2 class="section-title">Clip Analytics</h2>
+        <div class="grid">
+            <div class="card">
+                <h3>Overall Stats</h3>
+                <div class="stat"><span class="stat-label">Total Views</span><span class="stat-value" id="analyticsViews">0</span></div>
+                <div class="stat"><span class="stat-label">Total Likes</span><span class="stat-value" id="analyticsLikes">0</span></div>
+                <div class="stat"><span class="stat-label">Total Shares</span><span class="stat-value" id="analyticsShares">0</span></div>
+                <div class="stat"><span class="stat-label">Avg Engagement</span><span class="stat-value" id="analyticsEngagement">0%</span></div>
+                <div class="stat"><span class="stat-label">Snapshots</span><span class="stat-value" id="analyticsSnapshots">0</span></div>
+            </div>
+            <div class="card">
+                <h3>Top Performing Clips</h3>
+                <div id="topClipsList" style="max-height:200px;overflow-y:auto">
+                    <div style="color:#555;font-size:0.85rem;padding:20px 0;text-align:center">No analytics data yet</div>
+                </div>
+            </div>
+            <div class="card">
+                <h3>Record Analytics</h3>
+                <label style="color:#888;font-size:0.85rem">Clip ID</label>
+                <input type="number" id="anClipId" placeholder="1" style="width:100%;padding:8px 12px;background:#0f0f23;border:1px solid #2a2a4a;border-radius:6px;color:#fff;margin-bottom:8px">
+                <label style="color:#888;font-size:0.85rem">Platform</label>
+                <select id="anPlatform" style="width:100%;padding:8px 12px;background:#0f0f23;border:1px solid #2a2a4a;border-radius:6px;color:#fff;margin-bottom:8px">
+                    <option value="youtube">YouTube</option>
+                    <option value="tiktok">TikTok</option>
+                    <option value="instagram_reels">Instagram Reels</option>
+                </select>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
+                    <input type="number" id="anViews" placeholder="Views" style="padding:8px;background:#0f0f23;border:1px solid #2a2a4a;border-radius:6px;color:#fff">
+                    <input type="number" id="anLikes" placeholder="Likes" style="padding:8px;background:#0f0f23;border:1px solid #2a2a4a;border-radius:6px;color:#fff">
+                    <input type="number" id="anComments" placeholder="Comments" style="padding:8px;background:#0f0f23;border:1px solid #2a2a4a;border-radius:6px;color:#fff">
+                    <input type="number" id="anShares" placeholder="Shares" style="padding:8px;background:#0f0f23;border:1px solid #2a2a4a;border-radius:6px;color:#fff">
+                </div>
+                <button class="btn btn-primary" onclick="recordAnalytics()" style="margin-top:8px">Record Snapshot</button>
+                <button class="btn btn-secondary" onclick="refreshAnalytics()" style="margin-top:8px">Refresh</button>
+            </div>
+        </div>
         <h2 class="section-title">Son Klipler</h2>
         <div class="card" style="overflow-x: auto;">
             <table class="clips-table">
@@ -495,7 +573,7 @@
         }
 
         // ── Pipeline Functions ──
-        const SIGNALS = ['audio_spike','chat_velocity','emotion_intensity','emotion_change','pose_gesture','pose_motion','chat_sentiment','viewer_delta','ocr_keyword','speech_content'];
+        const SIGNALS = ['audio_spike','chat_velocity','emotion_intensity','emotion_change','pose_gesture','pose_motion','chat_sentiment','viewer_delta','ocr_keyword','speech_content','donation'];
 
         function getEventClass(type) {
             if (type.startsWith('chat')) return 'chat';
@@ -568,6 +646,20 @@
                 document.getElementById('svcClipsRejected').textContent = de.clips_rejected || 0;
                 document.getElementById('svcBusPub').textContent = eb.events_published || 0;
                 document.getElementById('svcBusDisp').textContent = eb.events_dispatched || 0;
+
+                // Post-clip service metrics
+                const sub = statusData.subtitle || {};
+                const ve = statusData.video_editor || {};
+                const th = statusData.thumbnail || {};
+                const up = statusData.uploader || {};
+                const tr = statusData.transcription || {};
+                document.getElementById('svcSrtGen').textContent = sub.srt_generated || 0;
+                document.getElementById('svcSubBurn').textContent = sub.burn_in_count || 0;
+                document.getElementById('svcExportDone').textContent = ve.exports_done || 0;
+                document.getElementById('svcExportFail').textContent = ve.exports_failed || 0;
+                document.getElementById('svcThumbs').textContent = th.generated || 0;
+                document.getElementById('svcUploads').textContent = up.uploaded || 0;
+                document.getElementById('svcTranscribe').textContent = tr.clips_transcribed || 0;
             } catch (e) { console.error('Pipeline refresh error:', e); }
         }
 
@@ -581,6 +673,24 @@
                 input.value = '';
                 setTimeout(refreshPipeline, 500);
             } catch (e) { showToast('Chat send failed', 'error'); }
+        }
+
+        async function startPipelineStream() {
+            const url = document.getElementById('streamUrlInput').value.trim();
+            if (!url) { showToast('Enter a stream URL', 'error'); return; }
+            try {
+                await apiCall('/api/pipeline/start', 'POST', { stream_url: url, target_fps: 2, buffer_seconds: 30 });
+                showToast('Pipeline starting...');
+                setTimeout(refreshPipeline, 2000);
+            } catch (e) { showToast('Pipeline start failed', 'error'); }
+        }
+
+        async function stopPipelineStream() {
+            try {
+                await apiCall('/api/pipeline/stop', 'POST');
+                showToast('Pipeline stopped');
+                setTimeout(refreshPipeline, 1000);
+            } catch (e) { showToast('Pipeline stop failed', 'error'); }
         }
 
         // ── WebSocket for real-time pipeline updates ──
@@ -652,10 +762,103 @@
         loadPreferences();
         loadClips();
         refreshPipeline();
+        refreshNotifications();
+        refreshAnalytics();
         connectWS();
         setInterval(refreshStatus, 10000);
         // Pipeline polling as fallback (less frequent since WS handles real-time)
         setInterval(refreshPipeline, 10000);
+
+        // ── Notification Functions ──
+        async function refreshNotifications() {
+            try {
+                const data = await apiCall('/api/pipeline/notifications');
+                document.getElementById('notifyCount').textContent = data.webhooks_count || 0;
+                document.getElementById('notifySent').textContent = data.notifications_sent || 0;
+                document.getElementById('notifyFailed').textContent = data.notifications_failed || 0;
+                const list = document.getElementById('webhookList');
+                const whs = data.webhooks || [];
+                if (whs.length === 0) {
+                    list.innerHTML = '<div style="color:#555;font-size:0.85rem;padding:10px 0">No webhooks configured</div>';
+                } else {
+                    list.innerHTML = whs.map(w => '<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid #2a2a4a">' +
+                        '<span style="color:#00d4ff;font-size:0.85rem">' + w.label + ' <span style="color:#888">(' + w.webhook_type + ')</span></span>' +
+                        '<span>' +
+                        '<button class="btn btn-secondary" style="padding:2px 8px;font-size:0.75rem" onclick="testWebhook(\'' + w.label + '\')">Test</button> ' +
+                        '<button class="btn btn-danger" style="padding:2px 8px;font-size:0.75rem" onclick="removeWebhook(\'' + w.label + '\')">Remove</button>' +
+                        '</span></div>').join('');
+                }
+            } catch (e) { console.error('Notification refresh error:', e); }
+        }
+
+        async function addWebhook() {
+            const url = document.getElementById('whUrl').value.trim();
+            const type = document.getElementById('whType').value;
+            const label = document.getElementById('whLabel').value.trim() || type + '-' + Date.now();
+            if (!url) { showToast('Enter a webhook URL', 'error'); return; }
+            try {
+                await apiCall('/api/pipeline/notifications/webhook', 'POST', { url, webhook_type: type, label });
+                showToast('Webhook added: ' + label);
+                document.getElementById('whUrl').value = '';
+                document.getElementById('whLabel').value = '';
+                refreshNotifications();
+            } catch (e) { showToast('Add webhook failed', 'error'); }
+        }
+
+        async function removeWebhook(label) {
+            try {
+                await apiCall('/api/pipeline/notifications/webhook/' + encodeURIComponent(label), 'DELETE');
+                showToast('Webhook removed: ' + label);
+                refreshNotifications();
+            } catch (e) { showToast('Remove webhook failed', 'error'); }
+        }
+
+        async function testWebhook(label) {
+            try {
+                await apiCall('/api/pipeline/notifications/test/' + encodeURIComponent(label), 'POST');
+                showToast('Test notification sent to: ' + label);
+            } catch (e) { showToast('Test notification failed', 'error'); }
+        }
+
+        // ── Analytics Functions ──
+        async function refreshAnalytics() {
+            try {
+                const data = await apiCall('/api/analytics/summary');
+                document.getElementById('analyticsViews').textContent = (data.total_views || 0).toLocaleString();
+                document.getElementById('analyticsLikes').textContent = (data.total_likes || 0).toLocaleString();
+                document.getElementById('analyticsShares').textContent = (data.total_shares || 0).toLocaleString();
+                document.getElementById('analyticsEngagement').textContent = (data.avg_engagement_rate || 0).toFixed(1) + '%';
+                document.getElementById('analyticsSnapshots').textContent = data.total_snapshots || 0;
+                const topEl = document.getElementById('topClipsList');
+                const tops = data.top_clips || [];
+                if (tops.length === 0) {
+                    topEl.innerHTML = '<div style="color:#555;font-size:0.85rem;padding:20px 0;text-align:center">No analytics data yet</div>';
+                } else {
+                    topEl.innerHTML = tops.slice(0, 5).map((c, i) =>
+                        '<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid #2a2a4a">' +
+                        '<span style="color:#fff;font-size:0.85rem">#' + (i+1) + ' Clip ' + c.clip_id + ' <span style="color:#888">(' + c.platform + ')</span></span>' +
+                        '<span style="color:#00d4ff;font-weight:600">' + (c.views || 0).toLocaleString() + ' views</span></div>'
+                    ).join('');
+                }
+            } catch (e) { console.error('Analytics refresh error:', e); }
+        }
+
+        async function recordAnalytics() {
+            const clipId = parseInt(document.getElementById('anClipId').value);
+            if (!clipId) { showToast('Enter a clip ID', 'error'); return; }
+            try {
+                await apiCall('/api/analytics/update', 'POST', {
+                    clip_id: clipId,
+                    platform: document.getElementById('anPlatform').value,
+                    views: parseInt(document.getElementById('anViews').value) || 0,
+                    likes: parseInt(document.getElementById('anLikes').value) || 0,
+                    comments: parseInt(document.getElementById('anComments').value) || 0,
+                    shares: parseInt(document.getElementById('anShares').value) || 0,
+                });
+                showToast('Analytics recorded for clip #' + clipId);
+                setTimeout(refreshAnalytics, 500);
+            } catch (e) { showToast('Analytics record failed', 'error'); }
+        }
     </script>
 </body>
 </html>

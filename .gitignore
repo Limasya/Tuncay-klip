@@ -6,35 +6,43 @@ __pycache__/
 *.egg-info/
 dist/
 build/
-.eggs/
+*.egg
 
-# Virtual environment
-venv/
-.env
+# Virtual environments
 .venv/
-
-# Data files
-data/clips/*
-data/buffer/*
-data/subtitles/*
-data/exports/*
-!data/**/.gitkeep
-
-# Models
-models/*.caffemodel
-models/*.onnx
-models/*.pt
-models/*.pth
+venv/
+env/
 
 # IDE
-.vscode/
 .idea/
+.vscode/
 *.swp
 *.swo
+
+# Environment
+.env
+
+# Data (generated at runtime)
+data/
+
+# Models (downloaded at runtime)
+models/
+
+# Logs
+data/logs/
 
 # OS
 .DS_Store
 Thumbs.db
 
-# Logs
-*.log
+# Celery
+celerybeat-schedule
+celerybeat.pid
+
+# Coverage
+htmlcov/
+.coverage
+coverage.xml
+
+# Pytest
+.pytest_cache/

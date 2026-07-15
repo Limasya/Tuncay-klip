@@ -3,6 +3,7 @@ Ana FastAPI uygulaması.
 Tüm router'ları birleştirir, CORS ve middleware ayarlarını yapar.
 """
 import logging
+import os
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
@@ -11,16 +12,19 @@ from fastapi.responses import HTMLResponse
 
 from api.routers import clips, system, preferences, edit
 from api.routers import pipeline as pipeline_router
+from api.routers import analytics as analytics_router
 from services.database import init_db
 from config import get_settings
 
 settings = get_settings()
 
-# Logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+# Structured logging
+from utils.logging_config import setup_logging
+setup_logging(
+    level=os.environ.get("LOG_LEVEL", "INFO"),
+    json_format=os.environ.get("LOG_FORMAT", "") == "json",
 )
+
 logger = logging.getLogger(__name__)
 
 
@@ -30,7 +34,15 @@ async def lifespan(app: FastAPI):
     logger.info("Veritabanı başlatılıyor...")
     await init_db()
     logger.info("Klip Yakalama Sistemi hazır!")
+
+    # Ensure data directories exist
+    for d in ["data/clips", "data/buffer", "data/subtitles",
+              "data/exports", "data/thumbnails", "data/uploads",
+              "static", "templates"]:
+        os.makedirs(d, exist_ok=True)
+
     yield
+<<<<<<< Updated upstream
     # Cleanup — stop both orchestrators if running
     try:
         from services.orchestrator import orchestrator as svc_orch
@@ -44,6 +56,17 @@ async def lifespan(app: FastAPI):
             await pipe_orch.stop()
     except Exception:
         pass
+=======
+
+    # Graceful shutdown
+    logger.info("Shutting down pipeline...")
+    from microservices.orchestrator import orchestrator as pipe_orch
+    if pipe_orch._is_running:
+        try:
+            await pipe_orch.stop()
+        except Exception as e:
+            logger.error("Pipeline shutdown error: %s", e)
+>>>>>>> Stashed changes
     logger.info("Sistem kapatıldı.")
 
 
@@ -66,6 +89,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Rate Limiting (optional — enabled via env)
+if os.environ.get("RATE_LIMIT_ENABLED", "false").lower() in ("true", "1", "yes"):
+    from utils.rate_limiter import RateLimitMiddleware, get_rate_limiter
+    app.add_middleware(RateLimitMiddleware, limiter=get_rate_limiter())
+    logger.info("Rate limiting enabled: %d req/%ds", get_rate_limiter().max_requests, get_rate_limiter().window_seconds)
+
 # Static files
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
@@ -75,6 +104,7 @@ app.include_router(system.router)
 app.include_router(preferences.router)
 app.include_router(pipeline_router.router)
 app.include_router(edit.router)
+app.include_router(analytics_router.router)
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -89,7 +119,25 @@ async def dashboard():
 
 @app.get("/health")
 async def health_check():
-    return {"status": "ok", "version": "1.0.0"}
+    return {
+        "status": "ok",
+        "version": "1.0.0",
+        "phase": 4,
+        "services": "15 microservices + 6 celery tasks",
+    }
+
+
+@app.get("/ready")
+async def readiness_check():
+    """Kubernetes-style readiness probe."""
+    from microservices.orchestrator import orchestrator as pipe_orch
+    checks = {
+        "database": True,
+        "event_bus": pipe_orch.event_bus is not None if pipe_orch.event_bus else True,
+        "pipeline_running": pipe_orch._is_running,
+    }
+    ready = all(checks.values())
+    return {"ready": ready, "checks": checks}
 
 
 if __name__ == "__main__":

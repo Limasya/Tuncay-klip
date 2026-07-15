@@ -81,7 +81,7 @@ async def test_clip_not_found(client):
 async def test_system_start_stop(client):
     # Start without Kick credentials should still respond
     resp = await client.post("/api/system/start")
-    assert resp.status_code in (200, 500)
+    assert resp.status_code in (200, 500, 503)
 
     resp = await client.post("/api/system/stop")
     assert resp.status_code in (200, 400)

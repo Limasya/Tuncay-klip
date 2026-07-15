@@ -51,6 +51,7 @@ from microservices.video_editor.service import VideoEditorMicroservice
 from microservices.ai_generator.service import AIGeneratorMicroservice
 from microservices.uploader.service import UploaderMicroservice
 from microservices.thumbnail.service import ThumbnailMicroservice
+from microservices.notification.service import NotificationService
 
 logger = logging.getLogger("orchestrator")
 
@@ -84,6 +85,7 @@ class PipelineOrchestrator:
         self.ai_generator: Optional[AIGeneratorMicroservice] = None
         self.uploader: Optional[UploaderMicroservice] = None
         self.thumbnail: Optional[ThumbnailMicroservice] = None
+        self.notification_service: Optional[NotificationService] = None
 
         self._is_running = False
         self._start_time: Optional[datetime] = None
@@ -122,6 +124,10 @@ class PipelineOrchestrator:
         self.ai_generator = AIGeneratorMicroservice(event_bus=self.event_bus)
         self.uploader = UploaderMicroservice(event_bus=self.event_bus)
         self.thumbnail = ThumbnailMicroservice(event_bus=self.event_bus)
+
+        # Notification service (webhooks)
+        self.notification_service = NotificationService(event_bus=self.event_bus)
+        self.notification_service.auto_configure_from_settings()
 
         logger.info("All microservices initialized")
 
@@ -189,13 +195,22 @@ class PipelineOrchestrator:
         self._is_running = False
 
         if self.chat_source:
-            await self.chat_source.stop()
+            try:
+                await self.chat_source.stop()
+            except Exception as e:
+                logger.error("Chat source stop error: %s", e)
 
         if self.stream_capture:
-            await self.stream_capture.stop()
+            try:
+                await self.stream_capture.stop()
+            except Exception as e:
+                logger.error("Stream capture stop error: %s", e)
 
         if self.event_bus:
-            await self.event_bus.stop()
+            try:
+                await self.event_bus.stop()
+            except Exception as e:
+                logger.error("Event bus stop error: %s", e)
 
         logger.info("Pipeline stopped")
 
@@ -213,12 +228,15 @@ class PipelineOrchestrator:
             return
         self._last_analysis_time = now
 
-        # Run video analysis (lazy init)
-        await self._ensure_video_analysis()
-        if self.video_analysis:
-            result = await self.video_analysis.analyze_frame(
-                frame.image, frame.frame_id
-            )
+        try:
+            # Run video analysis (lazy init)
+            await self._ensure_video_analysis()
+            if self.video_analysis:
+                result = await self.video_analysis.analyze_frame(
+                    frame.image, frame.frame_id
+                )
+        except Exception as e:
+            logger.error("Frame analysis error (non-fatal): %s", e)
 
     async def _on_new_audio(self, samples: np.ndarray, stream_time: float):
         """
@@ -226,8 +244,11 @@ class PipelineOrchestrator:
 
         Real audio replaces the synthetic random-noise path.
         """
-        if self.audio_analysis:
-            await self.audio_analysis.analyze_chunk(samples)
+        try:
+            if self.audio_analysis:
+                await self.audio_analysis.analyze_chunk(samples)
+        except Exception as e:
+            logger.error("Audio analysis error (non-fatal): %s", e)
 
     async def _on_clip_created(self, event: SystemEvent):
         """Handle clip creation events — log + save to DB."""
@@ -306,6 +327,8 @@ class PipelineOrchestrator:
             status["uploader"] = self.uploader.get_status()
         if self.thumbnail:
             status["thumbnail"] = self.thumbnail.get_status()
+        if self.notification_service:
+            status["notification"] = self.notification_service.get_status()
 
         return status
 

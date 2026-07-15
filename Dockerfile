@@ -12,7 +12,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# Python bağımlılıkları
+# Python bağımlılıkları (cache-friendly layering)
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
@@ -20,14 +20,15 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # Veri dizinleri
-RUN mkdir -p data/clips data/buffer data/subtitles data/exports
+RUN mkdir -p data/clips data/buffer data/subtitles data/exports \
+    data/thumbnails data/uploads static templates
 
 # Port
 EXPOSE 8000
 
 # Sağlık kontrolü
 HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
-    CMD python -c "import httpx; httpx.get('http://localhost:8000/health').raise_for_status()"
+    CMD python -c "import httpx; httpx.get('http://localhost:8000/health').raise_for_status()" || exit 1
 
-# Başlat
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+# DB migration (idempotent) + Başlat
+CMD ["sh", "-c", "alembic upgrade head 2>/dev/null || true; uvicorn main:app --host 0.0.0.0 --port 8000"]

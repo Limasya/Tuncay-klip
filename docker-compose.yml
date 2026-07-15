@@ -11,7 +11,6 @@ services:
       - .env
     volumes:
       - klip-data:/app/data
-      - klip-models:/app/models
     depends_on:
       redis:
         condition: service_healthy
@@ -70,12 +69,11 @@ services:
   worker:
     build: .
     container_name: klip-worker
-    command: celery -A main worker --loglevel=info --concurrency=2
+    command: celery -A tasks.celery_app worker --loglevel=info --concurrency=2
     env_file:
       - .env
     volumes:
       - klip-data:/app/data
-      - klip-models:/app/models
     depends_on:
       redis:
         condition: service_healthy
@@ -92,7 +90,6 @@ services:
 
 volumes:
   klip-data:
-  klip-models:
   redis-data:
   postgres-data:
 

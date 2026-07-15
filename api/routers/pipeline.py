@@ -42,6 +42,34 @@ class ChatMessageRequest(BaseModel):
     user: str = ""
 
 
+class ExportRequest(BaseModel):
+    clip_path: str
+    platforms: list[str] = ["youtube", "tiktok"]
+
+
+class WebhookAddRequest(BaseModel):
+    url: str
+    webhook_type: str = "generic"
+    secret: str = ""
+    events: list[str] = ["clip.created"]
+    label: str = ""
+    enabled: bool = True
+
+
+class UploadRequest(BaseModel):
+    clip_path: str
+    platform: str = "youtube"
+    title: str = ""
+    description: str = ""
+    tags: list[str] = []
+
+
+class SubtitleRequest(BaseModel):
+    clip_path: str
+    language: str = "tr"
+    burn_in: bool = False
+
+
 @router.post("/start")
 async def start_pipeline(request: StartStreamRequest):
     """Start the event-driven pipeline with a stream URL."""
@@ -306,6 +334,107 @@ async def upload_video(
     return results
 
 
+<<<<<<< Updated upstream
+=======
+# ── Post-Clip Pipeline Endpoints ──────────────────────────
+
+@router.post("/export")
+async def export_clip(request: ExportRequest):
+    """Export a clip to multiple platform aspect ratios."""
+    if not orchestrator.event_bus:
+        await orchestrator.initialize()
+
+    if not orchestrator.video_editor:
+        raise HTTPException(503, "Video editor not available")
+
+    from services.video_editor import video_editor
+    import os
+    from pathlib import Path
+
+    if not os.path.exists(request.clip_path):
+        raise HTTPException(404, "Clip file not found")
+
+    results = {}
+    for platform in request.platforms:
+        from microservices.video_editor.service import DEFAULT_PLATFORM_PROFILES
+        resolution_key = DEFAULT_PLATFORM_PROFILES.get(platform, "720p")
+        base = Path(request.clip_path).stem
+        out_path = f"data/exports/{base}_{platform}_{resolution_key}.mp4"
+        result = await video_editor.export_clip(
+            input_path=request.clip_path,
+            resolution=resolution_key,
+            output_format="mp4",
+            output_path=out_path,
+        )
+        results[platform] = result or "failed"
+
+    return {"clip_path": request.clip_path, "exports": results}
+
+
+@router.post("/generate-subtitles")
+async def generate_subtitles(request: SubtitleRequest):
+    """Generate subtitles for a clip via Whisper."""
+    if not orchestrator.event_bus:
+        await orchestrator.initialize()
+
+    import os
+    if not os.path.exists(request.clip_path):
+        raise HTTPException(404, "Clip file not found")
+
+    from services.subtitle_service import subtitle_service
+    result = await subtitle_service.process_clip_subtitles(
+        video_path=request.clip_path,
+        language=request.language,
+        burn_in=request.burn_in,
+    )
+    return result
+
+
+@router.post("/generate-metadata")
+async def generate_metadata(
+    clip_path: str = "",
+    category: str = "exciting",
+    platform: str = "youtube",
+):
+    """Generate AI title, description, and hashtags for a clip."""
+    if not orchestrator.event_bus:
+        await orchestrator.initialize()
+
+    from src.ai_generator import ai_title_generator
+    metadata = ai_title_generator.generate_full_metadata(
+        emotion=category,
+        category=category,
+        streamer_name="Tuncay",
+        platform=platform,
+    )
+    return metadata
+
+
+@router.post("/upload-clip")
+async def upload_clip(request: UploadRequest):
+    """Manually upload a clip to a social platform."""
+    if not orchestrator.event_bus:
+        await orchestrator.initialize()
+
+    if not orchestrator.uploader:
+        raise HTTPException(503, "Uploader not available")
+
+    result = await orchestrator.uploader.manual_upload(
+        clip_path=request.clip_path,
+        platform=request.platform,
+        title=request.title,
+        description=request.description,
+        tags=request.tags,
+    )
+
+    if result:
+        return result
+    raise HTTPException(500, "Upload failed")
+
+
+# ── DB Integration: Save pipeline clips ─────────────────────
+
+>>>>>>> Stashed changes
 async def save_pipeline_clip_to_db(clip_data: dict):
     """Save a pipeline-generated clip to the database."""
     try:
@@ -340,4 +469,68 @@ async def save_pipeline_clip_to_db(clip_data: dict):
             await session.commit()
             logger.info("Clip saved to DB: %s - %s", clip.id, cat)
     except Exception as e:
+<<<<<<< Updated upstream
         logger.error("Failed to save clip to DB: %s", e)
+=======
+        logger.error(f"Failed to save clip to DB: {e}")
+
+
+# ── Notification Endpoints ────────────────────────────────
+
+@router.get("/notifications")
+async def get_notifications():
+    """Get notification service status and webhook list."""
+    svc = orchestrator.notification_service
+    if svc is None:
+        return {"status": "not_configured", "webhooks": []}
+    return svc.get_status()
+
+
+@router.post("/notifications/webhook")
+async def add_webhook(request: WebhookAddRequest):
+    """Add a new webhook endpoint."""
+    from microservices.notification.service import (
+        NotificationService, WebhookConfig, WebhookType,
+    )
+
+    svc = orchestrator.notification_service
+    if svc is None:
+        svc = NotificationService(event_bus=orchestrator.event_bus)
+        orchestrator.notification_service = svc
+
+    wt_map = {"discord": WebhookType.DISCORD, "telegram": WebhookType.TELEGRAM, "generic": WebhookType.GENERIC}
+    wh = WebhookConfig(
+        url=request.url,
+        webhook_type=wt_map.get(request.webhook_type, WebhookType.GENERIC),
+        secret=request.secret,
+        enabled=request.enabled,
+        events=request.events,
+        label=request.label,
+    )
+    svc.add_webhook(wh)
+    return {"status": "added", "label": wh.label, "type": wh.webhook_type.value}
+
+
+@router.delete("/notifications/webhook/{label}")
+async def remove_webhook(label: str):
+    """Remove a webhook by label."""
+    svc = orchestrator.notification_service
+    if svc is None:
+        raise HTTPException(404, "No notification service configured")
+    removed = svc.remove_webhook(label)
+    if not removed:
+        raise HTTPException(404, f"Webhook '{label}' not found")
+    return {"status": "removed", "label": label}
+
+
+@router.post("/notifications/test/{label}")
+async def test_webhook(label: str):
+    """Send a test notification to a specific webhook."""
+    svc = orchestrator.notification_service
+    if svc is None:
+        raise HTTPException(404, "No notification service configured")
+    sent = await svc.send_test(label)
+    if not sent:
+        raise HTTPException(404, f"Webhook '{label}' not found")
+    return {"status": "test_sent", "label": label}
+>>>>>>> Stashed changes

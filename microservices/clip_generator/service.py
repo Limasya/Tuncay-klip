@@ -132,19 +132,51 @@ class ClipGeneratorService:
         return 10.0  # Default: 5s pre + 5s post
 
     def _categorize(self, candidate_data: dict) -> str:
-        """Categorize clip based on trigger signals."""
-        signals = candidate_data.get("trigger_signals", [])
+        """Categorize clip based on trigger signals and score.
 
+        Priority (highest first):
+        1. donation + chat_velocity → epic_moment
+        2. audio_spike + emotion_intensity → exciting
+        3. donation → donation
+        4. pose_gesture → celebration
+        5. chat_velocity → hype
+        6. chat_sentiment → funny
+        7. emotion_intensity → emotional
+        8. default → highlight
+        """
+        signals = set(candidate_data.get("trigger_signals", []))
+        score = candidate_data.get("highlight_score", {}).get("composite_score", 0.0)
+
+        # Multi-signal combos
+        if "donation" in signals and "chat_velocity" in signals:
+            return "epic_moment"
         if "audio_spike" in signals and "emotion_intensity" in signals:
             return "exciting"
-        elif "chat_velocity" in signals:
+        if "audio_spike" in signals and "chat_velocity" in signals:
             return "hype"
-        elif "pose_gesture" in signals:
+        if "pose_gesture" in signals and "emotion_intensity" in signals:
             return "celebration"
-        elif "emotion_intensity" in signals:
-            return "emotional"
-        elif "chat_sentiment" in signals:
+
+        # Single-signal categories
+        if "donation" in signals:
+            return "donation"
+        if "pose_gesture" in signals:
+            return "celebration"
+        if "chat_velocity" in signals:
+            return "hype"
+        if "chat_sentiment" in signals:
             return "funny"
+        if "emotion_intensity" in signals:
+            return "emotional"
+        if "audio_spike" in signals:
+            return "loud_moment"
+
+        # Score-based fallback
+        if score >= 0.9:
+            return "epic_moment"
+        if score >= 0.7:
+            return "exciting"
+
         return "highlight"
 
     def get_status(self) -> dict:

@@ -58,6 +58,14 @@ class Settings(BaseSettings):
     host: str = "0.0.0.0"
     port: int = 8000
 
+    # Webhooks / Notifications
+    discord_webhook_url: str = ""
+    telegram_bot_token: str = ""
+    telegram_chat_id: str = ""
+    generic_webhook_url: str = ""
+    webhook_secret: str = ""
+    webhook_rate_limit: int = 30
+
 
 @lru_cache()
 def get_settings() -> Settings:

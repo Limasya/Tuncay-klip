@@ -132,10 +132,16 @@ class DecisionEngineService:
         evidence_count = sum(
             1 for v in score.breakdown.values() if v > 0.2
         )
-        if evidence_count < self.min_evidence_signals:
+        # Combo fast-track: 4+ active signals = relax evidence requirement
+        required_evidence = (
+            max(1, self.min_evidence_signals - 1)
+            if score.active_signals >= 4
+            else self.min_evidence_signals
+        )
+        if evidence_count < required_evidence:
             return DecisionResult(
                 decision="REJECT",
-                reason=f"Only {evidence_count} evidence signals (need {self.min_evidence_signals})",
+                reason=f"Only {evidence_count} evidence signals (need {required_evidence})",
                 score=score,
             )
 

@@ -176,6 +176,45 @@ class UserPreferences(Base):
     broadcaster = relationship("Broadcaster", back_populates="preferences")
 
 
+class ClipExport(Base):
+    """Track exported clips per platform."""
+    __tablename__ = "clip_exports"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    clip_id = Column(Integer, ForeignKey("clips.id"), nullable=False)
+    platform = Column(String(50), nullable=False)  # youtube, tiktok, etc.
+    export_path = Column(String(512))
+    resolution = Column(String(20))  # 16:9, 9:16, etc.
+    upload_url = Column(String(512))
+    upload_video_id = Column(String(100))
+    upload_status = Column(String(20), default="pending")  # pending, uploaded, failed
+    title = Column(String(255))
+    description = Column(Text)
+    hashtags = Column(JSON, default=list)
+
+    created_at = Column(DateTime, server_default=func.now())
+
+    clip = relationship("Clip")
+
+
+class ClipMetadata(Base):
+    """AI-generated metadata for clips."""
+    __tablename__ = "clip_metadata"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    clip_id = Column(Integer, ForeignKey("clips.id"), nullable=False)
+    title = Column(String(255))
+    description = Column(Text)
+    hashtags = Column(JSON, default=list)
+    emotion = Column(String(50))
+    category = Column(String(50))
+    highlight_score = Column(Float)
+
+    created_at = Column(DateTime, server_default=func.now())
+
+    clip = relationship("Clip")
+
+
 class ChatMessage(Base):
     __tablename__ = "chat_messages"
 
@@ -189,3 +228,51 @@ class ChatMessage(Base):
     stream_session_id = Column(String)
 
     created_at = Column(DateTime, server_default=func.now())
+
+
+class ClipAnalytics(Base):
+    """Track clip performance metrics over time (views, likes, shares)."""
+    __tablename__ = "clip_analytics"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    clip_id = Column(Integer, ForeignKey("clips.id"), nullable=False)
+    platform = Column(String(50), nullable=False)
+
+    views = Column(Integer, default=0)
+    likes = Column(Integer, default=0)
+    dislikes = Column(Integer, default=0)
+    comments = Column(Integer, default=0)
+    shares = Column(Integer, default=0)
+    impressions = Column(Integer, default=0)
+    watch_time_seconds = Column(Float, default=0.0)
+    avg_watch_percentage = Column(Float, default=0.0)
+
+    # Engagement rate = (likes + comments + shares) / views * 100
+    engagement_rate = Column(Float, default=0.0)
+
+    snapshot_at = Column(DateTime, server_default=func.now())
+    created_at = Column(DateTime, server_default=func.now())
+
+    clip = relationship("Clip")
+
+    def compute_engagement_rate(self) -> float:
+        if self.views and self.views > 0:
+            return ((self.likes + self.comments + self.shares) / self.views) * 100
+        return 0.0
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "clip_id": self.clip_id,
+            "platform": self.platform,
+            "views": self.views,
+            "likes": self.likes,
+            "dislikes": self.dislikes,
+            "comments": self.comments,
+            "shares": self.shares,
+            "impressions": self.impressions,
+            "watch_time_seconds": self.watch_time_seconds,
+            "avg_watch_percentage": self.avg_watch_percentage,
+            "engagement_rate": self.engagement_rate,
+            "snapshot_at": self.snapshot_at.isoformat() if self.snapshot_at else None,
+        }

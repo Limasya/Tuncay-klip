@@ -99,11 +99,31 @@ class ScoringEngine:
                 active_count += 1
 
         return HighlightScore(
-            composite_score=round(composite, 4),
+            composite_score=round(self._apply_combo_boost(composite, active_count), 4),
             breakdown=breakdown,
             timestamp=now,
             active_signals=active_count,
         )
+
+    @staticmethod
+    def _apply_combo_boost(score: float, active_signals: int) -> float:
+        """
+        When 3+ signals fire simultaneously, apply a combo multiplier.
+        This captures moments where audio + chat + emotion all spike at once
+        — typically the best clips.
+
+        2 active: no boost
+        3 active: 1.15x
+        4 active: 1.30x
+        5+ active: 1.50x (capped)
+        """
+        if active_signals >= 5:
+            return min(score * 1.50, 1.0)
+        elif active_signals >= 4:
+            return min(score * 1.30, 1.0)
+        elif active_signals >= 3:
+            return min(score * 1.15, 1.0)
+        return score
 
 
 class StreamStateMachine:
