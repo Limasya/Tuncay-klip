@@ -7,7 +7,9 @@ Scope guard'lar FastAPI dependency olarak kullanılır.
 from __future__ import annotations
 
 from enum import Enum
-from typing import Callable, Iterable
+from typing import Any, Callable, Iterable
+
+from fastapi import Depends, HTTPException
 
 
 class Role(str, Enum):
@@ -104,12 +106,10 @@ def require_scope(required: str | Scope) -> Callable:
     veya principal'a ihtiyaç varsa:
         def handler(principal = Depends(require_scope("clips:read"))): ...
     """
-    from fastapi import Depends, HTTPException
-    from platform_eng.auth.jwt_auth import get_current_principal, Principal
-
+    from platform_eng.auth.jwt_auth import get_current_principal
     required_v = _coerce_scope(required)
 
-    def _guard(principal: "Principal" = Depends(get_current_principal)) -> "Principal":
+    def _guard(principal: Any = Depends(get_current_principal)):
         if not has_scope(principal.scopes, required_v):
             raise HTTPException(status_code=403, detail=f"missing scope: {required_v}")
         return principal
@@ -119,12 +119,10 @@ def require_scope(required: str | Scope) -> Callable:
 
 def require_any_scope(*required: str | Scope) -> Callable:
     """Verilen scope'lardan en az birine sahip olmayı şart koşar."""
-    from fastapi import Depends, HTTPException
-    from platform_eng.auth.jwt_auth import get_current_principal, Principal
-
+    from platform_eng.auth.jwt_auth import get_current_principal
     needed = {_coerce_scope(s) for s in required}
 
-    def _guard(principal: "Principal" = Depends(get_current_principal)) -> "Principal":
+    def _guard(principal: Any = Depends(get_current_principal)):
         if not (needed & set(principal.scopes)):
             raise HTTPException(
                 status_code=403,

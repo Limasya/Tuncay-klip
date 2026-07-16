@@ -7,26 +7,41 @@ Works with or without python-jose installed:
 
 This allows the app to start and function in development environments
 where jose is not installed, while enforcing real auth in production.
+
+Set AUTH_DISABLED=1 (or true/yes) to force dev mode even when auth libs
+are present (useful for tests).
 """
 import logging
+import os
 from typing import Any, Callable, Optional
 
 from fastapi import Depends, HTTPException, Request, status
 
 logger = logging.getLogger(__name__)
 
+_AUTH_DISABLED = os.environ.get("AUTH_DISABLED", "false").lower() in ("true", "1", "yes")
 _AUTH_AVAILABLE = False
 _dev_principal = None
+
+_real_get_current_principal: Any = None
+_real_require_scope: Any = None
+_real_require_any_scope: Any = None
 
 try:
     from platform_eng.auth import (
         Principal,
         Scope,
-        get_current_principal,
+        get_current_principal as _real_get_current_principal,
         require_scope as _real_require_scope,
         require_any_scope as _real_require_any_scope,
     )
-    _AUTH_AVAILABLE = True
+    if _AUTH_DISABLED:
+        logger.warning(
+            "AUTH_DISABLED=1 — platform_eng.auth found but auth enforcement disabled. "
+            "All API endpoints will run in UNAUTHENTICATED dev mode."
+        )
+    else:
+        _AUTH_AVAILABLE = True
 except ImportError:
     logger.warning(
         "platform_eng.auth not available (python-jose missing). "
@@ -48,20 +63,6 @@ except ImportError:
             self.auth_type = "dev"
             self.claims: dict[str, Any] = {}
 
-    _dev_principal = Principal()
-
-    def get_current_principal(  # type: ignore[no-redef]
-        request: Request,
-    ) -> Principal:
-        """Dev mode: return a dev principal with all scopes."""
-        return _dev_principal
-
-    def _real_require_scope(scope: str) -> Callable:  # type: ignore[no-redef]
-        pass
-
-    def _real_require_any_scope(*scopes: str) -> Callable:  # type: ignore[no-redef]
-        pass
-
     class Scope:  # type: ignore[no-redef]
         CLIPS_READ = "clips:read"
         CLIPS_WRITE = "clips:write"
@@ -72,14 +73,37 @@ except ImportError:
         BILLING_MANAGE = "billing:manage"
         INTERNAL_EVENTS = "internal:events"
 
+    def _real_require_scope(scope: str) -> Callable:  # type: ignore[no-redef]
+        pass
 
-def require_scope(scope: str) -> Callable[..., Principal]:
-    """FastAPI dependency factory that requires a specific scope.
+    def _real_require_any_scope(*scopes: str) -> Callable:  # type: ignore[no-redef]
+        pass
 
-    In dev mode (jose not installed), always passes.
-    In production, enforces the scope via platform_eng.auth.
-    """
-    if _AUTH_AVAILABLE:
+
+_dev_principal = Principal(subject="dev-user", roles=("admin",), scopes=frozenset({
+    "clips:read", "clips:write", "clips:delete",
+    "streams:manage", "analytics:read",
+    "feature-flags", "billing:manage", "internal:events",
+}), auth_type="dev")
+
+
+def _dev_get_current_principal(
+    request: Request = None,
+    x_api_key: Optional[str] = None,
+) -> Principal:
+    """Dev mode: always returns the dev principal with all scopes."""
+    return _dev_principal
+
+
+if _AUTH_AVAILABLE and not _AUTH_DISABLED:
+    get_current_principal = _real_get_current_principal
+else:
+    get_current_principal = _dev_get_current_principal
+
+
+def require_scope(scope: str) -> Callable:
+    """FastAPI dependency factory that requires a specific scope."""
+    if _AUTH_AVAILABLE and not _AUTH_DISABLED:
         return _real_require_scope(scope)
 
     def _dev_guard() -> Principal:
@@ -88,9 +112,9 @@ def require_scope(scope: str) -> Callable[..., Principal]:
     return _dev_guard
 
 
-def require_any_scope(*scopes: str) -> Callable[..., Principal]:
+def require_any_scope(*scopes: str) -> Callable:
     """FastAPI dependency factory that requires at least one of the scopes."""
-    if _AUTH_AVAILABLE:
+    if _AUTH_AVAILABLE and not _AUTH_DISABLED:
         return _real_require_any_scope(*scopes)
 
     def _dev_guard_any() -> Principal:
@@ -101,4 +125,4 @@ def require_any_scope(*scopes: str) -> Callable[..., Principal]:
 
 def is_auth_enabled() -> bool:
     """Check if real authentication is available."""
-    return _AUTH_AVAILABLE
+    return _AUTH_AVAILABLE and not _AUTH_DISABLED
