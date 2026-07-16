@@ -1,0 +1,50 @@
+# Prometheus recording & alert rules (IP_PART6 36.3)
+# platform_eng.observability.metrics içindeki metriklerle hizalıdır.
+groups:
+  - name: platform-slo
+    interval: 30s
+    rules:
+      - record: job:ip_request_latency:p95
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(ip_request_duration_seconds_bucket[5m])) by (le, service))
+
+      - alert: HighErrorRate
+        expr: |
+          sum(rate(ip_requests_total{status=~"5.."}[5m])) by (service)
+          / sum(rate(ip_requests_total[5m])) by (service) > 0.02
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: "{{ $labels.service }} error rate > 2%"
+          runbook: "https://runbooks.ip.io/high-error-rate"
+
+      - alert: KafkaConsumerLagHigh
+        expr: ip_kafka_consumer_lag > 5000
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "Consumer lag high on {{ $labels.topic }}"
+
+      - alert: GPUSaturated
+        expr: ip_gpu_utilization_ratio > 0.95
+        for: 15m
+        labels: { severity: warning }
+        annotations:
+          summary: "GPU {{ $labels.gpu_id }} saturated — consider scale-up"
+
+  - name: platform-burn-rate
+    interval: 30s
+    rules:
+      # Multi-window burn-rate alerting (IP_PART6 36.4)
+      - alert: ErrorBudgetBurnFast
+        expr: |
+          (sum(rate(ip_requests_total{status=~"5.."}[1h])) by (service)
+           / sum(rate(ip_requests_total[1h])) by (service)) > (14.4 * 0.001)
+          and
+          (sum(rate(ip_requests_total{status=~"5.."}[5m])) by (service)
+           / sum(rate(ip_requests_total[5m])) by (service)) > (14.4 * 0.001)
+        for: 2m
+        labels: { severity: critical }
+        annotations:
+          summary: "{{ $labels.service }} fast error-budget burn (14.4x) — page now"

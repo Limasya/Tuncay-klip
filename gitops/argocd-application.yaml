@@ -1,0 +1,23 @@
+# ArgoCD Application — auto-sync + self-heal (IP_PART6 40.3)
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: platform-api
+  namespace: argocd
+spec:
+  project: intelligence-platform
+  source:
+    repoURL: https://github.com/ip/config-repo
+    path: apps/platform-api
+    targetRevision: main
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: default
+  syncPolicy:
+    automated:
+      prune: true          # Git'ten silinen kaynakları kaldır
+      selfHeal: true       # manuel drift'i geri al
+    syncOptions: ["CreateNamespace=true"]
+    retry:
+      limit: 5
+      backoff: { duration: 10s, factor: 2, maxDuration: 3m }

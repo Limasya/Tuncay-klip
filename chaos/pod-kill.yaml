@@ -1,0 +1,16 @@
+# Chaos Mesh — pod-kill deneyi (IP_PART6 38.3)
+# UYARI: yalnızca staging / game-day'lerde çalıştır (38.4 blast radius kontrolü).
+apiVersion: chaos-mesh.org/v1alpha1
+kind: PodChaos
+metadata:
+  name: kill-decision-engine
+  namespace: default
+spec:
+  action: pod-kill
+  mode: one                       # tam olarak bir pod'u öldür
+  selector:
+    namespaces: ["default"]
+    labelSelectors:
+      app: decision-engine
+  scheduler:
+    cron: "@every 30m"            # yalnızca staging / game-day

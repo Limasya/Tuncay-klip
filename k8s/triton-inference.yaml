@@ -1,0 +1,56 @@
+# Triton Inference Server — GPU node pool + scheduling (IP_PART6 39.4)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: triton-inference
+  labels: { app: triton-inference }
+spec:
+  replicas: 2
+  selector:
+    matchLabels: { app: triton-inference }
+  template:
+    metadata:
+      labels: { app: triton-inference }
+    spec:
+      # GPU node pool'a zamanla; GPU taint'ini tolere et
+      nodeSelector:
+        cloud.google.com/gke-accelerator: nvidia-tesla-t4
+      tolerations:
+        - key: nvidia.com/gpu
+          operator: Exists
+          effect: NoSchedule
+      containers:
+        - name: triton
+          image: nvcr.io/nvidia/tritonserver:24.01-py3
+          args: ["tritonserver", "--model-repository=/models"]
+          ports:
+            - { name: http, containerPort: 8000 }
+            - { name: grpc, containerPort: 8001 }
+            - { name: metrics, containerPort: 8002 }
+          resources:
+            limits:
+              nvidia.com/gpu: 1        # 1 GPU iste
+              memory: 16Gi
+            requests:
+              cpu: "4"
+              memory: 12Gi
+          readinessProbe:
+            httpGet: { path: /v2/health/ready, port: 8000 }
+            initialDelaySeconds: 20
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /v2/health/live, port: 8000 }
+            initialDelaySeconds: 30
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: triton-inference
+  labels: { app: triton-inference }
+spec:
+  selector: { app: triton-inference }
+  ports:
+    - { name: http, port: 8000, targetPort: 8000 }
+    - { name: grpc, port: 8001, targetPort: 8001 }
+    - { name: metrics, port: 8002, targetPort: 8002 }

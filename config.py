@@ -91,6 +91,18 @@ class Settings(BaseSettings):
     webhook_secret: str = ""
     webhook_rate_limit: int = 30
 
+    # Observability (IP_PART6 — Platform Engineering)
+    service_name: str = "platform-api"
+    otel_enabled: bool = False
+    otel_exporter_otlp_endpoint: str = "http://otel-collector:4317"
+    otel_sample_ratio: float = 0.1
+    deployment_environment: str = "production"
+    prometheus_metrics_enabled: bool = True
+
+    # Feature Flags (IP_PART6 Bölüm 37)
+    feature_flags_file: str = ""  # opsiyonel JSON dosya yolu
+
+
 
 @lru_cache()
 def get_settings() -> Settings:

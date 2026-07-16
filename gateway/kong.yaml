@@ -1,0 +1,78 @@
+# Kong API Gateway — deklaratif config (IP_PART6 Bölüm 32.4-32.5)
+# decK ile yönetilir (GitOps). Uygula: `deck sync -s gateway/kong.yaml`
+_format_version: "3.0"
+
+services:
+  - name: platform-api
+    url: http://platform-api.default.svc.cluster.local:8000
+    retries: 3
+    connect_timeout: 5000
+    read_timeout: 60000
+    routes:
+      - name: platform-api-route
+        paths: ["/api/v1"]
+        strip_path: false
+        protocols: ["https"]
+    plugins:
+      - name: jwt
+        config:
+          claims_to_verify: ["exp"]
+          key_claim_name: "iss"
+      - name: rate-limiting
+        config:
+          minute: 120
+          policy: redis
+          redis_host: redis.default.svc.cluster.local
+          fault_tolerant: true          # Redis düşerse fail-open
+      - name: cors
+        config:
+          origins: ["https://app.intelligence-platform.io"]
+          methods: ["GET", "POST", "PUT", "DELETE"]
+          credentials: true
+      - name: prometheus
+        config:
+          status_code_metrics: true
+          latency_metrics: true
+
+  - name: analytics-service
+    url: http://analytics-service.default.svc.cluster.local:8010
+    routes:
+      - name: analytics-route
+        paths: ["/api/v1/analytics"]
+    plugins:
+      - name: rate-limiting
+        config:
+          minute: 30                     # analytics daha ağır — düşük limit
+          policy: redis
+
+consumers:
+  - username: creator-dashboard
+    jwt_secrets:
+      - key: "https://auth.intelligence-platform.io"
+        algorithm: RS256
+        rsa_public_key: |
+          -----BEGIN PUBLIC KEY-----
+          MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8A...
+          -----END PUBLIC KEY-----
+
+# Upstream + aktif/pasif health check (IP_PART6 32.5)
+upstreams:
+  - name: platform-api-upstream
+    healthchecks:
+      active:
+        http_path: /health
+        healthy:
+          interval: 5
+          successes: 2
+        unhealthy:
+          interval: 5
+          http_failures: 3
+          timeouts: 3
+      passive:
+        unhealthy:
+          http_failures: 5
+          tcp_failures: 3
+    targets:
+      - target: platform-api-0:8000
+      - target: platform-api-1:8000
+      - target: platform-api-2:8000

@@ -1,0 +1,49 @@
+# Argo Rollouts — canary + otomatik analiz/rollback (IP_PART6 40.4)
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: decision-engine
+spec:
+  replicas: 6
+  selector:
+    matchLabels: { app: decision-engine }
+  template:
+    metadata:
+      labels: { app: decision-engine }
+    spec:
+      containers:
+        - name: decision-engine
+          image: ghcr.io/ip/decision-engine:latest
+          ports: [{ containerPort: 8000 }]
+  strategy:
+    canary:
+      steps:
+        - setWeight: 10
+        - pause: { duration: 5m }
+        - analysis:                     # Prometheus'tan hata oranını sorgula
+            templates: [{ templateName: error-rate }]
+        - setWeight: 50
+        - pause: { duration: 10m }
+        - setWeight: 100
+      analysis:
+        # error-rate template başarısız olursa → otomatik rollback
+        templates: [{ templateName: error-rate }]
+---
+# AnalysisTemplate — canary sırasında hata oranını değerlendirir
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: error-rate
+spec:
+  metrics:
+    - name: error-rate
+      interval: 1m
+      count: 5
+      successCondition: result < 0.02      # < %2 hata
+      failureLimit: 1
+      provider:
+        prometheus:
+          address: http://prometheus.monitoring.svc:9090
+          query: |
+            sum(rate(ip_requests_total{service="decision-engine",status=~"5.."}[2m]))
+            / sum(rate(ip_requests_total{service="decision-engine"}[2m]))

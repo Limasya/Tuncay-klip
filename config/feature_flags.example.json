@@ -1,0 +1,26 @@
+{
+  "new_decision_engine": {
+    "enabled": true,
+    "type": "release",
+    "rollout_percentage": 25,
+    "enabled_plans": ["pro", "enterprise"],
+    "enabled_targets": ["user-vip-1"],
+    "disabled_targets": ["user-blocked-9"]
+  },
+  "ai_thumbnail_v2": {
+    "enabled": true,
+    "type": "experiment",
+    "rollout_percentage": 50
+  },
+  "emergency_read_only": {
+    "enabled": false,
+    "type": "ops",
+    "rollout_percentage": 100
+  },
+  "internal_admin_panel": {
+    "enabled": true,
+    "type": "permission",
+    "rollout_percentage": 100,
+    "enabled_targets": ["staff-1", "staff-2"]
+  }
+}

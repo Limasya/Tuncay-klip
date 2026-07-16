@@ -1,0 +1,23 @@
+# KEDA — Event-driven autoscaling (IP_PART6 39.3)
+# clip-generator, Kafka lag'e göre ölçeklenir; iş yokken 0'a iner (maliyet).
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: clip-generator
+  namespace: default
+  labels: { app: clip-generator }
+spec:
+  scaleTargetRef:
+    name: clip-generator
+  minReplicaCount: 0          # iş yokken SIFIRA in (maliyet tasarrufu)
+  maxReplicaCount: 50
+  cooldownPeriod: 120         # son tetikten sonra 0'a inmeden önce bekle
+  pollingInterval: 15
+  triggers:
+    - type: kafka
+      metadata:
+        bootstrapServers: kafka:9092
+        consumerGroup: clip-generator
+        topic: clip.requested
+        lagThreshold: "10"    # her 10 bekleyen mesaj için 1 replika
+        offsetResetPolicy: latest

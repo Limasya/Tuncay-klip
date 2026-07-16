@@ -1,0 +1,22 @@
+# Chaos Mesh — network latency deneyi (IP_PART6 38.3)
+# platform-api → postgres çağrılarına +300ms gecikme enjekte eder.
+apiVersion: chaos-mesh.org/v1alpha1
+kind: NetworkChaos
+metadata:
+  name: db-latency
+  namespace: default
+spec:
+  action: delay
+  mode: all
+  selector:
+    labelSelectors:
+      app: platform-api
+  delay:
+    latency: "300ms"
+    jitter: "50ms"
+  duration: "5m"
+  direction: to
+  target:
+    selector:
+      labelSelectors:
+        app: postgres

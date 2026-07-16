@@ -14,6 +14,7 @@ from fastapi.responses import HTMLResponse
 from api.routers import clips, system, preferences, edit
 from api.routers import pipeline as pipeline_router
 from api.routers import analytics as analytics_router
+from api.routers import platform as platform_router
 from services.database import init_db
 from config import get_settings
 
@@ -27,6 +28,35 @@ setup_logging(
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _init_platform_observability() -> None:
+    """OpenTelemetry tracing + feature flag yüklemesi (IP_PART6 34-37)."""
+    # Distributed tracing (opsiyonel; otel_enabled + paketler mevcutsa)
+    if settings.otel_enabled:
+        try:
+            from platform_eng.observability import init_tracing
+            init_tracing(
+                service_name=settings.service_name,
+                otlp_endpoint=settings.otel_exporter_otlp_endpoint,
+                sample_ratio=settings.otel_sample_ratio,
+                environment=settings.deployment_environment,
+            )
+            logger.info("OpenTelemetry tracing enabled: %s", settings.service_name)
+        except Exception as e:  # pragma: no cover
+            logger.warning("Tracing init failed (devam ediliyor): %s", e)
+
+    # Feature flags — opsiyonel JSON dosyasından yükle
+    if settings.feature_flags_file and os.path.exists(settings.feature_flags_file):
+        try:
+            import json
+            from platform_eng.flags import default_client
+            with open(settings.feature_flags_file, "r", encoding="utf-8") as f:
+                default_client.reload(json.load(f))
+            logger.info("Feature flags loaded from %s", settings.feature_flags_file)
+        except Exception as e:  # pragma: no cover
+            logger.warning("Feature flag load failed: %s", e)
+
 
 
 @asynccontextmanager
@@ -86,6 +116,21 @@ if os.environ.get("RATE_LIMIT_ENABLED", "false").lower() in ("true", "1", "yes")
     app.add_middleware(RateLimitMiddleware, limiter=get_rate_limiter())
     logger.info("Rate limiting enabled: %d req/%ds", get_rate_limiter().max_requests, get_rate_limiter().window_seconds)
 
+# Observability (IP_PART6 34-36) — Prometheus RED metrics + OTel tracing
+_init_platform_observability()
+
+if settings.prometheus_metrics_enabled:
+    from platform_eng.observability import PrometheusMiddleware
+    app.add_middleware(PrometheusMiddleware, service_name=settings.service_name)
+
+if settings.otel_enabled:
+    try:
+        from platform_eng.observability import instrument_fastapi
+        if instrument_fastapi(app, settings.service_name):
+            logger.info("FastAPI OpenTelemetry instrumentation enabled")
+    except Exception as e:  # pragma: no cover
+        logger.warning("FastAPI instrumentation failed: %s", e)
+
 # Static files
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
@@ -96,6 +141,8 @@ app.include_router(preferences.router)
 app.include_router(pipeline_router.router)
 app.include_router(edit.router)
 app.include_router(analytics_router.router)
+app.include_router(platform_router.router)
+
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -261,7 +308,19 @@ async def prometheus_metrics():
     except Exception as e:
         lines.append(f"# ERROR: Failed to collect metrics: {e}")
 
-    return "\n".join(lines) + "\n"
+    output = "\n".join(lines) + "\n"
+
+    # IP_PART6 36.2 — prometheus_client kayıt defterindeki RED/USE metrikleri ekle
+    try:
+        from platform_eng.observability import render_latest, PROMETHEUS_AVAILABLE
+        if PROMETHEUS_AVAILABLE:
+            payload, _ = render_latest()
+            output += payload.decode("utf-8")
+    except Exception:
+        pass
+
+    return output
+
 
 
 if __name__ == "__main__":

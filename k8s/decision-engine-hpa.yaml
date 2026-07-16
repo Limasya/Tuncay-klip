@@ -1,0 +1,31 @@
+# HPA — custom metric (queue depth) üzerinden ölçekleme (IP_PART6 39.2)
+# CPU, AI iş yükleri için zayıf bir sinyaldir; iş metriğine göre ölçekle.
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: decision-engine
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: decision-engine
+  minReplicas: 3
+  maxReplicas: 30
+  metrics:
+    - type: Pods
+      pods:
+        metric: { name: ip_decision_queue_depth }
+        target: { type: AverageValue, averageValue: "20" }
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 30
+      policies:
+        - type: Percent
+          value: 100          # replikaları ikiye katlayabilir
+          periodSeconds: 30
+    scaleDown:
+      stabilizationWindowSeconds: 300   # yavaş scale-down (flapping önleme)
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 60
