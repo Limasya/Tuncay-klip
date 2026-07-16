@@ -3,9 +3,10 @@ Sistem kontrol API router'ı.
 Başlat/durdur, durum, ayarlar.
 """
 import logging
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from models.schemas import SystemStatus
 from config import get_settings
+from utils.auth_compat import Principal, Scope, get_current_principal, require_scope
 
 router = APIRouter(prefix="/api/system", tags=["system"])
 settings = get_settings()
@@ -13,7 +14,9 @@ logger = logging.getLogger(__name__)
 
 
 @router.post("/start")
-async def start_monitoring():
+async def start_monitoring(
+    _principal: Principal = Depends(require_scope(Scope.STREAMS_MANAGE)),
+):
     """Yayın izlemeyi ve otomatik klip yakalamayı başlatır."""
     from services.orchestrator import orchestrator
     from services.kick_api import kick_service
@@ -28,7 +31,9 @@ async def start_monitoring():
 
 
 @router.post("/stop")
-async def stop_monitoring():
+async def stop_monitoring(
+    _principal: Principal = Depends(require_scope(Scope.STREAMS_MANAGE)),
+):
     """Sistemi durdurur."""
     from services.orchestrator import orchestrator
 
@@ -40,7 +45,9 @@ async def stop_monitoring():
 
 
 @router.get("/status")
-async def get_status():
+async def get_status(
+    _principal: Principal = Depends(get_current_principal),
+):
     """Anlık sistem durumunu döndürür."""
     import psutil
 
@@ -67,7 +74,9 @@ async def get_status():
 
 
 @router.get("/stream-info")
-async def get_stream_info():
+async def get_stream_info(
+    _principal: Principal = Depends(get_current_principal),
+):
     """Kick API'den güncel yayın bilgisini çeker."""
     from services.kick_api import kick_service
     try:
@@ -78,7 +87,9 @@ async def get_stream_info():
 
 
 @router.get("/channel-info")
-async def get_channel_info():
+async def get_channel_info(
+    _principal: Principal = Depends(get_current_principal),
+):
     """Kick kanal bilgilerini çeker."""
     from services.kick_api import kick_service
     try:
@@ -89,14 +100,18 @@ async def get_channel_info():
 
 
 @router.get("/analysis-stats")
-async def get_analysis_stats():
+async def get_analysis_stats(
+    _principal: Principal = Depends(get_current_principal),
+):
     """Analiz pipeline istatistikleri."""
     from services.analysis.pipeline import analysis_pipeline
     return analysis_pipeline.stats
 
 
 @router.post("/test-clip")
-async def test_clip_trigger():
+async def test_clip_trigger(
+    _principal: Principal = Depends(require_scope(Scope.STREAMS_MANAGE)),
+):
     """
     Test amaçlı manuel klip tetikleyici.
     Buffer'dan son 10 saniyeyi klip olarak çıkarır.

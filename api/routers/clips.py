@@ -14,12 +14,14 @@ from models.schemas import (
 )
 from models.database import Clip, ClipCategory, ClipStatus, TriggerType
 from services.database import get_db
+from utils.auth_compat import Principal, Scope, get_current_principal, require_scope
 
 router = APIRouter(prefix="/api/clips", tags=["clips"])
 
 
 @router.get("/", response_model=ClipListResponse)
 async def list_clips(
+    _principal: Principal = Depends(require_scope(Scope.CLIPS_READ)),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     category: Optional[str] = None,
@@ -66,7 +68,11 @@ async def list_clips(
 
 
 @router.get("/{clip_id}", response_model=ClipResponse)
-async def get_clip(clip_id: int, db: AsyncSession = Depends(get_db)):
+async def get_clip(
+    clip_id: int,
+    _principal: Principal = Depends(require_scope(Scope.CLIPS_READ)),
+    db: AsyncSession = Depends(get_db),
+):
     """Tek bir klibin detaylarını döndürür."""
     result = await db.execute(select(Clip).where(Clip.id == clip_id))
     clip = result.scalar_one_or_none()
@@ -78,6 +84,7 @@ async def get_clip(clip_id: int, db: AsyncSession = Depends(get_db)):
 @router.post("/", response_model=ClipResponse)
 async def create_manual_clip(
     data: ClipCreate,
+    _principal: Principal = Depends(require_scope(Scope.CLIPS_WRITE)),
     db: AsyncSession = Depends(get_db),
 ):
     """Manuel klip kaydı oluşturur (kullanıcı tarafından yüklenen)."""
@@ -100,6 +107,7 @@ async def create_manual_clip(
 async def upload_clip_file(
     clip_id: int,
     file: UploadFile = File(...),
+    _principal: Principal = Depends(require_scope(Scope.CLIPS_WRITE)),
     db: AsyncSession = Depends(get_db),
 ):
     """Manuel klip için video dosyası yükler."""
@@ -131,7 +139,11 @@ async def upload_clip_file(
 
 
 @router.patch("/{clip_id}/favorite")
-async def toggle_favorite(clip_id: int, db: AsyncSession = Depends(get_db)):
+async def toggle_favorite(
+    clip_id: int,
+    _principal: Principal = Depends(require_scope(Scope.CLIPS_WRITE)),
+    db: AsyncSession = Depends(get_db),
+):
     """Klibi favori olarak işaretle/kaldır."""
     result = await db.execute(select(Clip).where(Clip.id == clip_id))
     clip = result.scalar_one_or_none()
@@ -146,6 +158,7 @@ async def toggle_favorite(clip_id: int, db: AsyncSession = Depends(get_db)):
 @router.post("/{clip_id}/export")
 async def export_clip(
     clip_id: int,
+    _principal: Principal = Depends(require_scope(Scope.CLIPS_WRITE)),
     resolution: str = "720p",
     platform: Optional[str] = None,
     output_format: str = "mp4",
@@ -190,7 +203,11 @@ async def export_clip(
 
 
 @router.delete("/{clip_id}")
-async def delete_clip(clip_id: int, db: AsyncSession = Depends(get_db)):
+async def delete_clip(
+    clip_id: int,
+    _principal: Principal = Depends(require_scope(Scope.CLIPS_DELETE)),
+    db: AsyncSession = Depends(get_db),
+):
     """Klibi siler."""
     result = await db.execute(select(Clip).where(Clip.id == clip_id))
     clip = result.scalar_one_or_none()
@@ -209,7 +226,10 @@ async def delete_clip(clip_id: int, db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/stats/summary")
-async def clip_stats(db: AsyncSession = Depends(get_db)):
+async def clip_stats(
+    _principal: Principal = Depends(require_scope(Scope.CLIPS_READ)),
+    db: AsyncSession = Depends(get_db),
+):
     """Klip istatistiklerini döndürür."""
     total = await db.execute(select(func.count(Clip.id)))
     by_category = await db.execute(

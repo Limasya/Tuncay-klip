@@ -8,12 +8,16 @@ from sqlalchemy import select
 from models.schemas import UserPreferencesUpdate, UserPreferencesResponse
 from models.database import UserPreferences, Broadcaster
 from services.database import get_db
+from utils.auth_compat import Principal, Scope, get_current_principal, require_scope
 
 router = APIRouter(prefix="/api/preferences", tags=["preferences"])
 
 
 @router.get("/", response_model=UserPreferencesResponse)
-async def get_preferences(db: AsyncSession = Depends(get_db)):
+async def get_preferences(
+    _principal: Principal = Depends(get_current_principal),
+    db: AsyncSession = Depends(get_db),
+):
     """Mevcut kullanıcı tercihlerini döndürür."""
     result = await db.execute(
         select(UserPreferences).join(Broadcaster).limit(1)
