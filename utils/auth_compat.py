@@ -52,16 +52,23 @@ except ImportError:
     class Principal:  # type: ignore[no-redef]
         """Dev-only fallback principal when auth is unavailable."""
 
-        def __init__(self) -> None:
-            self.subject = "dev-user"
-            self.roles = ("admin",)
-            self.scopes = frozenset({
+        def __init__(
+            self,
+            subject: str = "dev-user",
+            roles: tuple[str, ...] = ("admin",),
+            scopes: frozenset[str] = frozenset(),
+            auth_type: str = "dev",
+            claims: dict[str, Any] | None = None,
+        ) -> None:
+            self.subject = subject
+            self.roles = roles
+            self.scopes = scopes or frozenset({
                 "clips:read", "clips:write", "clips:delete",
                 "streams:manage", "analytics:read",
                 "feature-flags", "billing:manage", "internal:events",
             })
-            self.auth_type = "dev"
-            self.claims: dict[str, Any] = {}
+            self.auth_type = auth_type
+            self.claims = claims or {}
 
     class Scope:  # type: ignore[no-redef]
         CLIPS_READ = "clips:read"

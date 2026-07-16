@@ -4,8 +4,6 @@ Platform Engineering API router (IP_PART6).
 Feature flag değerlendirme/yönetimi, API key yönetimi ve A/B test yardımcılarını
 HTTP üzerinden sunar. Yönetim uçları `feature-flags` scope'u ile korunur.
 """
-from __future__ import annotations
-
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException

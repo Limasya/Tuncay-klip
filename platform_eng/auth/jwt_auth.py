@@ -9,8 +9,6 @@ Mevcut `config.get_settings()` (secret_key, algorithm) ve python-jose kullanıl�
 böylece repodaki `utils/auth.py` ile uyumludur. Defense-in-depth: gateway JWT'yi
 doğrulasa bile servis içinde tekrar doğrulanır.
 """
-from __future__ import annotations
-
 from dataclasses import dataclass, field
 from typing import Optional
 

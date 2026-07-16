@@ -7,8 +7,6 @@ API Key yönetimi (IP_PART6 Bölüm 33.6).
 - Zero-downtime rotasyon için istemci başına 2 aktif anahtar desteklenir.
 - 90 gün sonra otomatik expire, 75. günde uyarı.
 """
-from __future__ import annotations
-
 import hashlib
 import secrets
 from dataclasses import dataclass, field

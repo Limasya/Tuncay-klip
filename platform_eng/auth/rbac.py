@@ -4,8 +4,6 @@ RBAC — Rol tabanlı erişim kontrolü (IP_PART6 Bölüm 33.4).
 Doküman 33.4'teki Role/Scope matrisinin çalışan implementasyonu.
 Scope guard'lar FastAPI dependency olarak kullanılır.
 """
-from __future__ import annotations
-
 from enum import Enum
 from typing import Any, Callable, Iterable
 
