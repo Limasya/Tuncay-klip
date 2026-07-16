@@ -36,7 +36,7 @@ class TestEventBusFactory:
         """Default backend should be in-memory EventBus."""
         bus = await init_event_bus()
         assert isinstance(bus, EventBus)
-        assert not isinstance(bus, RedisEventBus)
+        assert not (RedisEventBus is not None and isinstance(bus, RedisEventBus))
         await bus.stop()
 
     @pytest.mark.asyncio
