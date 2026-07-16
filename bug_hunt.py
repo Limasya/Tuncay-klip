@@ -135,7 +135,7 @@ else:
 client.delete(f"{BASE}/api/v1/projects/{pid2}")
 
 # --- 7) Lock guard (PermissionError → HTTP 423) ---
-print("7) PermissionError → 423 guard ...")
+print("7) PermissionError -> 423 guard ...")
 r3 = client.post(f"{BASE}/api/v1/projects", json={"name": "Lock Test"})
 pid3 = r3.json()["project_id"]
 v3 = next(t for t in r3.json()["timeline"]["tracks"] if t["track_type"] == "video")
