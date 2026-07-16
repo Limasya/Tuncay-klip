@@ -141,6 +141,7 @@ async def list_projects(limit: int = Query(default=50, ge=1, le=200)):
                 "revision": project.revision,
                 "updated_at": project.updated_at,
                 "duration": project.timeline.duration.to_dict(),
+                "track_count": len(project.timeline.tracks),
             }
             for project in projects
         ],

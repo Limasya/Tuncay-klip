@@ -6,7 +6,7 @@ import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
 from api.routers import projects as projects_router
-from main import app
+from main import app  # noqa: E402  — imported after patching config
 from services.project_store import ProjectStore
 from services.timeline_engine import (
     EditMode,
@@ -132,6 +132,16 @@ async def test_project_api_persists_timeline_and_checks_revision(project_client)
     fetched = await project_client.get(f"/api/v1/projects/{project_id}")
     assert fetched.status_code == 200
     assert fetched.json()["timeline"]["duration"] == {
+        "numerator": 5,
+        "denominator": 1,
+    }
+    tracks = fetched.json()["timeline"]["tracks"]
+    video_clips = [
+        clip for track in tracks if track["track_type"] == "video"
+        for clip in track["clips"]
+    ]
+    assert len(video_clips) == 1
+    assert video_clips[0]["record_range"]["duration"] == {
         "numerator": 5,
         "denominator": 1,
     }

@@ -476,6 +476,7 @@ class Timeline:
             "fps": {"numerator": self.fps.numerator, "denominator": self.fps.denominator},
             "width": self.width,
             "height": self.height,
+            "duration": self.duration.to_dict(),
             "tracks": [track.to_dict() for track in self.tracks],
             "metadata": self.metadata,
         }
