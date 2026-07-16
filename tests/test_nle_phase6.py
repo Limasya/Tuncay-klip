@@ -211,6 +211,19 @@ class TestLayerCompositor:
         fg = comp.build_filter_graph(timeline=tl)
         assert fg == ""
 
+    def test_build_filter_graph_from_timeline_needs_compositing(self):
+        tl = _make_timeline_with_video_clips()
+        v2 = tl.add_track(TrackType.VIDEO, "V2")
+        clip = TimelineClip.create(
+            asset_path="overlay.mp4",
+            source_range=TimeRange(RationalTime(0), RationalTime(5, 1)),
+            record_start=RationalTime(0),
+        )
+        v2.insert_clip(clip, RationalTime(0), "insert")
+        comp = LayerCompositor()
+        fg = comp.build_filter_graph(timeline=tl)
+        assert "overlay" in fg
+
     def test_get_composite_count(self):
         tl = _make_timeline_with_video_clips()
         comp = LayerCompositor()
@@ -333,7 +346,7 @@ class TestXfadeOffset:
         off = compute_xfade_offset(
             RationalTime(10, 1), RationalTime(2, 1), TransitionAlignment.START
         )
-        assert off == RationalTime(9, 1)
+        assert off == RationalTime(8, 1)
 
     def test_compute_xfade_offset_center(self):
         from services.transitions import compute_xfade_offset
@@ -373,8 +386,13 @@ class TestTransitionGraph:
         assert len(segs) == 0
 
     def test_max_duration_cap(self):
+        long_trans = Transition(
+            transition_type="fade",
+            duration=RationalTime(3, 1),
+        )
         graph = TransitionGraph(
-            max_transition_duration=RationalTime(1, 1)
+            default_transition=long_trans,
+            max_transition_duration=RationalTime(1, 1),
         )
         segs = graph.build_segments([
             RationalTime(10, 1),

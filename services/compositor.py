@@ -216,6 +216,14 @@ class LayerCompositor:
         layers = self._layers
         if timeline is not None:
             layers = self._timeline_to_layers(timeline)
+            video_track_count = len([
+                t for t in timeline.tracks
+                if t.track_type == TrackType.VIDEO
+                and t.visible
+                and t.clips
+            ])
+            if video_track_count <= 1:
+                return ""
 
         visible = [l for l in layers if l.visible and l.opacity > 0.0]
         if len(visible) <= 1:
