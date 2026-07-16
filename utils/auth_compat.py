@@ -8,8 +8,6 @@ Works with or without python-jose installed:
 This allows the app to start and function in development environments
 where jose is not installed, while enforcing real auth in production.
 """
-from __future__ import annotations
-
 import logging
 from typing import Any, Callable, Optional
 
