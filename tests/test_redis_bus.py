@@ -16,7 +16,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from shared.event_bus import EventBus, get_event_bus, set_event_bus, init_event_bus
-from shared.event_bus.redis_bus import RedisEventBus
+try:
+    from shared.event_bus.redis_bus import RedisEventBus
+    import redis.asyncio as _aioredis
+    _HAS_REDIS = True
+except ImportError:
+    RedisEventBus = None
+    _HAS_REDIS = False
 from shared.event_schemas import EventType, SystemEvent
 
 
@@ -43,6 +49,7 @@ class TestEventBusFactory:
             assert isinstance(bus, EventBus)
             await bus.stop()
 
+    @pytest.mark.skipif(not _HAS_REDIS, reason="redis not installed")
     @pytest.mark.asyncio
     async def test_redis_backend_creates_redis_bus(self):
         """Redis backend should create RedisEventBus (mocked)."""
@@ -82,6 +89,7 @@ class TestEventBusFactory:
 # RedisEventBus API parity tests
 # ─────────────────────────────────────────────────────────────
 
+@pytest.mark.skipif(not _HAS_REDIS, reason="redis not installed")
 class TestRedisBusAPIParity:
     """Verify RedisEventBus has the same sync API as EventBus."""
 
@@ -113,6 +121,7 @@ class TestRedisBusAPIParity:
 # RedisEventBus publish/subscribe with mocked Redis
 # ─────────────────────────────────────────────────────────────
 
+@pytest.mark.skipif(not _HAS_REDIS, reason="redis not installed")
 class TestRedisBusPublishSubscribe:
     @pytest.fixture
     def mock_redis(self):
