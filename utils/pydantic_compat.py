@@ -50,6 +50,24 @@ def _patch_v1() -> None:
     _V1BaseModel._compat_patched = True
 
 
+def _patch_v2() -> None:
+    """Pydantic v2 için ``from pydantic import BaseSettings`` uyumluluğu.
+
+    v2'de BaseSettings ``pydantic_settings`` paketine taşındı. Proje kodu hâlâ
+    ``from pydantic import BaseSettings`` kullandığından, onu pydantic ad alanına
+    geri enjekte ederiz (tek noktadan köprüleme).
+    """
+    if "BaseSettings" in pydantic.__dict__:
+        return
+    try:
+        from pydantic_settings import BaseSettings
+    except Exception:  # pragma: no cover - pydantic_settings kurulu değilse
+        return
+    pydantic.BaseSettings = BaseSettings
+
+
 if not _V2:
     _patch_v1()
+else:
+    _patch_v2()
 
