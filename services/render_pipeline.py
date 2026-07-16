@@ -153,10 +153,13 @@ class RenderPipeline:
         if len(rendered_paths) == 1:
             return rendered_paths[0]
 
-        # 2. Klipleri birleştir (xfade ile)
-        merged = await self._merge_clips_with_transitions(
-            rendered_paths, spec.transition, spec.output_path
-        )
+        # 2. Klipleri birleştir. NONE frame-accurate hard cut anlamına gelir.
+        if spec.transition.type == TransitionType.NONE:
+            merged = await self._fallback_concat(rendered_paths, spec.output_path)
+        else:
+            merged = await self._merge_clips_with_transitions(
+                rendered_paths, spec.transition, spec.output_path
+            )
 
         # 3. Arka plan müziği ekle
         if merged and spec.background_music:
@@ -695,7 +698,16 @@ class RenderPipeline:
         cmd = ["ffmpeg", "-y"]
 
         # Input
+        if spec.time_range:
+            duration = spec.time_range.end - spec.time_range.start
+            if duration <= 0:
+                raise ValueError("ClipSpec time_range end must be greater than start")
+            # Output-side trim is frame accurate. -ss before -i would seek to a
+            # decoder keyframe and can produce imprecise NLE source in-points.
+            cmd.extend(["-ss", f"{spec.time_range.start:.6f}"])
         cmd.extend(["-i", spec.source_path])
+        if spec.time_range:
+            cmd.extend(["-t", f"{duration:.6f}"])
 
         # Video filter chain
         if video_filters:

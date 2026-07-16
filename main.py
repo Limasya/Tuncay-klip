@@ -11,7 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 
-from api.routers import clips, system, preferences, edit
+from api.routers import clips, system, preferences, edit, projects
 from api.routers import pipeline as pipeline_router
 from api.routers import analytics as analytics_router
 from api.routers import platform as platform_router
@@ -68,8 +68,9 @@ async def lifespan(app: FastAPI):
 
     # Ensure data directories exist
     for d in ["data/clips", "data/buffer", "data/subtitles",
-              "data/exports", "data/thumbnails", "data/uploads",
-              "static", "templates"]:
+               "data/exports", "data/thumbnails", "data/uploads",
+               "data/projects", "data/timeline-jobs",
+               "static", "templates"]:
         os.makedirs(d, exist_ok=True)
 
     yield
@@ -142,7 +143,7 @@ app.include_router(pipeline_router.router)
 app.include_router(edit.router)
 app.include_router(analytics_router.router)
 app.include_router(platform_router.router)
-
+app.include_router(projects.router)
 
 
 @app.get("/", response_class=HTMLResponse)
