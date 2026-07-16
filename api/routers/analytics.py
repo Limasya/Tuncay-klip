@@ -6,8 +6,9 @@ Endpoints for clip performance analytics: views, engagement, platform stats.
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
+from utils.auth_compat import Principal, Scope, get_current_principal, require_scope
 
 logger = logging.getLogger("analytics_api")
 
@@ -38,6 +39,7 @@ class AnalyticsSummary(BaseModel):
 
 @router.get("/summary")
 async def get_analytics_summary(
+    _principal: Principal = Depends(require_scope(Scope.ANALYTICS_READ)),
     platform: Optional[str] = Query(None, description="Filter by platform"),
     days: int = Query(30, description="Look back period in days"),
 ):
@@ -85,7 +87,10 @@ async def get_analytics_summary(
 
 
 @router.get("/clip/{clip_id}")
-async def get_clip_analytics(clip_id: int):
+async def get_clip_analytics(
+    clip_id: int,
+    _principal: Principal = Depends(require_scope(Scope.ANALYTICS_READ)),
+):
     """Get analytics for a specific clip."""
     from services.database import async_session
     from models.database import ClipAnalytics
@@ -123,7 +128,10 @@ async def get_clip_analytics(clip_id: int):
 
 
 @router.post("/update")
-async def update_analytics(request: AnalyticsUpdateRequest):
+async def update_analytics(
+    request: AnalyticsUpdateRequest,
+    _principal: Principal = Depends(require_scope(Scope.ANALYTICS_READ)),
+):
     """Record a new analytics snapshot for a clip."""
     from services.database import async_session
     from models.database import ClipAnalytics
@@ -150,7 +158,10 @@ async def update_analytics(request: AnalyticsUpdateRequest):
 
 
 @router.get("/platform/{platform}")
-async def get_platform_analytics(platform: str):
+async def get_platform_analytics(
+    platform: str,
+    _principal: Principal = Depends(require_scope(Scope.ANALYTICS_READ)),
+):
     """Get analytics aggregated by platform."""
     from services.database import async_session
     from models.database import ClipAnalytics

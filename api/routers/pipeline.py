@@ -11,8 +11,9 @@ import os
 import time
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, UploadFile, File, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
+from utils.auth_compat import Principal, Scope, get_current_principal, require_scope
 
 logger = logging.getLogger("pipeline_api")
 
@@ -71,7 +72,10 @@ class SubtitleRequest(BaseModel):
 
 
 @router.post("/start")
-async def start_pipeline(request: StartStreamRequest):
+async def start_pipeline(
+    request: StartStreamRequest,
+    _principal: Principal = Depends(require_scope(Scope.STREAMS_MANAGE)),
+):
     """Start the event-driven pipeline with a stream URL."""
     orchestrator = _get_orch()
     if orchestrator is None:
@@ -89,7 +93,9 @@ async def start_pipeline(request: StartStreamRequest):
 
 
 @router.post("/stop")
-async def stop_pipeline():
+async def stop_pipeline(
+    _principal: Principal = Depends(require_scope(Scope.STREAMS_MANAGE)),
+):
     """Stop the pipeline gracefully."""
     orchestrator = _get_orch()
     if orchestrator is None:
@@ -101,7 +107,9 @@ async def stop_pipeline():
 
 
 @router.get("/status")
-async def pipeline_status():
+async def pipeline_status(
+    _principal: Principal = Depends(require_scope(Scope.ANALYTICS_READ)),
+):
     """Get full pipeline status with all service metrics."""
     orchestrator = _get_orch()
     if orchestrator is None:
@@ -110,7 +118,10 @@ async def pipeline_status():
 
 
 @router.post("/chat")
-async def inject_chat(request: ChatMessageRequest):
+async def inject_chat(
+    request: ChatMessageRequest,
+    _principal: Principal = Depends(require_scope(Scope.CLIPS_WRITE)),
+):
     """Inject a chat message for analysis (testing)."""
     orchestrator = _get_orch()
     if orchestrator is None:
@@ -124,7 +135,9 @@ async def inject_chat(request: ChatMessageRequest):
 
 
 @router.post("/analyze-frame")
-async def analyze_frame():
+async def analyze_frame(
+    _principal: Principal = Depends(require_scope(Scope.CLIPS_WRITE)),
+):
     """Analyze a test frame (for demo/testing)."""
     import numpy as np
     orchestrator = _get_orch()
@@ -144,7 +157,10 @@ async def analyze_frame():
 
 
 @router.get("/events")
-async def get_recent_events(last_n: int = 50):
+async def get_recent_events(
+    _principal: Principal = Depends(get_current_principal),
+    last_n: int = 50,
+):
     """Get recent events from the event bus."""
     orchestrator = _get_orch()
     if orchestrator and orchestrator.event_bus:
@@ -154,7 +170,11 @@ async def get_recent_events(last_n: int = 50):
 
 
 @router.get("/events/{event_type}")
-async def get_events_by_type(event_type: str, last_n: int = 20):
+async def get_events_by_type(
+    event_type: str,
+    _principal: Principal = Depends(get_current_principal),
+    last_n: int = 20,
+):
     """Get recent events of a specific type."""
     orchestrator = _get_orch()
     if orchestrator and orchestrator.event_bus:
@@ -164,7 +184,9 @@ async def get_events_by_type(event_type: str, last_n: int = 20):
 
 
 @router.get("/score")
-async def get_current_score():
+async def get_current_score(
+    _principal: Principal = Depends(get_current_principal),
+):
     """Get the current highlight score."""
     orchestrator = _get_orch()
     if orchestrator is None:
@@ -178,7 +200,9 @@ async def get_current_score():
 
 
 @router.get("/metrics")
-async def get_metrics():
+async def get_metrics(
+    _principal: Principal = Depends(get_current_principal),
+):
     """Get event bus metrics."""
     orchestrator = _get_orch()
     if orchestrator and orchestrator.event_bus:
@@ -233,6 +257,7 @@ async def upload_video(
     file: UploadFile = File(...),
     target_fps: int = 2,
     max_seconds: int = 60,
+    _principal: Principal = Depends(require_scope(Scope.CLIPS_WRITE)),
 ):
     """Upload a video file for offline pipeline analysis."""
     import cv2
@@ -337,7 +362,10 @@ async def upload_video(
 # ── Post-Clip Pipeline Endpoints ──────────────────────────
 
 @router.post("/export")
-async def export_clip(request: ExportRequest):
+async def export_clip(
+    request: ExportRequest,
+    _principal: Principal = Depends(require_scope(Scope.CLIPS_WRITE)),
+):
     """Export a clip to multiple platform aspect ratios."""
     orchestrator = _get_orch()
     if orchestrator is None:
@@ -373,7 +401,10 @@ async def export_clip(request: ExportRequest):
 
 
 @router.post("/generate-subtitles")
-async def generate_subtitles(request: SubtitleRequest):
+async def generate_subtitles(
+    request: SubtitleRequest,
+    _principal: Principal = Depends(require_scope(Scope.CLIPS_WRITE)),
+):
     """Generate subtitles for a clip via Whisper."""
     orchestrator = _get_orch()
     if orchestrator is None:

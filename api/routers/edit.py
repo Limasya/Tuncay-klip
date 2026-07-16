@@ -10,8 +10,9 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
-from fastapi import APIRouter, HTTPException, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from pydantic import BaseModel
+from utils.auth_compat import Principal, Scope, require_scope
 
 from models.schemas import (
     EditSpecRequest, EditSpecResponse, RenderJobCreate, RenderJobResponse,
@@ -40,7 +41,11 @@ TEMP_DIR = Path("data/temp")
 TEMP_DIR.mkdir(parents=True, exist_ok=True)
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/api/v1/edit", tags=["auto-edit"])
+router = APIRouter(
+    prefix="/api/v1/edit",
+    tags=["auto-edit"],
+    dependencies=[Depends(require_scope(Scope.CLIPS_WRITE))],
+)
 
 # Geçici job depolama (production'da Redis/DB olmalı)
 _render_jobs: Dict[str, Dict] = {}

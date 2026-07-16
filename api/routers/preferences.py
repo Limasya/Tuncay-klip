@@ -52,6 +52,7 @@ async def get_preferences(
 @router.put("/", response_model=UserPreferencesResponse)
 async def update_preferences(
     data: UserPreferencesUpdate,
+    _principal: Principal = Depends(require_scope(Scope.CLIPS_WRITE)),
     db: AsyncSession = Depends(get_db),
 ):
     """Kullanıcı tercihlerini günceller."""
@@ -81,7 +82,10 @@ async def update_preferences(
 
 
 @router.post("/reset")
-async def reset_preferences(db: AsyncSession = Depends(get_db)):
+async def reset_preferences(
+    _principal: Principal = Depends(require_scope(Scope.CLIPS_WRITE)),
+    db: AsyncSession = Depends(get_db),
+):
     """Tercihleri varsayılan değerlere sıfırlar."""
     result = await db.execute(
         select(UserPreferences).join(Broadcaster).limit(1)
