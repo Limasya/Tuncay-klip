@@ -11,10 +11,22 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 
+import importlib
+
 from api.routers import clips, system, preferences, edit, projects
 from api.routers import pipeline as pipeline_router
 from api.routers import analytics as analytics_router
-from api.routers import platform as platform_router
+
+_platform_available = False
+platform_router = None
+try:
+    platform_router = importlib.import_module("api.routers.platform")
+    _platform_available = True
+except Exception:
+    logging.debug(
+        "platform_eng ve bağımlılıkları kurulu değil; "
+        "/api/v1/platform endpoint'leri atlanıyor"
+    )
 from services.database import init_db
 from config import get_settings
 
@@ -118,19 +130,29 @@ if os.environ.get("RATE_LIMIT_ENABLED", "false").lower() in ("true", "1", "yes")
     logger.info("Rate limiting enabled: %d req/%ds", get_rate_limiter().max_requests, get_rate_limiter().window_seconds)
 
 # Observability (IP_PART6 34-36) — Prometheus RED metrics + OTel tracing
-_init_platform_observability()
+try:
+    _init_platform_observability()
+except Exception:
+    logger.debug("Observability init skipped (platform_eng not available)")
 
 if settings.prometheus_metrics_enabled:
-    from platform_eng.observability import PrometheusMiddleware
-    app.add_middleware(PrometheusMiddleware, service_name=settings.service_name)
+    try:
+        from platform_eng.observability import PrometheusMiddleware
+        app.add_middleware(PrometheusMiddleware, service_name=settings.service_name)
+    except ImportError:
+        logger.debug("PrometheusMiddleware skipped (platform_eng not available)")
+    except Exception as exc:
+        logger.warning("PrometheusMiddleware init failed: %s", exc)
 
 if settings.otel_enabled:
     try:
         from platform_eng.observability import instrument_fastapi
         if instrument_fastapi(app, settings.service_name):
             logger.info("FastAPI OpenTelemetry instrumentation enabled")
-    except Exception as e:  # pragma: no cover
-        logger.warning("FastAPI instrumentation failed: %s", e)
+    except ImportError:
+        logger.debug("OTel instrumentation skipped (platform_eng not available)")
+    except Exception as exc:
+        logger.warning("FastAPI instrumentation failed: %s", exc)
 
 # Static files
 app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -142,7 +164,8 @@ app.include_router(preferences.router)
 app.include_router(pipeline_router.router)
 app.include_router(edit.router)
 app.include_router(analytics_router.router)
-app.include_router(platform_router.router)
+if _platform_available and platform_router is not None:
+    app.include_router(platform_router.router)
 app.include_router(projects.router)
 
 

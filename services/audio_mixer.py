@@ -1,381 +1,426 @@
-"""
-Gelişmiş ses miksaj motoru.
-Çoklu track, crossfade, LUFS normalization, ducking, sessizlik algılama.
-"""
-import asyncio
-import json
-import logging
-import struct
-import wave
-from pathlib import Path
-from typing import Dict, List, Optional, Tuple
-from dataclasses import dataclass
+"""Audio mixer integration for the NLE timeline.
 
-logger = logging.getLogger(__name__)
+Provides:
+- Audio track and bus models compatible with the timeline
+- Volume/pan keyframe data for automation
+- FFmpeg filter graph generation for multi-track audio mixing
+- Sidechain ducking filter generation
+- Loudness measurement target specs
 
-AUDIO_DIR = Path("data/audio")
-AUDIO_DIR.mkdir(parents=True, exist_ok=True)
+This module is intentionally independent from numpy/scipy to stay
+testable without heavy dependencies. The actual audio processing
+(digital signal processing) happens in the render pipeline via FFmpeg.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from enum import Enum, auto
+from fractions import Fraction
+from typing import Any, Dict, List, Optional, Tuple
+from uuid import uuid4
+
+from services.timeline_engine import RationalTime, TimeRange, Timeline, TrackType
+
+
+class AudioTrackType(Enum):
+    DIALOGUE = "dialogue"
+    MUSIC = "music"
+    EFFECTS = "effects"
+    AMBIENCE = "ambience"
+
+
+class DuckingMode(Enum):
+    SIDECHAIN = "sidechain"
+    THRESHOLD = "threshold"
+    MANUAL = "manual"
+
+
+class DuckingCurve(Enum):
+    LINEAR = "linear"
+    EXPONENTIAL = "exponential"
+    LOGARITHMIC = "logarithmic"
+    S_CURVE = "s_curve"
+
+
+class ChannelLayout(Enum):
+    MONO = 1
+    STEREO = 2
+
+
+class LoudnessStandard(Enum):
+    ITU_BS1770_4 = "itu_bs1770_4"
+    EBU_R128 = "ebu_r128"
+    PLATFORM_SOCIAL = "platform_social"
 
 
 @dataclass
-class AudioSegment:
-    """Ses segment bilgisi."""
-    path: str
-    duration: float
-    sample_rate: int = 44100
-    channels: int = 2
-    peak_db: float = 0.0
-    rms_db: float = -20.0
-    lufs: float = -23.0
+class VolumeKeyframe:
+    """A volume automation keyframe."""
+
+    time: RationalTime
+    volume_db: float = 0.0
+    curve: str = "linear"
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "time": self.time.to_dict(),
+            "volume_db": self.volume_db,
+            "curve": self.curve,
+        }
 
 
-class AudioMixer:
-    """
-    Gelişmiş ses miksaj motoru.
-    """
+@dataclass
+class PanKeyframe:
+    """A pan automation keyframe."""
 
-    def __init__(self):
-        self._target_lufs = -14.0  # Sosyal medya standardı
-        self._true_peak_limit = -1.0  # dBTP
+    time: RationalTime
+    pan_lr: float = 0.0
 
-    async def get_audio_info(self, path: str) -> AudioSegment:
-        """Ses dosyası bilgilerini ffprobe ile alır."""
-        cmd = [
-            "ffprobe", "-v", "quiet",
-            "-print_format", "json",
-            "-show_format", "-show_streams",
-            path,
-        ]
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            stdout, _ = await proc.communicate()
-            data = json.loads(stdout.decode())
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "time": self.time.to_dict(),
+            "pan_lr": self.pan_lr,
+        }
 
-            fmt = data.get("format", {})
-            streams = data.get("streams", [{}])
-            audio_stream = next(
-                (s for s in streams if s.get("codec_type") == "audio"), {}
-            )
 
-            return AudioSegment(
-                path=path,
-                duration=float(fmt.get("duration", 0)),
-                sample_rate=int(audio_stream.get("sample_rate", 44100)),
-                channels=int(audio_stream.get("channels", 2)),
-            )
-        except Exception as e:
-            logger.error("Ses bilgi alma hatası: %s", e)
-            return AudioSegment(path=path, duration=0)
+@dataclass
+class TimelineAudioClip:
+    """An audio clip placed on a timeline audio track."""
 
-    async def mix_tracks(
-        self,
-        tracks: List[Dict],
-        output_path: str,
-        normalize: bool = True,
-        target_lufs: float = -14.0,
-    ) -> Optional[str]:
-        """
-        Çoklu ses track'ini karıştırır.
+    clip_id: str = field(default_factory=lambda: str(uuid4()))
+    asset_path: str = ""
+    source_range: TimeRange = field(
+        default_factory=lambda: TimeRange(
+            RationalTime.zero(), RationalTime(1, 1)
+        )
+    )
+    record_range: TimeRange = field(
+        default_factory=lambda: TimeRange(
+            RationalTime.zero(), RationalTime(1, 1)
+        )
+    )
+    gain_db: float = 0.0
+    pan: float = 0.0
+    fade_in: RationalTime = field(
+        default_factory=lambda: RationalTime.zero()
+    )
+    fade_out: RationalTime = field(
+        default_factory=lambda: RationalTime.zero()
+    )
+    volume_keyframes: List[VolumeKeyframe] = field(default_factory=list)
+    pan_keyframes: List[PanKeyframe] = field(default_factory=list)
+    enabled: bool = True
+    name: str = ""
 
-        tracks: [
-            {"path": str, "volume": float, "start_at": float,
-             "fade_in": float, "fade_out": float, "loop": bool},
-            ...
-        ]
-        """
-        if not tracks:
-            return None
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "clip_id": self.clip_id,
+            "asset_path": self.asset_path,
+            "source_range": self.source_range.to_dict(),
+            "record_range": self.record_range.to_dict(),
+            "gain_db": self.gain_db,
+            "pan": self.pan,
+            "fade_in": self.fade_in.to_dict(),
+            "fade_out": self.fade_out.to_dict(),
+            "enabled": self.enabled,
+            "name": self.name,
+        }
 
-        if len(tracks) == 1:
-            return tracks[0]["path"]
 
-        # FFmpeg filter_complex oluştur
-        inputs = []
-        filter_parts = []
+@dataclass
+class DuckingProfile:
+    """Configuration for audio ducking between tracks."""
 
-        for i, track in enumerate(tracks):
-            inputs.extend(["-i", track["path"]])
-            vol = track.get("volume", 1.0)
-            fade_in = track.get("fade_in", 0)
-            fade_out = track.get("fade_out", 0)
-            start_at = track.get("start_at", 0)
+    profile_id: str = field(default_factory=lambda: str(uuid4()))
+    name: str = "default"
+    mode: DuckingMode = DuckingMode.SIDECHAIN
+    threshold_db: float = -30.0
+    range_db: float = -12.0
+    attack_ms: float = 50.0
+    hold_ms: float = 200.0
+    release_ms: float = 500.0
+    curve: DuckingCurve = DuckingCurve.EXPONENTIAL
 
-            # Volume + fade + delay
-            af_parts = [f"[{i}:a]volume={vol}"]
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "profile_id": self.profile_id,
+            "name": self.name,
+            "mode": self.mode.value,
+            "threshold_db": self.threshold_db,
+            "range_db": self.range_db,
+            "attack_ms": self.attack_ms,
+            "hold_ms": self.hold_ms,
+            "release_ms": self.release_ms,
+            "curve": self.curve.value,
+        }
 
-            if fade_in > 0:
-                af_parts.append(f"afade=t=in:d={fade_in}")
 
-            if fade_out > 0:
-                af_parts.append(f"afade=t=out:d={fade_out}")
+@dataclass
+class DuckingRule:
+    """A ducking rule: when source tracks are active, duck target tracks."""
 
-            if start_at > 0:
-                delay_ms = int(start_at * 1000)
-                af_parts.append(f"adelay={delay_ms}|{delay_ms}")
+    rule_id: str = field(default_factory=lambda: str(uuid4()))
+    source_track_ids: List[str] = field(default_factory=list)
+    target_track_ids: List[str] = field(default_factory=list)
+    profile: DuckingProfile = field(default_factory=DuckingProfile)
+    priority: int = 0
+    enabled: bool = True
 
-            filter_chain = ",".join(af_parts) + f"[a{i}]"
-            filter_parts.append(filter_chain)
 
-        # amix ile birleştir
-        mix_inputs = "".join(f"[a{i}]" for i in range(len(tracks)))
-        filter_parts.append(
-            f"{mix_inputs}amix=inputs={len(tracks)}:duration=longest"
-            f":dropout_transition=3"
+@dataclass
+class LoudnessTarget:
+    """Loudness normalization target for the final output."""
+
+    target_lufs: float = -14.0
+    tolerance_lu: float = 1.0
+    max_true_peak_dbtp: float = -1.0
+    standard: LoudnessStandard = LoudnessStandard.PLATFORM_SOCIAL
+
+    @classmethod
+    def youtube(cls) -> "LoudnessTarget":
+        return cls(target_lufs=-14.0, max_true_peak_dbtp=-1.0)
+
+    @classmethod
+    def tiktok(cls) -> "LoudnessTarget":
+        return cls(target_lufs=-14.0, max_true_peak_dbtp=-1.0)
+
+    @classmethod
+    def broadcast_ebu(cls) -> "LoudnessTarget":
+        return cls(
+            target_lufs=-23.0,
+            tolerance_lu=0.5,
+            max_true_peak_dbtp=-1.0,
+            standard=LoudnessStandard.EBU_R128,
         )
 
-        # LUFS normalization
-        if normalize:
-            filter_parts.append(
-                f"loudnorm=I={target_lufs}:TP=-1:LRA=11"
-            )
+    @classmethod
+    def twitch(cls) -> "LoudnessTarget":
+        return cls(target_lufs=-14.0, max_true_peak_dbtp=-0.5)
 
-        filter_complex = ";".join(filter_parts)
 
-        cmd = [
-            "ffmpeg", "-y",
-        ] + inputs + [
-            "-filter_complex", filter_complex,
-            "-map", f"[{len(filter_parts)-1}]"
-            if normalize else f"[{len(filter_parts)-1}]",
-            "-c:a", "aac",
-            "-b:a", "192k",
-            output_path,
-        ]
+class TimelineAudioMixer:
+    """Manages audio tracks, ducking, and generates FFmpeg audio filter graphs.
 
-        # Map düzeltmesi
-        cmd[-2] = "-map"
-        cmd[-1] = f"[{len(filter_parts)-1}]"
+    This is the timeline-level audio mixer that operates on rational time
+    and produces FFmpeg filter strings for the render pipeline.
+    """
 
-        return await self._run_ffmpeg(cmd, output_path)
+    def __init__(self) -> None:
+        self._tracks: Dict[str, TimelineAudioClip] = {}
+        self._ducking_rules: List[DuckingRule] = []
+        self._loudness_target: Optional[LoudnessTarget] = None
+        self._music_volume: float = 1.0
+        self._sfx_volume: float = 1.0
 
-    async def crossfade_tracks(
+    @property
+    def loudness_target(self) -> Optional[LoudnessTarget]:
+        return self._loudness_target
+
+    @loudness_target.setter
+    def loudness_target(self, target: LoudnessTarget) -> None:
+        self._loudness_target = target
+
+    @property
+    def music_volume(self) -> float:
+        return self._music_volume
+
+    @music_volume.setter
+    def music_volume(self, vol: float) -> None:
+        if not 0.0 <= vol <= 2.0:
+            raise ValueError("Volume must be between 0.0 and 2.0")
+        self._music_volume = vol
+
+    @property
+    def sfx_volume(self) -> float:
+        return self._sfx_volume
+
+    @sfx_volume.setter
+    def sfx_volume(self, vol: float) -> None:
+        if not 0.0 <= vol <= 2.0:
+            raise ValueError("Volume must be between 0.0 and 2.0")
+        self._sfx_volume = vol
+
+    def add_clip(self, clip: TimelineAudioClip) -> None:
+        self._tracks[clip.clip_id] = clip
+
+    def remove_clip(self, clip_id: str) -> bool:
+        return self._tracks.pop(clip_id, None) is not None
+
+    def get_clip(self, clip_id: str) -> Optional[TimelineAudioClip]:
+        return self._tracks.get(clip_id)
+
+    @property
+    def clips(self) -> List[TimelineAudioClip]:
+        return list(self._tracks.values())
+
+    def add_ducking_rule(self, rule: DuckingRule) -> None:
+        self._ducking_rules.append(rule)
+
+    def remove_ducking_rule(self, rule_id: str) -> bool:
+        for i, r in enumerate(self._ducking_rules):
+            if r.rule_id == rule_id:
+                self._ducking_rules.pop(i)
+                return True
+        return False
+
+    @property
+    def ducking_rules(self) -> List[DuckingRule]:
+        return list(self._ducking_rules)
+
+    def build_amix_filter(
         self,
-        track_a: str,
-        track_b: str,
-        crossfade_duration: float = 2.0,
-        output_path: str = "",
-    ) -> Optional[str]:
+        input_labels: List[str],
+        input_volumes: Optional[List[float]] = None,
+        duration: str = "first",
+    ) -> str:
+        """Build an FFmpeg amix filter from multiple audio inputs.
+
+        Args:
+            input_labels: e.g. ["0:a", "1:a", "2:a"]
+            input_volumes: Optional per-input volume multipliers
+            duration: "first", "longest", or "shortest"
+
+        Returns:
+            amix filter string like "[0:a][1:a]amix=inputs=2:duration=first[out]"
         """
-        İki ses dosyasını crossfade ile birleştirir.
-        """
-        if not output_path:
-            output_path = str(AUDIO_DIR / "crossfaded.mp3")
+        n = len(input_labels)
+        if n == 0:
+            return ""
+        if n == 1:
+            return f"acopy"
 
-        cmd = [
-            "ffmpeg", "-y",
-            "-i", track_a,
-            "-i", track_b,
-            "-filter_complex",
-            f"[0:a][1:a]acrossfade=d={crossfade_duration}:c1=tri:c2=tri[out]",
-            "-map", "[out]",
-            "-c:a", "libmp3lame",
-            "-q:a", "2",
-            output_path,
-        ]
+        vol_parts: List[str] = []
+        for i, label in enumerate(input_labels):
+            vol = input_volumes[i] if input_volumes and i < len(input_volumes) else 1.0
+            if vol != 1.0:
+                vol_parts.append(f"[{label}]volume={vol:.3f}[a{i}]")
+                input_labels_effective = f"[a{i}]"
+            else:
+                input_labels_effective = f"[{label}]"
 
-        return await self._run_ffmpeg(cmd, output_path)
-
-    async def normalize_lufs(
-        self,
-        input_path: str,
-        output_path: str,
-        target_lufs: float = -14.0,
-        true_peak: float = -1.0,
-    ) -> Optional[str]:
-        """
-        LUFS loudness normalization (EBU R128).
-        """
-        cmd = [
-            "ffmpeg", "-y",
-            "-i", input_path,
-            "-af", f"loudnorm=I={target_lufs}:TP={true_peak}:LRA=11",
-            "-c:a", "aac",
-            "-b:a", "192k",
-            output_path,
-        ]
-
-        return await self._run_ffmpeg(cmd, output_path)
-
-    async def analyze_loudness(self, input_path: str) -> Dict:
-        """
-        EBU R128 loudness analizi yapar.
-        Two-pass: önce measurement, sonra normalization.
-        """
-        # Pass 1: Measurement
-        cmd = [
-            "ffmpeg", "-i", input_path,
-            "-af", "ebur128=peak=true",
-            "-f", "null", "-",
-        ]
-
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            _, stderr = await proc.communicate()
-            output = stderr.decode()
-
-            # Parse loudness values
-            result = {
-                "input_i": -23.0,
-                "input_tp": -1.0,
-                "input_lra": 7.0,
-                "input_thresh": -33.0,
-            }
-
-            for line in output.split("\n"):
-                line = line.strip()
-                if "Input Integrated:" in line:
-                    try:
-                        result["input_i"] = float(
-                            line.split(":")[-1].strip().split(" ")[0]
-                        )
-                    except (ValueError, IndexError):
-                        pass
-                elif "Input True Peak:" in line:
-                    try:
-                        result["input_tp"] = float(
-                            line.split(":")[-1].strip().split(" ")[0]
-                        )
-                    except (ValueError, IndexError):
-                        pass
-                elif "Input LRA:" in line:
-                    try:
-                        result["input_lra"] = float(
-                            line.split(":")[-1].strip().split(" ")[0]
-                        )
-                    except (ValueError, IndexError):
-                        pass
-
-            return result
-
-        except Exception as e:
-            logger.error("Loudness analiz hatası: %s", e)
-            return {"input_i": -23.0, "input_tp": -1.0}
-
-    async def extract_audio(
-        self,
-        video_path: str,
-        output_path: Optional[str] = None,
-    ) -> Optional[str]:
-        """Video dosyasından sesi çıkarır."""
-        if not output_path:
-            base = Path(video_path).stem
-            output_path = str(AUDIO_DIR / f"{base}.wav")
-
-        cmd = [
-            "ffmpeg", "-y",
-            "-i", video_path,
-            "-vn",
-            "-acodec", "pcm_s16le",
-            "-ar", "48000",
-            "-ac", "2",
-            output_path,
-        ]
-
-        return await self._run_ffmpeg(cmd, output_path)
-
-    async def remove_silence(
-        self,
-        input_path: str,
-        output_path: str,
-        threshold_db: float = -40.0,
-        min_silence_duration: float = 0.5,
-    ) -> Optional[str]:
-        """
-        Sessizlik kısımlarını kaldırır (basitleştirilmiş).
-        """
-        cmd = [
-            "ffmpeg", "-y",
-            "-i", input_path,
-            "-af", f"silenceremove=start_periods=1:"
-            f"start_duration={min_silence_duration}:"
-            f"start_threshold={threshold_db}dB,"
-            f"areverse,"
-            f"silenceremove=start_periods=1:"
-            f"start_duration={min_silence_duration}:"
-            f"start_threshold={threshold_db}dB,"
-            f"areverse",
-            "-c:a", "aac",
-            output_path,
-        ]
-
-        return await self._run_ffmpeg(cmd, output_path)
-
-    async def create_silence(
-        self,
-        duration: float,
-        output_path: str,
-        sample_rate: int = 48000,
-    ) -> Optional[str]:
-        """
-        Sessiz bir ses dosyası oluşturur.
-        """
-        cmd = [
-            "ffmpeg", "-y",
-            "-f", "lavfi",
-            "-i", f"anullsrc=r={sample_rate}:cl=stereo",
-            "-t", str(duration),
-            "-c:a", "aac",
-            output_path,
-        ]
-
-        return await self._run_ffmpeg(cmd, output_path)
+        filter_str = "".join(vol_parts)
+        mix_inputs = "".join(
+            f"[a{i}]" if (input_volumes and i < len(input_volumes) and input_volumes[i] != 1.0)
+            else f"[{input_labels[i]}]"
+            for i in range(n)
+        )
+        out_label = "amix_out"
+        filter_str += f"{mix_inputs}amix=inputs={n}:duration={duration}:dropout_transition=3[{out_label}]"
+        return filter_str
 
     def build_ducking_filter(
         self,
-        speech_volume: float = 1.0,
-        music_volume: float = 0.3,
-        threshold: float = 0.02,
-        ratio: float = 8.0,
-        attack: int = 200,
-        release: int = 1000,
+        music_label: str,
+        voice_label: str,
+        rule: DuckingRule,
     ) -> str:
+        """Build an FFmpeg sidechaincompress filter for ducking.
+
+        The music track is compressed based on the voice track's level.
         """
-        FFmpeg ducking filter string'i üretir.
-        """
+        p = rule.profile
+        threshold_linear = 10 ** (p.threshold_db / 20.0)
         return (
-            f"[0:a]volume={speech_volume}[speech];"
-            f"[1:a]volume={music_volume}[music];"
-            f"[music][speech]sidechaincompress="
-            f"threshold={threshold}:"
-            f"ratio={ratio}:"
-            f"attack={attack}:"
-            f"release={release}[ducked];"
-            f"[speech][ducked]amix=inputs=2:duration=first[out]"
+            f"[{music_label}][{voice_label}]"
+            f"sidechaincompress="
+            f"threshold={threshold_linear:.6f}:"
+            f"ratio={10 ** (abs(p.range_db) / 20.0):.2f}:"
+            f"attack={p.attack_ms:.1f}:"
+            f"release={p.release_ms:.1f}"
+            f"[ducked]"
         )
 
-    async def _run_ffmpeg(
-        self, cmd: List[str], output_path: str
-    ) -> Optional[str]:
-        """FFmpeg komutunu çalıştırır."""
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            _, stderr = await asyncio.wait_for(
-                proc.communicate(), timeout=300
-            )
+    def build_fade_filter(
+        self,
+        input_label: str,
+        fade_in: Optional[RationalTime] = None,
+        fade_out: Optional[RationalTime] = None,
+        total_duration: Optional[RationalTime] = None,
+    ) -> str:
+        """Build afade filters for a clip."""
+        parts: List[str] = []
+        current = input_label
 
-            if proc.returncode == 0:
-                logger.info("Ses işlemi başarılı: %s", output_path)
-                return output_path
-            else:
-                logger.error("FFmpeg ses hatası: %s", stderr.decode()[:500])
-                return None
+        if fade_in and fade_in > RationalTime.zero():
+            d = fade_in.to_seconds()
+            parts.append(f"[{current}]afade=t=in:d={d:.6f}[fi]")
+            current = "fi"
 
-        except Exception as e:
-            logger.error("FFmpeg ses hatası: %s", e)
-            return None
+        if fade_out and fade_out > RationalTime.zero() and total_duration:
+            d = fade_out.to_seconds()
+            st = (total_duration - fade_out).to_seconds()
+            parts.append(f"[{current}]afade=t=out:st={st:.6f}:d={d:.6f}[fo]")
+            current = "fo"
 
+        if not parts:
+            return ""
+        return ";".join(parts)
 
-# Singleton
-audio_mixer = AudioMixer()
+    def build_loudness_filter(
+        self,
+        input_label: str,
+        target: Optional[LoudnessTarget] = None,
+    ) -> str:
+        """Build an FFmpeg loudnorm filter for loudness normalization."""
+        t = target or self._loudness_target or LoudnessTarget()
+        return (
+            f"[{input_label}]loudnorm="
+            f"I={t.target_lufs}:"
+            f"TP={t.max_true_peak_dbtp}:"
+            f"LRA={t.tolerance_lu * 2}"
+            f"[lnorm]"
+        )
+
+    def build_full_audio_graph(
+        self,
+        timeline: Timeline,
+    ) -> str:
+        """Build a complete audio filter graph from timeline audio tracks.
+
+        Returns the filter_complex string for all audio processing.
+        """
+        audio_tracks = [
+            t for t in timeline.tracks
+            if t.track_type == TrackType.AUDIO and not t.muted
+        ]
+        if not audio_tracks:
+            return ""
+
+        input_labels: List[str] = []
+        vol_adjusts: List[str] = []
+        idx = 0
+
+        for track in audio_tracks:
+            for clip in track.clips:
+                if not clip.enabled:
+                    continue
+                label = f"{idx}:a"
+                current_label = f"a{idx}"
+
+                if clip.volume != 1.0:
+                    vol_adjusts.append(
+                        f"[{label}]volume={clip.volume:.3f}[{current_label}]"
+                    )
+                else:
+                    current_label = label
+
+                input_labels.append(current_label)
+                idx += 1
+
+        if not input_labels:
+            return ""
+
+        parts = list(vol_adjusts)
+
+        if len(input_labels) == 1:
+            parts.append(f"[{input_labels[0]}]anull[aout]")
+            return ";".join(parts)
+
+        mix = self.build_amix_filter(list(input_labels))
+        if mix:
+            parts.append(mix)
+
+        if self._loudness_target:
+            parts.append(self.build_loudness_filter("amix_out"))
+
+        return ";".join(parts) if parts else ""
