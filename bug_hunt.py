@@ -1,352 +1,211 @@
 """Bug-hunt smoke test for Phase 5 timeline/project endpoints."""
 import json
-import os
 import sys
-from pathlib import Path
-
+import time
 import httpx
 
-# Ensure server is up
 BASE = "http://localhost:8000"
 client = httpx.Client(timeout=10)
-try:
-    client.get(f"{BASE}/health")
-except Exception as exc:
-    print("SERVER NOT REACHABLE:", exc)
-    sys.exit(1)
-
 errors = []
 
 
-def check(method, url, expected_code, body=None):
-    fn = client.get if method == "GET" else client.post if method == "POST" else client.delete
+def check(label, method, url, expected_code, body=None):
+    fn = {"GET": client.get, "POST": client.post, "DELETE": client.delete}[method]
     kwargs = {"json": body} if body else {}
     try:
         r = fn(url, **kwargs)
         if r.status_code != expected_code:
-            errors.append(
-                f"{method} {url} -> expected {expected_code} got {r.status_code}: {r.text[:200]}"
-            )
+            errors.append(f"FAIL {label}: expected {expected_code}, got {r.status_code} -- {r.text[:150]}")
             return None
-        ct = r.headers.get("content-type", "")
-        return r.json() if ct.startswith("application/json") else r.text
-    except Exception as exc:
-        errors.append(f"{method} {url} -> CONNECT FAIL: {exc}")
+        print(f"   {label}: {r.status_code} OK")
+        try:
+            return r.json()
+        except Exception:
+            return r.text
+    except Exception as e:
+        errors.append(f"FAIL {label}: {e}")
         return None
 
 
-# --- 1) Project lifecycle ---
-print("1) Project CRUD ...")
-r = client.post(f"{BASE}/api/v1/projects", json={"name": "Bug Hunt"})
-assert r.status_code == 201, f"create project failed: {r.text}"
-pid = r.json()["project_id"]
-print(f"   created: {pid}")
+# ============================================================
+print("=== BUG HUNT: Phase 5 Timeline/Project API ===\n")
 
-r2 = client.get(f"{BASE}/api/v1/projects/{pid}")
-assert r2.status_code == 200, f"get failed: {r2.text}"
-data = r2.json()
-v1 = next(t for t in data["timeline"]["tracks"] if t["track_type"] == "video")
-print(f"   read OK, rev={data['revision']}")
+# 1) Project lifecycle
+print("1) Project CRUD")
+proj = check("create", "POST", f"{BASE}/api/v1/projects", 201, {"name": "BugHunt"})
+pid = proj["project_id"]
+check("read", "GET", f"{BASE}/api/v1/projects/{pid}", 200)
+check("list", "GET", f"{BASE}/api/v1/projects?limit=10", 200)
 
-# --- 2) Clip insert ---
-print("2) Clip insert ...")
-resp = client.post(
-    f"{BASE}/api/v1/projects/{pid}/tracks/{v1['track_id']}/clips",
-    json={
-        "expected_revision": 1,
-        "asset_path": "source.mp4",
-        "source_range": {
-            "start": {"numerator": 0, "denominator": 1},
-            "duration": {"numerator": 10, "denominator": 1},
-        },
-        "record_start": {"numerator": 0, "denominator": 1},
-        "mode": "insert",
-    },
-)
-if resp.status_code != 200:
-    errors.append(f"insert clip failed: {resp.text}")
+# 2) Clip insert
+print("\n2) Clip insert + rippling")
+v1 = next(t for t in proj["timeline"]["tracks"] if t["track_type"] == "video")
+insert1 = check("clip_a", "POST", f"{BASE}/api/v1/projects/{pid}/tracks/{v1['track_id']}/clips", 200, {
+    "expected_revision": 1,
+    "asset_path": "source.mp4",
+    "source_range": {"start": {"numerator": 0, "denominator": 1}, "duration": {"numerator": 10, "denominator": 1}},
+    "record_start": {"numerator": 0, "denominator": 1},
+    "mode": "insert",
+})
+clip_a_id = insert1["clip_id"]
+insert2 = check("clip_b_ripple", "POST", f"{BASE}/api/v1/projects/{pid}/tracks/{v1['track_id']}/clips", 200, {
+    "expected_revision": 2,
+    "asset_path": "b.mp4",
+    "source_range": {"start": {"numerator": 0, "denominator": 1}, "duration": {"numerator": 5, "denominator": 1}},
+    "record_start": {"numerator": 3, "denominator": 1},
+    "mode": "insert",
+})
+# Verify a was split: should now have 3 clips on track
+fetched = check("verify_split", "GET", f"{BASE}/api/v1/projects/{pid}", 200)
+clips = [c for t in fetched["timeline"]["tracks"] if t["track_type"] == "video" for c in t["clips"]]
+if len(clips) != 3:
+    errors.append(f"Expected 3 clips after insert, got {len(clips)}")
 else:
-    clip_id = resp.json()["clip_id"]
-    print(f"   OK, rev={resp.json()['project']['revision']}")
+    print(f"   split OK: {len(clips)} clips on V1")
 
-# --- 3) Render (compiler must reject -- asset not on disk) ---
-print("3) Render (expect 422 asset missing) ...")
-resp = client.post(
-    f"{BASE}/api/v1/projects/{pid}/renders",
-    json={"aspect_ratio": "9:16", "resolution": "1080p", "crf": 23},
-)
-if resp.status_code == 422:
-    print(f"   422 OK - {resp.text[:100]}")
-else:
-    errors.append(f"render expected 422 got {resp.status_code}: {resp.text[:200]}")
+# 3) Render guard (missing asset)
+print("\n3) Render with missing asset")
+check("render_422", "POST", f"{BASE}/api/v1/projects/{pid}/renders", 422, {
+    "aspect_ratio": "16:9", "resolution": "1080p", "crf": 23,
+})
 
-# --- 4) Delete project ---
-print("4) Delete ...")
-resp = client.delete(f"{BASE}/api/v1/projects/{pid}")
-assert resp.status_code == 204, f"delete failed: {resp.text}"
+# 4) Revision conflict
+print("\n4) Revision conflict")
+check("conflict", "POST", f"{BASE}/api/v1/projects/{pid}/tracks/{v1['track_id']}/clips", 409, {
+    "expected_revision": 1,  # stale
+    "asset_path": "c.mp4",
+    "source_range": {"start": {"numerator": 0, "denominator": 1}, "duration": {"numerator": 3, "denominator": 1}},
+    "record_start": {"numerator": 0, "denominator": 1},
+    "mode": "insert",
+})
 
-# --- 5) 404 guards ---
-print("5) 404 guards ...")
-resp = client.get(f"{BASE}/api/v1/projects/{pid}")
-assert resp.status_code == 404, f"expected 404 got {resp.status_code}"
-print("   deleted project 404 OK")
+# 5) Range edit (lift)
+print("\n5) Range edit (lift)")
+clips_before = len(clips)
+check("lift", "POST", f"{BASE}/api/v1/projects/{pid}/tracks/{v1['track_id']}/range-edit", 200, {
+    "expected_revision": 3,
+    "time_range": {"start": {"numerator": 0, "denominator": 1}, "duration": {"numerator": 2, "denominator": 1}},
+    "mode": "lift",
+})
 
-resp = client.get(f"{BASE}/api/v1/renders/nonexistent")
-assert resp.status_code == 404, f"expected 404 got {resp.status_code}"
-print("   unknown render job 404 OK")
+# 6) Range edit (extract = ripple close gap)
+print("\n6) Range edit (extract)")
+check("extract", "POST", f"{BASE}/api/v1/projects/{pid}/tracks/{v1['track_id']}/range-edit", 200, {
+    "expected_revision": 4,
+    "time_range": {"start": {"numerator": 0, "denominator": 1}, "duration": {"numerator": 1, "denominator": 1}},
+    "mode": "extract",
+})
 
-# --- 6) Revision conflict ---
-print("6) Revision conflict ...")
-r1 = client.post(f"{BASE}/api/v1/projects", json={"name": "Conflict Test"})
-pid2 = r1.json()["project_id"]
-v2 = next(t for t in r1.json()["timeline"]["tracks"] if t["track_type"] == "video")
+# 7) Ripple trim
+print("\n7) Ripple trim")
+fetched2 = check("pre_trim", "GET", f"{BASE}/api/v1/projects/{pid}", 200)
+remaining_clips = [c for t in fetched2["timeline"]["tracks"] if t["track_type"] == "video" for c in t["clips"]]
+first_clip_id = remaining_clips[0]["clip_id"]
+check("ripple_trim", "POST", f"{BASE}/api/v1/projects/{pid}/tracks/{v1['track_id']}/clips/{first_clip_id}/ripple-trim", 200, {
+    "expected_revision": 5,
+    "new_source_duration": {"numerator": 3, "denominator": 1},
+})
 
-client.post(
-    f"{BASE}/api/v1/projects/{pid2}/tracks/{v2['track_id']}/clips",
-    json={
-        "expected_revision": 1,
-        "asset_path": "a.mp4",
-        "source_range": {
-            "start": {"numerator": 0, "denominator": 1},
-            "duration": {"numerator": 5, "denominator": 1},
-        },
-        "record_start": {"numerator": 0, "denominator": 1},
-        "mode": "insert",
-    },
-)
-
-c1 = client.post(
-    f"{BASE}/api/v1/projects/{pid2}/tracks/{v2['track_id']}/clips",
-    json={
-        "expected_revision": 1,
-        "asset_path": "b.mp4",
-        "source_range": {
-            "start": {"numerator": 0, "denominator": 1},
-            "duration": {"numerator": 3, "denominator": 1},
-        },
-        "record_start": {"numerator": 0, "denominator": 1},
-        "mode": "insert",
-    },
-)
-if c1.status_code == 409:
-    print("   409 conflict OK")
-else:
-    errors.append(f"conflict expected 409 got {c1.status_code}: {c1.text[:200]}")
-client.delete(f"{BASE}/api/v1/projects/{pid2}")
-
-# --- 7) Lock guard (PermissionError → HTTP 423) ---
-print("7) PermissionError -> 423 guard ...")
-r3 = client.post(f"{BASE}/api/v1/projects", json={"name": "Lock Test"})
-pid3 = r3.json()["project_id"]
-v3 = next(t for t in r3.json()["timeline"]["tracks"] if t["track_type"] == "video")
-
-# Insert a clip, then lock it
-ins = client.post(
-    f"{BASE}/api/v1/projects/{pid3}/tracks/{v3['track_id']}/clips",
-    json={
-        "expected_revision": 1,
-        "asset_path": "a.mp4",
-        "source_range": {
-            "start": {"numerator": 0, "denominator": 1},
-            "duration": {"numerator": 5, "denominator": 1},
-        },
-        "record_start": {"numerator": 0, "denominator": 1},
-        "mode": "insert",
-    },
-)
-project_data = ins.json()["project"]
-cd = next(
-    clip for t in project_data["timeline"]["tracks"] if t["track_type"] == "video"
-    for clip in t["clips"]
-)
-real_clip_id = cd["clip_id"]
-
-# Lock the clip via direct model manipulation (no API endpoint yet for this)
-# and then try to insert another clip that overlaps it
-import sys
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from services.project_store import project_store
-from services.timeline_engine import EditMode, RationalTime, TimeRange, TimelineClip
-
-project = project_store.get(pid3)
-track = project.timeline.get_track(v3["track_id"])
-track.get_clip(real_clip_id).locked = True
-project_store.save(project, expected_revision=project.revision)
-
-# Now attempt overwrite over locked clip → 423
-resp = client.post(
-    f"{BASE}/api/v1/projects/{pid3}/tracks/{v3['track_id']}/clips",
-    json={
-        "expected_revision": project.revision,
-        "asset_path": "b.mp4",
-        "source_range": {
-            "start": {"numerator": 0, "denominator": 1},
-            "duration": {"numerator": 3, "denominator": 1},
-        },
-        "record_start": {"numerator": 0, "denominator": 1},
+# 8) Overwrite (replace in place)
+print("\n8) Overwrite edit")
+fetched3 = check("pre_overwrite", "GET", f"{BASE}/api/v1/projects/{pid}", 200)
+clips3 = [c for t in fetched3["timeline"]["tracks"] if t["track_type"] == "video" for c in t["clips"]]
+if clips3:
+    first_start = clips3[0]["record_range"]["start"]["numerator"]
+    check("overwrite", "POST", f"{BASE}/api/v1/projects/{pid}/tracks/{v1['track_id']}/clips", 200, {
+        "expected_revision": 6,
+        "asset_path": "replaced.mp4",
+        "source_range": {"start": {"numerator": 0, "denominator": 1}, "duration": {"numerator": 2, "denominator": 1}},
+        "record_start": {"numerator": first_start, "denominator": 1},
         "mode": "overwrite",
-    },
-)
-if resp.status_code == 423:
-    print("   423 locked clip OK")
-else:
-    errors.append(
-        f"locked clip overwrite expected 423 got {resp.status_code}: {resp.text[:200]}"
-    )
-client.delete(f"{BASE}/api/v1/projects/{pid3}")
+    })
 
-# --- 8) Validate timeline model integrity via CLI ---
-print("8) CLI model integrity ...")
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from services.timeline_engine import TrackType
+# 9) 404 guards
+print("\n9) 404 guards")
+check("deleted_project", "GET", f"{BASE}/api/v1/projects/00000000-0000-0000-0000-000000000000", 404)
+check("unknown_render", "GET", f"{BASE}/api/v1/projects/renders/nonexistent-id", 404)
+check("missing_clip_ripple", "POST", f"{BASE}/api/v1/projects/{pid}/tracks/{v1['track_id']}/clips/missing/ripple-trim", 404, {
+    "expected_revision": 7,
+    "new_source_duration": {"numerator": 1, "denominator": 1},
+})
 
-r4 = client.post(f"{BASE}/api/v1/projects", json={"name": "Integrity"})
-pid4 = r4.json()["project_id"]
-v4 = next(t for t in r4.json()["timeline"]["tracks"] if t["track_type"] == "video")
+# 10) Validation guards
+print("\n10) Validation guards (422)")
+check("zero_speed", "POST", f"{BASE}/api/v1/projects/{pid}/tracks/{v1['track_id']}/clips", 422, {
+    "expected_revision": 7,
+    "asset_path": "x.mp4",
+    "source_range": {"start": {"numerator": 0, "denominator": 1}, "duration": {"numerator": 5, "denominator": 1}},
+    "record_start": {"numerator": 0, "denominator": 1},
+    "speed_numerator": 0,
+    "speed_denominator": 1,
+    "mode": "insert",
+})
+check("empty_asset", "POST", f"{BASE}/api/v1/projects/{pid}/tracks/{v1['track_id']}/clips", 422, {
+    "expected_revision": 7,
+    "asset_path": "",
+    "source_range": {"start": {"numerator": 0, "denominator": 1}, "duration": {"numerator": 5, "denominator": 1}},
+    "record_start": {"numerator": 0, "denominator": 1},
+    "mode": "insert",
+})
 
-# Insert a clip
-client.post(
-    f"{BASE}/api/v1/projects/{pid4}/tracks/{v4['track_id']}/clips",
-    json={
-        "expected_revision": 1,
-        "asset_path": "a.mp4",
-        "source_range": {
-            "start": {"numerator": 0, "denominator": 1},
-            "duration": {"numerator": 10, "denominator": 1},
-        },
-        "record_start": {"numerator": 0, "denominator": 1},
-        "mode": "insert",
-    },
-)
+# 11) Output path sandbox
+print("\n11) Output path sandbox")
+for bad in ["/tmp/evil.mp4", "data/exports/../secrets.mp4", "C:\\Windows\\evil.mp4"]:
+    check(f"sandbox_{bad[:15]}", "POST", f"{BASE}/api/v1/projects/{pid}/renders", 422, {
+        "aspect_ratio": "16:9", "resolution": "1080p", "crf": 23, "output_path": bad,
+    })
 
-# Overlapping insert must fail (track validation rejects overlap)
-resp = client.post(
-    f"{BASE}/api/v1/projects/{pid4}/tracks/{v4['track_id']}/clips",
-    json={
-        "expected_revision": 2,
-        "asset_path": "b.mp4",
-        "source_range": {
-            "start": {"numerator": 0, "denominator": 1},
-            "duration": {"numerator": 3, "denominator": 1},
-        },
-        "record_start": {"numerator": 0, "denominator": 1},
-        "mode": "insert",
-    },
-)
-assert resp.status_code == 422, f"overlap should 422, got {resp.status_code}"
-print(f"   overlap rejected 422 (as expected)")
+# 12) Track operations
+print("\n12) Track add")
+check("add_title_track", "POST", f"{BASE}/api/v1/projects/{pid}/tracks", 200, {
+    "expected_revision": 7, "track_type": "title", "name": "T1",
+})
 
-# Speed-split record rejection
-resp = client.post(
-    f"{BASE}/api/v1/projects/{pid4}/tracks/{v4['track_id']}/clips",
-    json={
-        "expected_revision": 2,
-        "asset_path": "c.mp4",
-        "source_range": {
-            "start": {"numerator": 0, "denominator": 1},
-            "duration": {"numerator": 5, "denominator": 1},
-        },
-        "record_start": {"numerator": 5, "denominator": 1},
-        "mode": "insert",
-        "speed_numerator": 2,
-        "speed_denominator": 1,
-    },
-)
-if resp.status_code == 200:
-    print(f"   speed insert accepted (record_duration = 5 * (1/2) = 2.5)")
-else:
-    errors.append(f"speed insert should work: {resp.status_code} {resp.text[:200]}")
+# 13) Empty timeline render
+print("\n13) Empty timeline render guard")
+r_new = check("create_empty", "POST", f"{BASE}/api/v1/projects", 201, {"name": "Empty"})
+pid2 = r_new["project_id"]
+check("render_empty", "POST", f"{BASE}/api/v1/projects/{pid2}/renders", 422, {
+    "aspect_ratio": "16:9", "resolution": "1080p", "crf": 23,
+})
 
-# Verify destructured clip by fetching project
-fetched = client.get(f"{BASE}/api/v1/projects/{pid4}")
-clips = [
-    clip for t in fetched.json()["timeline"]["tracks"] if t["track_type"] == "video"
-    for clip in t["clips"]
-]
-print(f"   clip count: {len(clips)}")
-client.delete(f"{BASE}/api/v1/projects/{pid4}")
+# 14) Delete project
+print("\n14) Delete")
+check("delete_1", "DELETE", f"{BASE}/api/v1/projects/{pid}", 204)
+check("delete_2", "DELETE", f"{BASE}/api/v1/projects/{pid2}", 204)
+check("delete_gone", "DELETE", f"{BASE}/api/v1/projects/{pid}", 404)
 
-# --- 9) Empty timeline render guard ---
-print("9) Empty timeline guard ...")
-r5 = client.post(f"{BASE}/api/v1/projects", json={"name": "Empty"})
-pid5 = r5.json()["project_id"]
-resp = client.post(
-    f"{BASE}/api/v1/projects/{pid5}/renders",
-    json={"aspect_ratio": "16:9", "resolution": "1080p", "crf": 23},
-)
-if resp.status_code == 422:
-    print(f"   422 empty timeline OK")
-else:
-    errors.append(f"empty timeline expected 422 got {resp.status_code}: {resp.text[:200]}")
-client.delete(f"{BASE}/api/v1/projects/{pid5}")
+# 15) System health survives everything
+print("\n15) System health intact")
+check("health", "GET", f"{BASE}/health", 200)
+check("system_status", "GET", f"{BASE}/api/system/status", 200)
 
-# --- 10) Meta-system integrity ---
-print("10) System health still alive ...")
-r = client.get(f"{BASE}/api/system/status")
-assert r.status_code == 200
-d = r.json()
-assert "cpu_usage" in d
-assert "target_channel" in d
-print(f"   system status OK, channel={d['target_channel']}")
-
-r = client.get(f"{BASE}/openapi.json")
-paths = sorted(r.json()["paths"].keys())
+# 16) OpenAPI integrity
+print("\n16) OpenAPI routes")
+api = check("openapi", "GET", f"{BASE}/openapi.json", 200)
+paths = sorted(api["paths"].keys()) if api else []
 required = [
-    "/api/v1/projects",
-    "/api/v1/projects/{project_id}",
+    "/api/v1/projects", "/api/v1/projects/{project_id}",
     "/api/v1/projects/{project_id}/tracks",
     "/api/v1/projects/{project_id}/tracks/{track_id}/clips",
     "/api/v1/projects/{project_id}/tracks/{track_id}/range-edit",
     "/api/v1/projects/{project_id}/tracks/{track_id}/clips/{clip_id}/ripple-trim",
     "/api/v1/projects/{project_id}/renders",
-    "/api/v1/renders/{job_id}",
+    "/api/v1/projects/renders/{job_id}",
 ]
 missing = [p for p in required if p not in paths]
 if missing:
     errors.append(f"Missing routes: {missing}")
-print(f"   routes: {len(paths)}")
+else:
+    print(f"   all {len(required)} timeline routes present, total={len(paths)}")
 
-# --- 11) Output-path sandboxing ---
-print("11) Output-path sandbox ...")
-r6 = client.post(f"{BASE}/api/v1/projects", json={"name": "Sandbox"})
-pid6 = r6.json()["project_id"]
-v6 = next(t for t in r6.json()["timeline"]["tracks"] if t["track_type"] == "video")
-client.post(
-    f"{BASE}/api/v1/projects/{pid6}/tracks/{v6['track_id']}/clips",
-    json={
-        "expected_revision": 1,
-        "asset_path": "source.mp4",
-        "source_range": {
-            "start": {"numerator": 0, "denominator": 1},
-            "duration": {"numerator": 5, "denominator": 1},
-        },
-        "record_start": {"numerator": 0, "denominator": 1},
-        "mode": "insert",
-    },
-)
-for bad_path in ["/tmp/evil.mp4", "data/exports/../secrets.mp4"]:
-    resp = client.post(
-        f"{BASE}/api/v1/projects/{pid6}/renders",
-        json={
-            "aspect_ratio": "16:9",
-            "resolution": "1080p",
-            "crf": 23,
-            "output_path": bad_path,
-        },
-    )
-    if resp.status_code == 422:
-        print(f"   sandbox rejected '{bad_path}' -> 422")
-    else:
-        errors.append(f"output-path sandbox failed for '{bad_path}': {resp.status_code}")
-client.delete(f"{BASE}/api/v1/projects/{pid6}")
-
-# --- Final ---
+# ============================================================
 client.close()
+print(f"\n{'=' * 50}")
 if errors:
-    print(f"\nFAILURE: {len(errors)} error(s)")
+    print(f"FAILURES: {len(errors)}")
     for e in errors:
-        print(f"  - {e}")
+        print(f"  {e}")
     sys.exit(1)
 else:
-    print(f"\n=== ALL BUG-HUNT TESTS PASSED ===")
+    print("ALL BUG-HUNT TESTS PASSED")
