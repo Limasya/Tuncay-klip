@@ -117,8 +117,8 @@ app = FastAPI(
 # CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=["http://localhost:8000", "http://127.0.0.1:8000"],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -195,7 +195,7 @@ async def readiness_check():
     from microservices.orchestrator import orchestrator as pipe_orch
     checks = {
         "database": True,
-        "event_bus": pipe_orch.event_bus is not None if pipe_orch.event_bus else True,
+        "event_bus": pipe_orch.event_bus is not None,
         "pipeline_running": pipe_orch._is_running,
     }
     ready = all(checks.values())

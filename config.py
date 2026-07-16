@@ -3,7 +3,8 @@ Merkezi yapılandırma modülü - tüm ortam değişkenlerini yönetir.
 Pydantic v1 uyumlu.
 """
 import utils.pydantic_compat  # noqa: F401  patch v1 BaseModel
-from pydantic import BaseSettings
+from pydantic import BaseSettings, validator
+import os
 from functools import lru_cache
 
 
@@ -79,6 +80,12 @@ class Settings(BaseSettings):
     secret_key: str = "change-me-in-production"
     algorithm: str = "HS256"
     access_token_expire_minutes: int = 1440
+
+    @validator('secret_key')
+    def validate_secret_key(cls, v: str) -> str:
+        if v == "change-me-in-production":
+            raise ValueError("secret_key must be set to a secure value in production")
+        return v
 
     # Server
     host: str = "0.0.0.0"

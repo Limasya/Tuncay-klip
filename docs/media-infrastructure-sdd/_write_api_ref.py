@@ -8,7 +8,7 @@ OUTPUT_PATH = os.path.join(
     "11-api-contracts-master.md"
 )
 
-content = r"""# MASTER API REFERANS — Medya Altyapisi Sozlesme Belgesi
+content = r'''# MASTER API REFERANS — Medya Altyapisi Sozlesme Belgesi
 
 **Surum:** 3.0.0  
 **Durum:** Uretimde Kullanima Hazir  
@@ -1038,7 +1038,7 @@ class Compositor:
     def get_visible_layers(self, time: Timecode) -> list[Layer]: ...
     def get_render_tree(self, time: Timecode) -> RenderNode: ...
 ```
-"""
+'''
 
 with open(OUTPUT_PATH, "w", encoding="utf-8") as f:
     f.write(content)

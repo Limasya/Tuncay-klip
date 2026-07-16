@@ -27,7 +27,7 @@ class ClipCategory(str, enum.Enum):
     VICTORY = "victory"
     FAIL = "fail"
     RAGE = "rage"
-    WHOLESONE = "wholesome"
+    WHOLESOME = "wholesome"
     SKILL = "skill"
     OTHER = "other"
 
