@@ -10,6 +10,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException
 from pydantic import BaseModel
 
 from services.social_video_generator import social_video_gen
+from services.master_pipeline import master_pipeline
 from services.ai_pipeline import ai_pipeline
 
 logger = logging.getLogger(__name__)
@@ -47,4 +48,28 @@ async def generate_viral_video_endpoint(
         return {"status": "accepted", "message": "Viral video generation started in background"}
     except Exception as e:
         logger.error("Failed to start viral video generation: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class MasterPipelineRequest(BaseModel):
+    url: str
+
+@router.post("/generate-master-pipeline", status_code=202)
+async def generate_master_pipeline_endpoint(
+    request: MasterPipelineRequest, background_tasks: BackgroundTasks
+):
+    """
+    Sadece URL vererek tüm süreci otonom işletir.
+    (İndirme -> LLM Kırpma -> Yüz Takibi -> Render)
+    """
+    try:
+        async def background_master():
+            logger.info("Starting background master pipeline for %s", request.url)
+            result = await master_pipeline.process_url(request.url)
+            logger.info("Background master pipeline completed: %s", result)
+
+        background_tasks.add_task(background_master)
+        return {"status": "accepted", "message": "Master autonomous pipeline started in background"}
+    except Exception as e:
+        logger.error("Failed to start master pipeline: %s", e)
         raise HTTPException(status_code=500, detail=str(e))

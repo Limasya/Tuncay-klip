@@ -266,35 +266,104 @@ class QualityControl:
     async def _check_loudness(
         self, path: str, info: Dict, **kwargs
     ) -> List[QCIssue]:
-        """Loudness kontrolü (basitleştirilmiş)."""
+        """Gerçek LUFS loudness kontrolü (FFmpeg ebur128)."""
         issues = []
-        # Gerçek loudness analizi için ebur128 filter kullanılmalı
-        # Burada sadece stream varlığını kontrol ediyoruz
+        try:
+            cmd = [
+                "ffmpeg", "-i", path,
+                "-af", "ebur128=peak=true",
+                "-f", "null", "-"
+            ]
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            _, stderr = await proc.communicate()
+            output = stderr.decode(errors="ignore")
+            # ebur128 son satırda özet verir: I: -XX.X LUFS
+            for line in output.splitlines():
+                if "Integrated loudness" in line or "I:" in line and "LUFS" in line:
+                    parts = line.split()
+                    for i, p in enumerate(parts):
+                        if p == "I:" and i + 1 < len(parts):
+                            try:
+                                lufs = float(parts[i + 1])
+                                # TikTok/YouTube öneri: -14 LUFS ±2
+                                if lufs < -24:
+                                    issues.append(QCIssue(
+                                        "warning", "audio",
+                                        f"Ses çok düşük: {lufs:.1f} LUFS (hedef: -14)",
+                                        value=str(lufs), threshold="-24"
+                                    ))
+                                elif lufs > -6:
+                                    issues.append(QCIssue(
+                                        "error", "audio",
+                                        f"Ses çok yüksek/clipping riski: {lufs:.1f} LUFS",
+                                        value=str(lufs), threshold="-6"
+                                    ))
+                            except (ValueError, IndexError):
+                                pass
+        except Exception as e:
+            logger.warning("Loudness check failed: %s", e)
         return issues
 
     async def _check_black_frames(
         self, path: str, info: Dict, **kwargs
     ) -> List[QCIssue]:
-        """Siyah kare kontrolü."""
+        """Gerçek siyah kare kontrolü (FFmpeg blackdetect)."""
         issues = []
-        # Basitleştirilmiş: sadece dosya boyutu kontrolü
-        fmt = info.get("format", {})
-        size = int(fmt.get("size", 0))
-
-        if size > 0 and size < 10000:
-            issues.append(QCIssue(
-                "warning", "video",
-                f"Çok küçük dosya: {size} byte - muhtemelen boş/kırık"
-            ))
-
+        try:
+            cmd = [
+                "ffmpeg", "-i", path,
+                "-vf", "blackdetect=d=0.5:pix_th=0.10",
+                "-an", "-f", "null", "-"
+            ]
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            _, stderr = await proc.communicate()
+            output = stderr.decode(errors="ignore")
+            black_count = output.count("black_start")
+            if black_count > 3:
+                issues.append(QCIssue(
+                    "warning", "video",
+                    f"{black_count} adet siyah kare bölümü tespit edildi",
+                    value=str(black_count)
+                ))
+        except Exception as e:
+            logger.warning("Black frame check failed: %s", e)
         return issues
 
     async def _check_frozen_frames(
         self, path: str, info: Dict, **kwargs
     ) -> List[QCIssue]:
-        """Donmuş kare kontrolü."""
+        """Gerçek donmuş kare kontrolü (FFmpeg freezedetect)."""
         issues = []
-        # Basitleştirilmiş
+        try:
+            cmd = [
+                "ffmpeg", "-i", path,
+                "-vf", "freezedetect=n=-60dB:d=1.0",
+                "-an", "-f", "null", "-"
+            ]
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            _, stderr = await proc.communicate()
+            output = stderr.decode(errors="ignore")
+            freeze_count = output.count("freeze_start")
+            if freeze_count > 0:
+                issues.append(QCIssue(
+                    "warning", "video",
+                    f"{freeze_count} adet donmuş kare bölümü tespit edildi",
+                    value=str(freeze_count)
+                ))
+        except Exception as e:
+            logger.warning("Frozen frame check failed: %s", e)
         return issues
 
     def _calculate_score(self, issues: List[QCIssue]) -> float:

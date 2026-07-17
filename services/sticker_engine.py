@@ -45,6 +45,12 @@ EMOJI_MAP = {
     "sparkles": "\\u2728",
     "boom": "\\U0001F4A5",
     "muscle": "\\U0001F4AA",
+    "trophy": "\\U0001F3C6",
+    "medal": "\\U0001F3C5",
+    "soccer": "\\u26BD",
+    "gun": "\\U0001F52B",
+    "skull": "\\U0001F480",
+    "tada": "\\U0001F389",
 }
 
 

@@ -105,6 +105,23 @@
   </div>
 </div>
 
+<div class="section" style="background: var(--card); border: 1px solid var(--accent); padding: 20px; border-radius: 12px; margin: 20px;">
+  <h2>Otonom Ajans (Master Pipeline) 🚀</h2>
+  <p style="font-size: 13px; color: var(--muted); margin-bottom: 15px;">
+    YouTube, Twitch veya Kick VOD linkini girin. Yapay Zeka videoyu anlasın, viral klipleri kessin, yüz takibi yapıp sansürlesin ve emojili altyazılarını çıkarıp kapak fotoğrafıyla size teslim etsin.
+  </p>
+  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px;">
+    <input type="text" id="vod-streamer" placeholder="Yayıncı adı (ör: Tuncay)" style="padding: 10px; border-radius: 8px; border: 1px solid #2a2a4a; background: #0a0a1a; color: white;">
+    <input type="text" id="vod-game" placeholder="Oyun adı (ör: Valorant)" style="padding: 10px; border-radius: 8px; border: 1px solid #2a2a4a; background: #0a0a1a; color: white;">
+  </div>
+  <div style="display: flex; gap: 10px;">
+    <input type="text" id="vod-url" placeholder="https://youtube.com/watch?v=..." style="flex: 1; padding: 10px; border-radius: 8px; border: 1px solid #2a2a4a; background: #0a0a1a; color: white;">
+    <button onclick="startMasterPipeline()" id="pipeline-btn" style="background: var(--accent); color: white; border: none; padding: 10px 20px; border-radius: 8px; cursor: pointer; font-weight: bold; white-space: nowrap;">Otomatik Üret 🎬</button>
+  </div>
+  <div id="pipeline-status" style="margin-top: 10px; font-size: 13px; color: var(--green);"></div>
+  <div id="pipeline-results" style="margin-top: 16px; display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px;"></div>
+</div>
+
 <div class="section">
   <h2>Requests per Second (last 60)</h2>
   <div class="sparkline" id="rps-chart"></div>
@@ -241,6 +258,92 @@ async function pollStatus() {
     }
   } catch {}
 }
+
+async function startMasterPipeline() {
+    const urlInput = document.getElementById('vod-url').value;
+    const streamer = document.getElementById('vod-streamer').value || 'Yayıncı';
+    const game = document.getElementById('vod-game').value || 'Oyun';
+    const statusDiv = document.getElementById('pipeline-status');
+    const btn = document.getElementById('pipeline-btn');
+    
+    if (!urlInput) {
+        statusDiv.style.color = "var(--red)";
+        statusDiv.innerText = "Lütfen geçerli bir URL girin!";
+        return;
+    }
+    
+    btn.disabled = true;
+    btn.innerText = "İşleniyor... ⏳";
+    statusDiv.style.color = "var(--yellow)";
+    statusDiv.innerText = "⚡ Otonom Ajans başlatıldı — arka planda çalışıyor. Süreci Event Log'dan takip edin.";
+    document.getElementById('pipeline-results').innerHTML = '';
+    
+    try {
+        const response = await fetch('/api/v1/social/generate-master-pipeline', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url: urlInput, streamer: streamer, game: game })
+        });
+        
+        if (response.ok) {
+            const data = await response.json();
+            statusDiv.style.color = "var(--green)";
+            statusDiv.innerText = `✅ Pipeline başlatıldı! Klipler hazırlanıyor...`;
+            addLogEntry("MASTER_PIPELINE", `▶ Başladı: ${urlInput} (${streamer} / ${game})`);
+            
+            // Eger direkt sonuc donuyorsa goster
+            if (data.generated_clips) renderClipResults(data.generated_clips);
+            
+            document.getElementById('vod-url').value = '';
+        } else {
+            statusDiv.style.color = "var(--red)";
+            statusDiv.innerText = "❌ Hata oluştu. Sunucu loglarını kontrol edin.";
+        }
+    } catch (e) {
+        statusDiv.style.color = "var(--red)";
+        statusDiv.innerText = "❌ Sunucuya bağlanılamadı.";
+    } finally {
+        btn.disabled = false;
+        btn.innerText = "Otomatik Üret 🎬";
+    }
+}
+
+function renderClipResults(clips) {
+    const emotionEmoji = {
+        surprised: "😮", happy: "😂", angry: "😡",
+        fear: "😨", disgust: "🤢", sad: "😢", neutral: "😐"
+    };
+    const grid = document.getElementById('pipeline-results');
+    grid.innerHTML = clips.map((c, i) => {
+        const emoji = emotionEmoji[c.emotion] || "🎥";
+        const scoreColor = c.viral_score > 20 ? 'badge-green' : c.viral_score > 8 ? 'badge-yellow' : 'badge-red';
+        return `
+        <div style="background:#0a0a1a;border:1px solid #2a2a4a;border-radius:10px;padding:14px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                <span style="font-weight:700;color:var(--accent);">🎬 Klip #${c.rank || i+1}</span>
+                <span class="badge ${scoreColor}">Skor: ${(c.viral_score||0).toFixed(1)}</span>
+            </div>
+            <div style="font-size:11px;color:var(--muted);margin-bottom:6px;">
+                YOLOv8: ${(c.action_score||0).toFixed(2)} &nbsp;|
+                Sahneler: ${c.scene_count||0} &nbsp;|
+                ${emoji} Duygu: <strong style="color:var(--yellow)">${c.emotion||'neutral'}</strong>
+                ${c.emotion_bonus > 0 ? `<span style="color:#9c27b0">(+${(c.emotion_bonus*5).toFixed(0)} viral bonus)</span>` : ''}
+            </div>
+            ${c.qc ? `<div style="font-size:11px;margin-bottom:8px;">QC: <span class="badge ${c.qc.passed?'badge-green':'badge-yellow'}">${c.qc.passed?'✓ Geçti':'⚠ Uyarı'}</span> ${c.qc.score}/100</div>` : ''}
+            ${c.social_kit && c.social_kit.hooks && c.social_kit.hooks[0] ? `<div style="font-size:12px;color:var(--yellow);margin-bottom:6px;border-left:3px solid var(--accent);padding-left:8px;">“${c.social_kit.hooks[0]}”</div>` : ''}
+            ${c.social_kit && c.social_kit.hashtags ? `<div style="font-size:11px;color:#9c27b0;margin-bottom:8px;">${(c.social_kit.hashtags||[]).slice(0,4).join(' ')}</div>` : ''}
+            <div style="display:flex;gap:10px;margin-top:10px;">
+                <a href="${c.output_path}" target="_blank" style="color:var(--green);font-size:12px;text-decoration:none;padding:4px 8px;border:1px solid var(--green);border-radius:6px;">📥 Video</a>
+                <a href="${c.thumbnail_path||''}" target="_blank" style="color:var(--accent);font-size:12px;text-decoration:none;padding:4px 8px;border:1px solid var(--accent);border-radius:6px;">🖼 Kapak</a>
+                <a href="${c.media_kit_path||''}" target="_blank" style="color:var(--muted);font-size:12px;text-decoration:none;padding:4px 8px;border:1px solid #444;border-radius:6px;">📄 Kit</a>
+            </div>
+            <div style="margin-top:8px;font-size:10px;color:#555;">
+                ${(c.features||[]).slice(0,5).join(' • ')}
+            </div>
+        </div>`;
+    }).join('');
+}
+
 
 connect();
 setInterval(pollStatus, 5000);
