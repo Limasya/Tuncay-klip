@@ -52,6 +52,7 @@ from microservices.ai_generator.service import AIGeneratorMicroservice
 from microservices.uploader.service import UploaderMicroservice
 from microservices.thumbnail.service import ThumbnailMicroservice
 from microservices.notification.service import NotificationService
+from services.ai_pipeline import ai_pipeline as ai_pipeline_hub
 from config import get_settings
 
 logger = logging.getLogger("orchestrator")
@@ -87,6 +88,7 @@ class PipelineOrchestrator:
         self.uploader: Optional[UploaderMicroservice] = None
         self.thumbnail: Optional[ThumbnailMicroservice] = None
         self.notification_service: Optional[NotificationService] = None
+        self.ai_pipeline_hub = None
 
         self._is_running = False
         self._start_time: Optional[datetime] = None
@@ -144,6 +146,26 @@ class PipelineOrchestrator:
         # Notification service (webhooks)
         self.notification_service = NotificationService(event_bus=self.event_bus)
         self.notification_service.auto_configure_from_settings()
+
+        # AI Pipeline Hub — aggregates Vision AI, Audio AI, Chat AI,
+        # LLM, Recommendation Engine, and Smart Editor.
+        self.ai_pipeline_hub = ai_pipeline_hub
+        try:
+            await self.ai_pipeline_hub.start()
+        except Exception as e:
+            logger.warning("AI Pipeline Hub start failed (non-fatal): %s", e)
+
+        # AI_METADATA_READY subscriber — log enrichment events.
+        async def _on_ai_metadata_ready(event: SystemEvent):
+            logger.info(
+                "AI_METADATA_READY: clip_id=%s",
+                event.payload.get("clip_id", "?"),
+            )
+
+        self.event_bus.subscribe(
+            EventType.AI_METADATA_READY.value,
+            _on_ai_metadata_ready,
+        )
 
         logger.info("All microservices initialized")
 
@@ -228,6 +250,12 @@ class PipelineOrchestrator:
             except Exception as e:
                 logger.error("Event bus stop error: %s", e)
 
+        if self.ai_pipeline_hub:
+            try:
+                await self.ai_pipeline_hub.stop()
+            except Exception as e:
+                logger.error("AI pipeline hub stop error: %s", e)
+
         logger.info("Pipeline stopped")
 
     async def _on_new_frame(self, frame: Frame):
@@ -267,7 +295,7 @@ class PipelineOrchestrator:
             logger.error("Audio analysis error (non-fatal): %s", e)
 
     async def _on_clip_created(self, event: SystemEvent):
-        """Handle clip creation events — log + save to DB."""
+        """Handle clip creation events — log, save to DB, and enrich with AI."""
         clip_data = event.payload
         logger.info(
             f"CLIP CREATED! "
@@ -281,6 +309,51 @@ class PipelineOrchestrator:
             await save_pipeline_clip_to_db(clip_data)
         except Exception as e:
             logger.warning(f"DB clip save failed (non-critical): {e}")
+
+        # Run full AI enrichment pipeline (fired-and-forgotten).
+        if self.ai_pipeline_hub and clip_data.get("clip_id"):
+            try:
+                clip_id = str(clip_data.get("clip_id"))
+                asyncio.create_task(self._ai_enrich_clip(clip_id, clip_data))
+            except Exception as e:
+                logger.debug(f"AI enrichment trigger skipped: {e}")
+
+    async def _ai_enrich_clip(self, clip_id: str, clip_data: dict):
+        """Run AI Pipeline Hub enrichment on a new clip.
+
+        Generates LLM titles/descriptions/hashtags, smart editing
+        recommendations and updates the recommendation engine.
+        """
+        if not self.ai_pipeline_hub:
+            return
+        try:
+            result = await self.ai_pipeline_hub.analyze_full_clip(
+                clip_id=clip_id,
+                category=clip_data.get("category", "other"),
+                emotion=(clip_data.get("emotion", {}) or {}).get(
+                    "dominant", "neutral"
+                ),
+                duration=clip_data.get("duration", 30.0),
+                platform=clip_data.get("platform", "youtube"),
+                streamer=clip_data.get("streamer", "Tuncay"),
+            )
+            await self.event_bus.publish_quick(
+                EventType.AI_METADATA_READY,
+                {
+                    "clip_id": clip_id,
+                    "pipeline_elapsed_ms": result.get(
+                        "pipeline_elapsed_ms", 0
+                    ),
+                    "services_used": result.get("services_used", []),
+                    "source": "ai_pipeline_hub",
+                },
+                source_service="ai_pipeline",
+                stream_id=clip_data.get("stream_id", ""),
+            )
+        except Exception as e:
+            logger.warning(
+                "AI enrichment failed for clip %s: %s", clip_id, e
+            )
 
     # ─── Manual Trigger Methods ───────────────────────────────
 
@@ -345,6 +418,8 @@ class PipelineOrchestrator:
             status["thumbnail"] = self.thumbnail.get_status()
         if self.notification_service:
             status["notification"] = self.notification_service.get_status()
+        if self.ai_pipeline_hub:
+            status["ai_pipeline"] = self.ai_pipeline_hub.get_status()
 
         return status
 

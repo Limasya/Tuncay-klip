@@ -234,6 +234,7 @@ class AIPipelineHub:
         emotion: str,
         highlight_scores: list[dict] | None = None,
         audio_spikes: list[dict] | None = None,
+        chat_spikes: list[dict] | None = None,
         chat_highlights: list[str] | None = None,
         duration: float = 30.0,
         platform: str = "youtube",
@@ -248,9 +249,11 @@ class AIPipelineHub:
 
         # Task 1: LLM metadata generation
         llm = self._services.get("llm_engine")
+        metadata_task = None
         if llm is not None:
-            tasks.append(self.generate_clip_metadata(
+            metadata_task = asyncio.create_task(self.generate_clip_metadata(
                 clip_id, category, emotion, streamer, platform=platform))
+            tasks.append(metadata_task)
 
         # Task 2: Smart editing suggestions
         content_analyzer = self._services.get("content_analyzer")

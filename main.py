@@ -16,6 +16,8 @@ import importlib
 from api.routers import clips, system, preferences, edit, projects
 from api.routers import pipeline as pipeline_router
 from api.routers import analytics as analytics_router
+from api.routers import recommendations as recommendations_router
+from api.routers import smart_editor as smart_editor_router
 
 _platform_available = False
 platform_router = None
@@ -164,6 +166,8 @@ app.include_router(preferences.router)
 app.include_router(pipeline_router.router)
 app.include_router(edit.router)
 app.include_router(analytics_router.router)
+app.include_router(recommendations_router.router)
+app.include_router(smart_editor_router.router)
 if _platform_available and platform_router is not None:
     app.include_router(platform_router.router)
 app.include_router(projects.router)
