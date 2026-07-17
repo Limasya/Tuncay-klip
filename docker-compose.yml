@@ -1,98 +1,93 @@
 version: "3.9"
 
 services:
-  # Ana uygulama
-  app:
+  api:
     build: .
-    container_name: klip-app
+    container_name: tuncay-klip-api
+    restart: unless-stopped
     ports:
       - "8000:8000"
-    env_file:
-      - .env
-    volumes:
-      - klip-data:/app/data
+    env_file: .env
+    environment:
+      - DEPLOYMENT_ENVIRONMENT=production
+      - REDIS_URL=redis://redis:6379/0
+      - DATABASE_URL=postgresql+asyncpg://klip:klip@postgres:5432/klip
+      - EVENT_BUS_BACKEND=redis
     depends_on:
       redis:
         condition: service_healthy
       postgres:
         condition: service_healthy
-    restart: unless-stopped
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
-    networks:
-      - klip-network
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./models_store:/app/models_store
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
 
-  # Redis - mesaj kuyruğu ve cache
   redis:
     image: redis:7-alpine
-    container_name: klip-redis
+    container_name: tuncay-klip-redis
+    restart: unless-stopped
     ports:
       - "6379:6379"
     volumes:
-      - redis-data:/data
+      - redis_data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
-      timeout: 5s
-      retries: 3
-    restart: unless-stopped
-    networks:
-      - klip-network
+      timeout: 3s
+      retries: 5
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
 
-  # PostgreSQL - veritabanı
   postgres:
     image: postgres:16-alpine
-    container_name: klip-postgres
+    container_name: tuncay-klip-postgres
+    restart: unless-stopped
     ports:
       - "5432:5432"
     environment:
-      POSTGRES_USER: user
-      POSTGRES_PASSWORD: password
-      POSTGRES_DB: klip_db
+      POSTGRES_DB: klip
+      POSTGRES_USER: klip
+      POSTGRES_PASSWORD: klip
     volumes:
-      - postgres-data:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U user -d klip_db"]
+      test: ["CMD-SHELL", "pg_isready -U klip"]
       interval: 10s
-      timeout: 5s
+      timeout: 3s
       retries: 5
-    restart: unless-stopped
-    networks:
-      - klip-network
 
-  # Celery Worker - arka plan görevleri (altyazı, export, vb.)
-  worker:
-    build: .
-    container_name: klip-worker
-    command: celery -A tasks.celery_app worker --loglevel=info --concurrency=2
-    env_file:
-      - .env
-    volumes:
-      - klip-data:/app/data
-    depends_on:
-      redis:
-        condition: service_healthy
+  grafana:
+    image: grafana/grafana:11.0.0
+    container_name: tuncay-klip-grafana
     restart: unless-stopped
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
-    networks:
-      - klip-network
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=tuncay-klip
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards
+      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources
+
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    container_name: tuncay-klip-prometheus
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
 
 volumes:
-  klip-data:
-  redis-data:
-  postgres-data:
-
-networks:
-  klip-network:
-    driver: bridge
+  redis_data:
+  postgres_data:
+  grafana_data:
+  prometheus_data:

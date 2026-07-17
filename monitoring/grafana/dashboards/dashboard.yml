@@ -1,0 +1,12 @@
+apiVersion: 1
+
+providers:
+  - name: "Tuncay Klip"
+    orgId: 1
+    folder: "Tuncay Klip"
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 10
+    options:
+      path: /etc/grafana/provisioning/dashboards
+      foldersFromFilesStructure: false

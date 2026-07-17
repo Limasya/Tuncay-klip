@@ -99,6 +99,24 @@ class AIPipelineHub:
             logger.warning("LLM Engine unavailable: %s", e)
             self._services["llm_engine"] = None
 
+        # Social Media AI
+        try:
+            from services.social_media_ai import social_media_ai
+            self._services["social_media_ai"] = social_media_ai
+            logger.info("Social Media AI initialized for viral content generation")
+        except Exception as e:
+            logger.warning("Social Media AI unavailable: %s", e)
+            self._services["social_media_ai"] = None
+
+        # Social Video Generator (Viral Tiktok/Reels Editor)
+        try:
+            from services.social_video_generator import social_video_gen
+            self._services["social_video_generator"] = social_video_gen
+            logger.info("Social Video Generator connected for automatic 9:16 edits")
+        except Exception as e:
+            logger.warning("Social Video Generator unavailable: %s", e)
+            self._services["social_video_generator"] = None
+
         # Recommendation Engine
         try:
             from services.recommendation_engine import (
@@ -213,6 +231,15 @@ class AIPipelineHub:
                 title=titles[0] if titles else "", streamer_name=streamer,
                 category=category, emotion=emotion, platform=platform)
 
+            # Viral Sosyal Medya İçeriği (SocialMediaAI)
+            viral_package = {}
+            social_media = self._services.get("social_media_ai")
+            if social_media is not None:
+                viral_package = await social_media.generate_viral_package(
+                    transcript="[Otomatik olarak sağlanan klip metni]",
+                    metadata={"emotion": emotion, "game": category, "streamer": streamer}
+                )
+
             self._metrics["metadata_generated"] += 1
             return {
                 "clip_id": clip_id,
@@ -220,6 +247,7 @@ class AIPipelineHub:
                 "description": description,
                 "hashtags": hashtags[:15],
                 "thumbnail_concept": thumbnail,
+                "viral_package": viral_package,
                 "source": "ai_pipeline_v2",
                 "generated_at": time.time(),
             }

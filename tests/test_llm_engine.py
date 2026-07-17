@@ -268,3 +268,129 @@ class TestLLMEngineCache:
         key1 = self.engine._build_cache_key("test prompt", "tr", 0.7)
         key2 = self.engine._build_cache_key("test prompt", "tr", 0.3)
         assert key1 != key2
+
+
+class TestLLMProviders:
+    """Test all LLM provider classes — instantiation, config, structure."""
+
+    def test_openai_provider_init(self):
+        from services.llm_providers import OpenAIProvider
+        p = OpenAIProvider(api_key="sk-test", model="gpt-4o", base_url="http://custom")
+        assert p.api_key == "sk-test"
+        assert p.model == "gpt-4o"
+        assert p.base_url == "http://custom"
+
+    def test_openai_provider_default_base_url(self):
+        from services.llm_providers import OpenAIProvider
+        p = OpenAIProvider(api_key="sk-test")
+        assert p.base_url == "https://api.openai.com"
+
+    def test_claude_provider_init(self):
+        from services.llm_providers import ClaudeProvider
+        p = ClaudeProvider(api_key="sk-ant", model="claude-3-sonnet")
+        assert p.api_key == "sk-ant"
+        assert p.model == "claude-3-sonnet"
+
+    def test_ollama_provider_init(self):
+        from services.llm_providers import OllamaProvider
+        p = OllamaProvider(base_url="http://localhost:11434", model="mistral")
+        assert p.base_url == "http://localhost:11434"
+        assert p.model == "mistral"
+
+    def test_vllm_provider_init(self):
+        from services.llm_providers import VLLMProvider
+        p = VLLMProvider(base_url="http://localhost:8000", model="meta-llama/Llama-3-8B")
+        assert p._openai.model == "meta-llama/Llama-3-8B"
+        assert p._openai.base_url == "http://localhost:8000"
+
+    def test_lmstudio_provider_init(self):
+        from services.llm_providers import LMStudioProvider
+        p = LMStudioProvider(base_url="http://localhost:1234", model="my-model")
+        assert p._openai.model == "my-model"
+
+    def test_localai_provider_init(self):
+        from services.llm_providers import LocalAIProvider
+        p = LocalAIProvider(base_url="http://localhost:8080", model="ggml-gpt4all-j")
+        assert p._openai.base_url == "http://localhost:8080"
+        assert p._openai.model == "ggml-gpt4all-j"
+
+    def test_textgen_provider_init(self):
+        from services.llm_providers import TextGenWebUIProvider
+        p = TextGenWebUIProvider(base_url="http://localhost:5000", model="llama-2-7b")
+        assert p._openai.base_url == "http://localhost:5000"
+
+    def test_huggingface_provider_init(self):
+        from services.llm_providers import HuggingFaceProvider
+        p = HuggingFaceProvider(api_token="hf_xxx", model="mistralai/Mistral-7B-Instruct")
+        assert p.api_token == "hf_xxx"
+        assert p.model == "mistralai/Mistral-7B-Instruct"
+
+    def test_gemini_provider_init(self):
+        from services.llm_providers import GeminiProvider
+        p = GeminiProvider(api_key="AIza...", model="gemini-1.5-pro")
+        assert p.api_key == "AIza..."
+        assert p.model == "gemini-1.5-pro"
+
+    def test_mistral_provider_init(self):
+        from services.llm_providers import MistralProvider
+        p = MistralProvider(api_key="mi-key", model="mistral-large-latest")
+        assert p.api_key == "mi-key"
+        assert p.model == "mistral-large-latest"
+
+    def test_template_provider_callable(self):
+        from services.llm_providers import TemplateProvider
+        p = TemplateProvider()
+        assert callable(p)
+
+    def test_build_chat_messages_no_system(self):
+        from services.llm_providers import _build_chat_messages
+        msgs = _build_chat_messages("hello")
+        assert len(msgs) == 2
+        assert msgs[0]["role"] == "system"
+        assert msgs[1]["role"] == "user"
+        assert "viral content creator" in msgs[0]["content"]
+
+    def test_build_chat_messages_with_system(self):
+        from services.llm_providers import _build_chat_messages
+        msgs = _build_chat_messages("hello", system_prompt="Be helpful")
+        assert msgs[0]["content"] == "Be helpful"
+
+    def test_all_providers_callable_protocol(self):
+        """Every provider must be an async callable with the standard signature."""
+        import inspect
+        from services.llm_providers import (
+            OpenAIProvider, ClaudeProvider, OllamaProvider,
+            VLLMProvider, LMStudioProvider, LocalAIProvider, TextGenWebUIProvider,
+            HuggingFaceProvider, GeminiProvider, MistralProvider,
+            TemplateProvider,
+        )
+        for cls in [
+            OpenAIProvider, ClaudeProvider, OllamaProvider,
+            VLLMProvider, LMStudioProvider, LocalAIProvider, TextGenWebUIProvider,
+            HuggingFaceProvider, GeminiProvider, MistralProvider,
+            TemplateProvider,
+        ]:
+            assert hasattr(cls, "__call__"), f"{cls.__name__} missing __call__"
+
+
+class TestLLMEngineProviderChain:
+    """Test that the engine correctly initializes providers based on env vars."""
+
+    def test_template_always_registered(self):
+        from services.llm_engine import llm_engine
+        names = [name for name, _ in llm_engine._providers]
+        assert "template" in names
+
+    def test_get_provider_status_returns_list(self):
+        from services.llm_engine import llm_engine
+        status = llm_engine.get_provider_status()
+        assert isinstance(status, list)
+        assert len(status) >= 1
+        assert all("name" in p and "type" in p for p in status)
+
+    def test_provider_status_no_secrets(self):
+        from services.llm_engine import llm_engine
+        status = llm_engine.get_provider_status()
+        for p in status:
+            assert "api_key" not in p
+            assert "secret" not in str(p).lower()

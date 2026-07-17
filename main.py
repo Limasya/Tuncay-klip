@@ -4,8 +4,9 @@ Tüm router'ları birleştirir, CORS ve middleware ayarlarını yapar.
 """
 import logging
 import os
+import time
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
@@ -13,11 +14,19 @@ from fastapi.responses import HTMLResponse
 
 import importlib
 
-from api.routers import clips, system, preferences, edit, projects
-from api.routers import pipeline as pipeline_router
+from api.routers import (
+    clips,
+    edit,
+    llm_status as llm_status_router,
+    pipeline as pipeline_router,
+    preferences,
+    projects,
+    smart_editor as smart_editor_router,
+    social as social_router,
+    system,
+)
 from api.routers import analytics as analytics_router
 from api.routers import recommendations as recommendations_router
-from api.routers import smart_editor as smart_editor_router
 
 _platform_available = False
 platform_router = None
@@ -29,6 +38,14 @@ except Exception:
         "platform_eng ve bağımlılıkları kurulu değil; "
         "/api/v1/platform endpoint'leri atlanıyor"
     )
+
+# Admin router (optional)
+try:
+    from api.routers import admin as admin_router
+    _admin_available = True
+except Exception:
+    _admin_available = False
+
 from services.database import init_db
 from config import get_settings
 
@@ -75,22 +92,41 @@ def _init_platform_observability() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Uygulama yaşam döngüsü."""
+    """Uygulama yaşam döngüsü — auto-boot ile tüm sistem otomatik başlatılır."""
     logger.info("Veritabanı başlatılıyor...")
     await init_db()
-    logger.info("Klip Yakalama Sistemi hazır!")
+    logger.info("Veritabanı hazır!")
 
     # Ensure data directories exist
     for d in ["data/clips", "data/buffer", "data/subtitles",
                "data/exports", "data/thumbnails", "data/uploads",
-               "data/projects", "data/timeline-jobs",
-               "static", "templates"]:
+               "data/projects", "data/timeline-jobs", "data/backups",
+               "static", "templates", "models_store"]:
         os.makedirs(d, exist_ok=True)
+
+    # Auto-boot: discover LLMs, download models, start monitors, wire everything
+    boot_report = None
+    try:
+        from services.auto_boot import auto_boot
+        boot_report = await auto_boot()
+        logger.info(
+            "Auto-boot complete in %.1fms — LLMs: %d available, errors: %d",
+            boot_report.get("boot_time_ms", 0),
+            len([p for p in boot_report.get("llm_providers", []) if p.get("available")]),
+            len(boot_report.get("errors", [])),
+        )
+    except Exception as e:
+        logger.warning("Auto-boot failed (manual fallback): %s", e)
 
     yield
 
-    # Graceful shutdown — stop both orchestrators if running
-    logger.info("Shutting down pipeline...")
+    # Graceful shutdown
+    logger.info("Kapatılıyor...")
+    try:
+        from services.auto_boot import auto_shutdown
+        await auto_shutdown()
+    except Exception:
+        pass
     try:
         from services.orchestrator import orchestrator as svc_orch
         if svc_orch.is_monitoring:
@@ -107,13 +143,31 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="Otomatik Klip Yakalama ve Duygu-Hareket Analizi",
+    title="Tuncay-Klip - Otomatik Klip Yakalama Sistemi",
     description=(
         "Kick canlı yayınları için gerçek zamanlı duygu/hareket analizi "
-        "ile otomatik klip yakalama, sınıflandırma ve düzenleme sistemi."
+        "ile otomatik klip yakalama, sınıflandırma ve düzenleme sistemi.\n\n"
+        "**AI Services:** LLM Engine, Vision AI, Audio AI, Chat AI, "
+        "Recommendation Engine, Smart Editor\n\n"
+        "**Monitoring:** /dashboard (real-time), /metrics (Prometheus), "
+        "/api/admin/* (admin API)"
     ),
-    version="1.0.0",
+    version="2.0.0",
     lifespan=lifespan,
+    docs_url="/docs",
+    redoc_url="/redoc",
+    openapi_tags=[
+        {"name": "Clips", "description": "Klip CRUD operations — create, read, update, delete clips"},
+        {"name": "Pipeline", "description": "Stream processing pipeline — start/stop monitoring, analysis control"},
+        {"name": "Analytics", "description": "Viewership, revenue, clip performance analytics"},
+        {"name": "Edit", "description": "Subtitle burn-in, format conversion, clip editing"},
+        {"name": "Recommendations", "description": "ML-powered clip recommendations, user preferences, trending"},
+        {"name": "Smart Editor", "description": "AI-assisted trimming, beat-sync, platform optimization"},
+        {"name": "Projects", "description": "Project management — create and manage clip projects"},
+        {"name": "System", "description": "System status, health checks, configuration"},
+        {"name": "Platform", "description": "Platform management — accounts, API keys, publishing"},
+        {"name": "Admin", "description": "Admin API — deep health, metrics, service management"},
+    ],
 )
 
 # CORS
@@ -130,6 +184,23 @@ if os.environ.get("RATE_LIMIT_ENABLED", "false").lower() in ("true", "1", "yes")
     from utils.rate_limiter import RateLimitMiddleware, get_rate_limiter
     app.add_middleware(RateLimitMiddleware, limiter=get_rate_limiter())
     logger.info("Rate limiting enabled: %d req/%ds", get_rate_limiter().max_requests, get_rate_limiter().window_seconds)
+
+# New rate limiter (services/rate_limiter.py) — always enabled in production
+if settings.deployment_environment == "production":
+    try:
+        from services.rate_limiter import RateLimitMiddleware as NewRateLimitMiddleware
+        app.add_middleware(NewRateLimitMiddleware, requests_per_minute=120, burst=30)
+        logger.info("Production rate limiter enabled: 120 req/min")
+    except Exception:
+        pass
+
+# Prometheus metrics (services/metrics.py)
+try:
+    from services.metrics import setup_metrics
+    setup_metrics(app)
+    logger.info("Prometheus metrics middleware enabled")
+except Exception:
+    pass
 
 # Observability (IP_PART6 34-36) — Prometheus RED metrics + OTel tracing
 try:
@@ -168,9 +239,16 @@ app.include_router(edit.router)
 app.include_router(analytics_router.router)
 app.include_router(recommendations_router.router)
 app.include_router(smart_editor_router.router)
+app.include_router(llm_status_router.router)
 if _platform_available and platform_router is not None:
     app.include_router(platform_router.router)
 app.include_router(projects.router)
+app.include_router(social_router.router)
+
+# Admin router (new)
+if _admin_available:
+    app.include_router(admin_router.router)
+    logger.info("Admin API registered at /api/admin/*")
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -183,13 +261,81 @@ async def dashboard():
         return "<h1>Dashboard template bulunamadı</h1>"
 
 
+@app.get("/dashboard", response_class=HTMLResponse)
+async def dashboard_full():
+    """Real-time monitoring dashboard."""
+    try:
+        with open("templates/dashboard.html", "r", encoding="utf-8") as f:
+            return f.read()
+    except FileNotFoundError:
+        return "<h1>Dashboard template bulunamadı</h1>"
+
+
+@app.websocket("/ws/dashboard")
+async def websocket_dashboard(websocket: WebSocket):
+    """WebSocket endpoint for real-time dashboard updates."""
+    from services.ws_manager import ws_manager
+    import uuid
+
+    client_id = f"dashboard-{uuid.uuid4().hex[:8]}"
+    client = await ws_manager.connect(websocket, client_id)
+
+    try:
+        while True:
+            data = await websocket.receive_json()
+
+            # Handle subscription requests
+            if data.get("subscribe"):
+                client.subscriptions = set(data["subscribe"])
+                await client.send({"type": "subscribed", "events": list(client.subscriptions)})
+
+            # Handle pong
+            if data.get("type") == "pong":
+                client.last_pong = time.time()
+
+            # Handle status request
+            if data.get("type") == "get_status":
+                status = await _build_dashboard_status()
+                await client.send({"type": "status_update", "payload": status})
+
+    except WebSocketDisconnect:
+        await ws_manager.disconnect(client_id)
+    except Exception:
+        await ws_manager.disconnect(client_id)
+
+
+async def _build_dashboard_status() -> dict:
+    """Build status payload for dashboard."""
+    try:
+        from microservices.orchestrator import orchestrator
+        status = orchestrator.get_full_status()
+        return {
+            "clips": status.get("pipeline", {}).get("clips_today", 0),
+            "stream_active": status.get("pipeline", {}).get("is_running", False),
+            "events_dispatched": status.get("event_bus", {}).get("events_dispatched", 0),
+            "pipeline_runs": status.get("ai_pipeline", {}).get("total_pipeline_runs", 0),
+            "ws_clients": 0,
+        }
+    except Exception:
+        return {"clips": 0, "stream_active": False}
+
+
 @app.get("/health")
 async def health_check():
     return {
         "status": "ok",
-        "version": "1.0.0",
-        "phase": 4,
-        "services": "15 microservices + 6 celery tasks",
+        "version": "2.0.0",
+        "phase": 7,
+        "services": "15 microservices + 9 AI services",
+        "ai_features": [
+            "LLM Engine (OpenAI/Claude/Ollama)",
+            "Vision AI (Scene/Object/Gesture/KeyFrame)",
+            "Audio AI (Speech/Event/Crowd/Music)",
+            "Chat AI (NLP/Toxicity/Language/Hype/Trends)",
+            "Recommendation Engine",
+            "Smart Editor",
+            "AI Pipeline Hub",
+        ],
     }
 
 

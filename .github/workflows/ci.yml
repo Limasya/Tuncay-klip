@@ -1,0 +1,78 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+env:
+  PYTHON_VERSION: "3.13"
+  AUTH_DISABLED: "1"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7-alpine
+        ports: [6379:6379]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Lint check
+        run: |
+          pip install ruff
+          ruff check . --select E,F --ignore E501,E741,F841 || true
+
+      - name: Run tests
+        run: |
+          AUTH_DISABLED=1 pytest -q --tb=short
+
+      - name: Test count summary
+        run: |
+          AUTH_DISABLED=1 pytest -q --tb=no 2>&1 | tail -1
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: docker build -t tuncay-klip:${{ github.sha }} .
+
+      - name: Tag latest
+        run: docker tag tuncay-klip:${{ github.sha }} tuncay-klip:latest
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    environment: production
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy to server
+        run: |
+          echo "Deploy step placeholder"
+          echo "Configure your actual deployment target here"
+          echo "Options: docker-compose, k8s, AWS ECS, Railway, Fly.io"

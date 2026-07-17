@@ -420,7 +420,7 @@ class ContentQualityScorer:
         # ALL CAPS (spammy, penalty)
         caps_ratio = sum(1 for c in title if c.isupper()) / max(len(title), 1)
         if caps_ratio > 0.5:
-            score -= 1.0
+            score -= 2.0
 
         score = max(1.0, min(10.0, round(score, 1)))
         return {"score": score, "engagement_hits": engagement_hits}
@@ -566,45 +566,166 @@ class LLMEngine:
         self._init_providers()
 
     def _init_providers(self):
-        """Initialize available LLM providers."""
-        # Provider 1: OpenAI
+        """Initialize available LLM providers (priority order)."""
+        from services.llm_providers import (
+            OpenAIProvider, ClaudeProvider, OllamaProvider,
+            VLLMProvider, LMStudioProvider, LocalAIProvider, TextGenWebUIProvider,
+            HuggingFaceProvider, GeminiProvider, MistralProvider,
+            GroqProvider, CohereProvider, TogetherAIProvider,
+            CerebrasProvider, OpenRouterProvider, NvidiaProvider,
+            TemplateProvider,
+        )
+
+        # ── 1. OpenAI ──
         openai_key = os.environ.get("OPENAI_API_KEY", "")
         if openai_key:
-            from services.llm_providers import OpenAIProvider
             self._providers.append(("openai", OpenAIProvider(
                 api_key=openai_key,
                 model=os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
             )))
-            logger.info("OpenAI provider registered (model=%s)",
-                        os.environ.get("OPENAI_MODEL", "gpt-4o-mini"))
+            logger.info("OpenAI registered (model=%s)", os.environ.get("OPENAI_MODEL", "gpt-4o-mini"))
 
-        # Provider 2: Anthropic Claude
+        # ── 2. Anthropic Claude ──
         claude_key = os.environ.get("ANTHROPIC_API_KEY", "")
         if claude_key:
-            from services.llm_providers import ClaudeProvider
             self._providers.append(("claude", ClaudeProvider(
                 api_key=claude_key,
                 model=os.environ.get("CLAUDE_MODEL", "claude-3-haiku-20240307"),
             )))
-            logger.info("Claude provider registered")
+            logger.info("Claude registered")
 
-        # Provider 3: Local LLM (Ollama)
+        # ── 3. Google Gemini ──
+        gemini_key = os.environ.get("GEMINI_API_KEY", "")
+        if gemini_key:
+            self._providers.append(("gemini", GeminiProvider(
+                api_key=gemini_key,
+                model=os.environ.get("GEMINI_MODEL", "gemini-2.0-flash"),
+            )))
+            logger.info("Gemini registered (model=%s)", os.environ.get("GEMINI_MODEL", "gemini-2.0-flash"))
+
+        # ── 4. Mistral AI ──
+        mistral_key = os.environ.get("MISTRAL_API_KEY", "")
+        if mistral_key:
+            self._providers.append(("mistral", MistralProvider(
+                api_key=mistral_key,
+                model=os.environ.get("MISTRAL_MODEL", "mistral-small-latest"),
+            )))
+            logger.info("Mistral registered (model=%s)", os.environ.get("MISTRAL_MODEL", "mistral-small-latest"))
+
+        # ── 5. Groq (Ücretsiz, En Hızlı — Öncelikli) ──
+        groq_key = os.environ.get("GROQ_API_KEY", "")
+        if groq_key:
+            self._providers.append(("groq", GroqProvider(
+                api_key=groq_key,
+                model=os.environ.get("GROQ_MODEL", "llama-3.1-70b-versatile"),
+            )))
+            logger.info("⚡ Groq registered (ücretsiz, hızlı, model=%s)", os.environ.get("GROQ_MODEL", "llama-3.1-70b-versatile"))
+
+        # ── 6. Cohere (Ücretsiz Tier) ──
+        cohere_key = os.environ.get("COHERE_API_KEY", "")
+        if cohere_key:
+            self._providers.append(("cohere", CohereProvider(
+                api_key=cohere_key,
+                model=os.environ.get("COHERE_MODEL", "command-r"),
+            )))
+            logger.info("⚡ Cohere registered (ücretsiz tier, model=%s)", os.environ.get("COHERE_MODEL", "command-r"))
+
+        # ── 7. Together AI (Ücretsiz $25 Kredi) ──
+        together_key = os.environ.get("TOGETHER_API_KEY", "")
+        if together_key:
+            self._providers.append(("together", TogetherAIProvider(
+                api_key=together_key,
+                model=os.environ.get("TOGETHER_MODEL", "meta-llama/Llama-3.1-70B-Instruct-Turbo"),
+            )))
+            logger.info("⚡ Together AI registered (model=%s)", os.environ.get("TOGETHER_MODEL", "meta-llama/Llama-3.1-70B-Instruct-Turbo"))
+
+        # ── 8. Cerebras (Ücretsiz, Çok Hızlı) ──
+        cerebras_key = os.environ.get("CEREBRAS_API_KEY", "")
+        if cerebras_key:
+            self._providers.append(("cerebras", CerebrasProvider(
+                api_key=cerebras_key,
+                model=os.environ.get("CEREBRAS_MODEL", "llama3.1-70b"),
+            )))
+            logger.info("⚡ Cerebras registered (ücretsiz, wafer-scale, model=%s)", os.environ.get("CEREBRAS_MODEL", "llama3.1-70b"))
+
+        # ── 9. OpenRouter (Ücretsiz Modeller) ──
+        openrouter_key = os.environ.get("OPENROUTER_API_KEY", "")
+        if openrouter_key:
+            self._providers.append(("openrouter", OpenRouterProvider(
+                api_key=openrouter_key,
+                model=os.environ.get("OPENROUTER_MODEL", "meta-llama/llama-3.1-8b-instruct:free"),
+            )))
+            logger.info("⚡ OpenRouter registered (ücretsiz modeller, model=%s)", os.environ.get("OPENROUTER_MODEL", "meta-llama/llama-3.1-8b-instruct:free"))
+
+        # ── 10. Nvidia NIM ──
+        nvidia_key = os.environ.get("NVIDIA_API_KEY", "")
+        if nvidia_key:
+            self._providers.append(("nvidia", NvidiaProvider(
+                api_key=nvidia_key,
+                model=os.environ.get("NVIDIA_MODEL", "meta/llama-3.1-70b-instruct"),
+            )))
+            logger.info("⚡ Nvidia NIM registered (model=%s)", os.environ.get("NVIDIA_MODEL", "meta/llama-3.1-70b-instruct"))
+
+        # ── 11. vLLM (local OpenAI-compatible) ──
+        vllm_host = os.environ.get("VLLM_HOST", "")
+        if vllm_host:
+            self._providers.append(("vllm", VLLMProvider(
+                base_url=vllm_host,
+                model=os.environ.get("VLLM_MODEL", "meta-llama/Llama-3-8B-Instruct"),
+            )))
+            logger.info("vLLM registered at %s", vllm_host)
+
+        # ── 12. LM Studio (local GUI) ──
+        lmstudio_host = os.environ.get("LM_STUDIO_HOST", "")
+        if lmstudio_host:
+            self._providers.append(("lmstudio", LMStudioProvider(
+                base_url=lmstudio_host,
+                model=os.environ.get("LM_STUDIO_MODEL", "default"),
+            )))
+            logger.info("LM Studio registered at %s", lmstudio_host)
+
+        # ── 13. LocalAI ──
+        localai_host = os.environ.get("LOCALAI_HOST", "")
+        if localai_host:
+            self._providers.append(("localai", LocalAIProvider(
+                base_url=localai_host,
+                model=os.environ.get("LOCALAI_MODEL", "gpt-3.5-turbo"),
+            )))
+            logger.info("LocalAI registered at %s", localai_host)
+
+        # ── 14. Text Generation WebUI (oobabooga) ──
+        textgen_host = os.environ.get("TEXTGEN_HOST", "")
+        if textgen_host:
+            self._providers.append(("textgen", TextGenWebUIProvider(
+                base_url=textgen_host,
+                model=os.environ.get("TEXTGEN_MODEL", "default"),
+            )))
+            logger.info("TextGen WebUI registered at %s", textgen_host)
+
+        # ── 15. HuggingFace Inference API ──
+        hf_token = os.environ.get("HUGGINGFACE_API_TOKEN", "")
+        if hf_token:
+            self._providers.append(("huggingface", HuggingFaceProvider(
+                api_token=hf_token,
+                model=os.environ.get("HUGGINGFACE_MODEL", "HuggingFaceH4/zephyr-7b-beta"),
+            )))
+            logger.info("HuggingFace registered (model=%s)", os.environ.get("HUGGINGFACE_MODEL", "HuggingFaceH4/zephyr-7b-beta"))
+
+        # ── 16. Ollama (local, native API) ──
         ollama_host = os.environ.get("OLLAMA_HOST", "")
         if ollama_host:
-            from services.llm_providers import OllamaProvider
             self._providers.append(("ollama", OllamaProvider(
                 base_url=ollama_host,
                 model=os.environ.get("OLLAMA_MODEL", "llama3.1:8b"),
             )))
-            logger.info("Ollama provider registered at %s", ollama_host)
+            logger.info("Ollama registered at %s", ollama_host)
 
-        # Always available: Template fallback
-        from services.llm_providers import TemplateProvider
+        # ── Always: Template fallback ──
         self._providers.append(("template", TemplateProvider()))
-        logger.info("Template fallback provider always available")
+        logger.info("Template fallback always available")
 
         self._provider_count = len(self._providers)
-        logger.info("LLM Engine initialized with %d providers", self._provider_count)
+        logger.info("LLM Engine initialized with %d providers (fallback chain)", self._provider_count)
 
     def _build_cache_key(self, prompt: str, language: str, temperature: float) -> str:
         """Build deterministic cache key from prompt content."""
@@ -1190,6 +1311,36 @@ class LLMEngine:
     def clear_cache(self):
         self._cache.clear()
         self._stats["cache_hits"] = 0
+
+    def get_provider_status(self) -> list[dict]:
+        """List all providers with their config (safe, no secrets)."""
+        providers = []
+        for name, provider in self._providers:
+            info = {"name": name, "type": type(provider).__name__}
+            if hasattr(provider, "model"):
+                info["model"] = provider.model
+            if hasattr(provider, "base_url"):
+                info["base_url"] = provider.base_url
+            providers.append(info)
+        return providers
+
+    async def health_check(self) -> dict[str, Any]:
+        """Quick health probe: try the first real provider with a tiny prompt."""
+        result = {"providers": len(self._providers), "healthy": False, "active_provider": None}
+        for name, provider in self._providers:
+            if name == "template":
+                result["healthy"] = True
+                result["active_provider"] = "template (fallback)"
+                break
+            try:
+                resp = await provider("Say OK", max_tokens=5, temperature=0.0)
+                if resp and len(resp) > 0:
+                    result["healthy"] = True
+                    result["active_provider"] = name
+                    break
+            except Exception as e:
+                result.setdefault("errors", {})[name] = str(e)[:100]
+        return result
 
 
 # Singleton

@@ -1,34 +1,30 @@
-FROM python:3.11-slim
+FROM python:3.13-slim
 
-# Sistem bağımlılıkları
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    ffmpeg \
-    libgl1-mesa-glx \
-    libglib2.0-0 \
-    libsm6 \
-    libxext6 \
-    libxrender-dev \
-    && rm -rf /var/lib/apt/lists/*
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
 
 WORKDIR /app
 
-# Python bağımlılıkları (cache-friendly layering)
+# System deps for OpenCV, FFmpeg, numpy
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg libgl1 libglib2.0-0 curl && \
+    rm -rf /var/lib/apt/lists/*
+
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Uygulama kodu
 COPY . .
 
-# Veri dizinleri
-RUN mkdir -p data/clips data/buffer data/subtitles data/exports \
-    data/thumbnails data/uploads static templates
+# Download ML models
+RUN python scripts/setup_models.py --vision || true
 
-# Port
+RUN mkdir -p /app/data /app/logs /app/static
+
 EXPOSE 8000
 
-# Sağlık kontrolü
-HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
-    CMD python -c "import httpx; httpx.get('http://localhost:8000/health').raise_for_status()" || exit 1
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+    CMD curl -f http://localhost:8000/health || exit 1
 
-# DB migration (idempotent) + Başlat
-CMD ["sh", "-c", "alembic upgrade head 2>/dev/null || true; uvicorn main:app --host 0.0.0.0 --port 8000"]
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]

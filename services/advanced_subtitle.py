@@ -243,7 +243,9 @@ class AdvancedSubtitleEngine:
         video_width: int = 1080,
         video_height: int = 1920,
         max_chars_per_line: int = 42,
+        max_words_per_line: Optional[int] = None,
         title: Optional[str] = None,
+        inject_emojis: bool = False,
     ) -> str:
         """
         Whisper segmentlerinden ASS içeriği üretir.
@@ -260,7 +262,7 @@ class AdvancedSubtitleEngine:
             words = seg.get("words", [])
 
             if words:
-                lines = self._split_words_to_lines(words, max_chars_per_line)
+                lines = self._split_words_to_lines(words, max_chars_per_line, max_words_per_line, inject_emojis)
                 for line_text, line_start, line_end, word_groups in lines:
                     entries.append({
                         "text": line_text,
@@ -393,8 +395,25 @@ class AdvancedSubtitleEngine:
 
         return text
 
+    def _get_emoji_for_word(self, word: str) -> str:
+        """Kelimeye uygun emoji döndürür (NLP to Emoji basit implementasyon)"""
+        w = word.lower().strip()
+        w = ''.join(c for c in w if c.isalnum())
+        mapping = {
+            "para": "💰", "money": "💰", "dolar": "💵",
+            "ateş": "🔥", "fire": "🔥", "yanıyor": "🔥",
+            "silah": "🔫", "gun": "🔫", "vur": "🔫",
+            "üzgün": "😢", "sad": "😢", "ağlıyor": "😭",
+            "komik": "😂", "haha": "😂", "lol": "🤣", "güzel": "😍",
+            "kalp": "❤️", "love": "❤️",
+            "patlama": "💥", "boom": "💥",
+            "korkunç": "😱", "scary": "😱",
+            "şok": "🤯", "omg": "🤯"
+        }
+        return mapping.get(w, "")
+
     def _split_words_to_lines(
-        self, words: List[Dict], max_chars: int
+        self, words: List[Dict], max_chars: int, max_words: Optional[int] = None, inject_emojis: bool = False
     ) -> List[Tuple[str, float, float, List[Dict]]]:
         """Kelimeleri satırlara böler, word-group bilgisi ile birlikte."""
         lines = []
@@ -407,11 +426,19 @@ class AdvancedSubtitleEngine:
             text = word.get("word", "").strip()
             if not text:
                 continue
+                
+            if inject_emojis:
+                emoji = self._get_emoji_for_word(text)
+                if emoji:
+                    text = f"{text} {emoji}"
 
             start = word.get("start", 0.0)
             end = word.get("end", 0.0)
 
-            if current_chars + len(text) + 1 > max_chars and current_words:
+            hit_char_limit = current_chars + len(text) + 1 > max_chars
+            hit_word_limit = max_words is not None and len(current_words) >= max_words
+
+            if (hit_char_limit or hit_word_limit) and current_words:
                 line_text = " ".join(current_text)
                 lines.append((
                     line_text,
