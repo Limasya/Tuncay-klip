@@ -22,6 +22,7 @@ from services.scene_detection import SceneDetectionEngine
 from services.social_media_ai import social_media_ai
 from services.emotion_detector import emotion_detector
 from services.effects_engine import effects_engine
+from services.kick_archive import TARGET_CHANNEL_URL, is_target_vod_url
 
 logger = logging.getLogger("master_pipeline")
 _scene_detect = SceneDetectionEngine()
@@ -70,6 +71,15 @@ class MasterPipeline:
         7. Viral Media Kit (SocialMediaAI)
         8. Sıralama ve rapor
         """
+        if not is_target_vod_url(url):
+            return {
+                "success": False,
+                "error": (
+                    "This pipeline only processes public VOD URLs from "
+                    f"{TARGET_CHANNEL_URL}/videos/..."
+                ),
+            }
+
         logger.info("=== MASTER PIPELINE v2 BAŞLATILDI: %s ===", url)
 
         # ─── Adım 1: yt-dlp ile indir ──────────────────────────────────────

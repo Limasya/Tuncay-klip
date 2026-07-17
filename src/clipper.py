@@ -356,6 +356,9 @@ class VideoClipper:
         return all_clips
 
 
+clip_extractor = VideoClipper()
+
+
 if __name__ == "__main__":
     # Test
     clipper = VideoClipper()

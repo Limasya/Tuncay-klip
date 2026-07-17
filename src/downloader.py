@@ -3,6 +3,7 @@ Video İndirme Modülü
 Twitch/YouTube canlı yayınları indirmek için
 """
 
+import asyncio
 import os
 import subprocess
 import logging
@@ -120,6 +121,36 @@ class StreamDownloader:
         except Exception as e:
             logger.error(f"Beklenmeyen hata: {e}")
             return None
+
+    async def download_live(
+        self,
+        stream_url: str,
+        duration: Optional[int] = None,
+        quality: str = "best",
+        format_ext: str = "mp4",
+    ) -> Optional[str]:
+        """CLI uyumlulugu icin canli indirmeyi bir worker thread'inde calistir."""
+        del quality, format_ext
+        return await asyncio.to_thread(
+            self.download_stream,
+            stream_url,
+            "thetuncay",
+            duration,
+        )
+
+    async def download_vod(
+        self,
+        vod_url: str,
+        quality: str = "best",
+        format_ext: str = "mp4",
+    ) -> Optional[str]:
+        """CLI uyumlulugu icin public VOD indirmeyi worker thread'inde calistir."""
+        del quality, format_ext
+        return await asyncio.to_thread(
+            self.download_stream,
+            vod_url,
+            "thetuncay",
+        )
     
     def download_hls_stream(
         self,
@@ -198,6 +229,9 @@ class StreamDownloader:
         except Exception as e:
             logger.error(f"Info alma hatası: {e}")
             return None
+
+
+stream_downloader = StreamDownloader()
 
 
 if __name__ == "__main__":

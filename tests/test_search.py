@@ -26,7 +26,7 @@ async def client():
 async def test_semantic_search_success(monkeypatch, client):
     """Başarılı arama: VectorStore.search sonuçları JSON olarak dönmeli."""
 
-    async def _fake_search(self, query, top_k=10, filters=None):
+    async def _fake_search(query, top_k=10, filters=None):
         assert query == "rage moment"
         assert top_k == 2
         assert filters == {"category": "funny"}
@@ -80,7 +80,7 @@ async def test_semantic_search_invalid_filters(client):
 async def test_semantic_search_empty_results(monkeypatch, client):
     """Hiç sonuç yoksa boş liste dönmeli."""
 
-    async def _fake_empty(self, query, top_k=10, filters=None):
+    async def _fake_empty(query, top_k=10, filters=None):
         return []
 
     monkeypatch.setattr(vector_store, "search", _fake_empty)

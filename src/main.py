@@ -15,6 +15,12 @@ from src.downloader import stream_downloader
 from src.clipper import clip_extractor
 from src.uploader import auto_publisher
 from src.ai_generator import ai_title_generator
+from services.kick_archive import (
+    TARGET_CHANNEL_URL,
+    is_target_channel_url,
+    is_target_vod_url,
+    kick_archive,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -25,6 +31,14 @@ logger = logging.getLogger(__name__)
 
 async def cmd_download(args):
     """Canli yayin veya VOD indir."""
+    allowed = is_target_channel_url(args.url) if args.live else is_target_vod_url(args.url)
+    if not allowed:
+        print(
+            "Bu kurulum yalnizca "
+            f"{TARGET_CHANNEL_URL} kanalinin public yayinlarini isler."
+        )
+        return
+
     logger.info("Indirme baslatiliyor: %s", args.url)
 
     if args.live:
@@ -80,7 +94,11 @@ async def cmd_extract(args):
 
 async def cmd_info(args):
     """Yayin/video bilgisi goster."""
-    info = await stream_downloader.get_stream_info(args.url)
+    if not (is_target_channel_url(args.url) or is_target_vod_url(args.url)):
+        print(f"Yalnizca {TARGET_CHANNEL_URL} kanali desteklenir.")
+        return
+
+    info = await asyncio.to_thread(stream_downloader.get_stream_info, args.url)
     if info:
         print(f"Baslik: {info['title']}")
         print(f"Yayinci: {info['uploader']}")
@@ -128,6 +146,22 @@ async def cmd_publish(args):
         print(f"Yayinlandi: {result}")
     else:
         print("Yayinlama basarisiz (kimlik bilgileri gerekli)")
+
+
+async def cmd_sync_kick_archive(args):
+    """Yalnizca thetuncay kanalinin yeni acik VOD'larini analiz eder."""
+    report = await kick_archive.sync_archive(
+        vod_limit=args.vod_limit,
+        max_clips_per_vod=args.max_clips_per_vod,
+    )
+    print(
+        "Arsiv taramasi tamamlandi: "
+        f"kesfedilen={report['discovered']}, "
+        f"islenen={report['processed']}, "
+        f"atlanan={report['skipped']}, "
+        f"basarisiz={report['failed']}, "
+        f"klip={report['clips_generated']}"
+    )
 
 
 def main():
@@ -179,6 +213,14 @@ def main():
     pub.add_argument("--streamer", default="Yayinci")
     pub.add_argument("--privacy", default="private", choices=["private", "public", "unlisted"])
     pub.set_defaults(func=cmd_publish)
+
+    archive = subparsers.add_parser(
+        "sync-kick-archive",
+        help="Sadece kick.com/thetuncay acik VOD arsivini analiz et",
+    )
+    archive.add_argument("--vod-limit", type=int, default=3, choices=range(1, 51))
+    archive.add_argument("--max-clips-per-vod", type=int, default=5, choices=range(1, 11))
+    archive.set_defaults(func=cmd_sync_kick_archive)
 
     args = parser.parse_args()
     if not args.command:

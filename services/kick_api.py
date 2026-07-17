@@ -9,6 +9,7 @@ import httpx
 import asyncio
 import json
 import logging
+import subprocess
 from datetime import datetime
 from typing import Optional, Dict, Any, Callable, Awaitable
 from config import get_settings
@@ -137,6 +138,151 @@ class KickAPIService:
         except httpx.HTTPError as e:
             logger.error("Kanal bilgisi alinamadi: %s", e)
             return self._channel_cache or {}
+
+    # --- Public VOD archive ---
+    @staticmethod
+    def _extract_vod_items(payload: Any) -> list[dict[str, Any]]:
+        """Accept the public API response shapes used by Kick video listings."""
+        if isinstance(payload, list):
+            return [item for item in payload if isinstance(item, dict)]
+        if not isinstance(payload, dict):
+            return []
+
+        candidates = payload.get("data") or payload.get("videos") or payload.get("results")
+        if isinstance(candidates, dict):
+            candidates = (
+                candidates.get("data")
+                or candidates.get("videos")
+                or candidates.get("results")
+            )
+        if not isinstance(candidates, list):
+            return []
+        return [item for item in candidates if isinstance(item, dict)]
+
+    @staticmethod
+    def _category_name(raw: Any) -> str:
+        if isinstance(raw, str):
+            return raw
+        if isinstance(raw, dict):
+            return str(raw.get("name") or raw.get("slug") or "")
+        if isinstance(raw, list) and raw:
+            return KickAPIService._category_name(raw[0])
+        return ""
+
+    def _normalize_public_vod(self, raw: dict[str, Any]) -> dict[str, Any] | None:
+        """Normalize a public VOD payload without trusting cross-channel data."""
+        channel = raw.get("channel") if isinstance(raw.get("channel"), dict) else {}
+        livestream = raw.get("livestream") if isinstance(raw.get("livestream"), dict) else {}
+        item_slug = str(channel.get("slug") or raw.get("channel_slug") or "").lower()
+        if item_slug and item_slug != settings.kick_channel_slug:
+            logger.warning("Ignoring VOD from unexpected channel: %s", item_slug)
+            return None
+
+        vod_id = raw.get("id") or raw.get("uuid") or raw.get("slug")
+        if vod_id is None:
+            return None
+        vod_id = str(vod_id)
+
+        url = (
+            raw.get("url")
+            or raw.get("share_url")
+            or raw.get("video_url")
+            or raw.get("canonical_url")
+        )
+        if not isinstance(url, str) or not url.startswith("https://kick.com/"):
+            url = f"https://kick.com/{settings.kick_channel_slug}/videos/{vod_id}"
+
+        return {
+            "vod_id": vod_id,
+            "url": url,
+            "title": str(raw.get("title") or livestream.get("title") or "Untitled VOD"),
+            "created_at": raw.get("created_at") or raw.get("published_at") or "",
+            "duration": raw.get("duration") or livestream.get("duration") or 0,
+            "thumbnail_url": raw.get("thumbnail") or raw.get("thumbnail_url") or "",
+            "category": self._category_name(
+                raw.get("categories") or raw.get("category") or livestream.get("categories")
+            ),
+        }
+
+    async def _list_public_vods_ytdlp(self, limit: int) -> list[dict[str, Any]]:
+        """yt-dlp fallback: channel videos playlist sayfasından VOD metadata'sını çıkar."""
+        channel_url = f"https://kick.com/{settings.kick_channel_slug}"
+        try:
+            cmd = [
+                "yt-dlp",
+                "--flat-playlist",
+                "--dump-json",
+                "--playlist-end", str(min(limit, 50)),
+                "--no-warnings",
+                f"{channel_url}/videos",
+            ]
+            proc = await asyncio.to_thread(
+                subprocess.run,
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+            if proc.returncode != 0:
+                logger.warning("yt-dlp VOD list failed (rc=%d): %s", proc.returncode, proc.stderr[:300])
+                return []
+
+            vods: list[dict[str, Any]] = []
+            for line in proc.stdout.strip().splitlines():
+                if not line.strip():
+                    continue
+                try:
+                    entry = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                vod_id = entry.get("id") or entry.get("url", "").rstrip("/").split("/")[-1]
+                if not vod_id:
+                    continue
+                title = entry.get("title") or "Untitled VOD"
+                web_url = entry.get("webpage_url") or entry.get("url") or f"{channel_url}/videos/{vod_id}"
+                duration = entry.get("duration") or 0
+                created = entry.get("upload_date") or entry.get("timestamp") or ""
+                thumbnail = entry.get("thumbnail") or entry.get("thumbnails", [{}])[0].get("url", "") if entry.get("thumbnails") else ""
+                vods.append({
+                    "vod_id": str(vod_id),
+                    "url": web_url,
+                    "title": title,
+                    "created_at": str(created),
+                    "duration": duration,
+                    "thumbnail_url": thumbnail,
+                    "category": entry.get("category") or "Kick",
+                })
+            return vods[:limit]
+        except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as exc:
+            logger.warning("yt-dlp VOD discovery failed: %s", exc)
+            return []
+
+    async def list_public_vods(self, limit: int = 10) -> list[dict[str, Any]]:
+        """List public VODs for the configured, fixed Kick channel.
+
+        Tries the Kick API first; on 403/empty response falls back to yt-dlp.
+        """
+        limit = max(1, min(int(limit), 50))
+        client = await self._get_client()
+        url = f"{settings.kick_api_base}/channels/{settings.kick_channel_slug}/videos"
+        try:
+            response = await client.get(url, params={"limit": limit, "sort": "date"})
+            response.raise_for_status()
+        except httpx.HTTPError as exc:
+            logger.warning("Kick API VOD list failed (%s), falling back to yt-dlp", exc)
+            return await self._list_public_vods_ytdlp(limit)
+
+        vods: list[dict[str, Any]] = []
+        for raw in self._extract_vod_items(response.json()):
+            vod = self._normalize_public_vod(raw)
+            if vod is not None:
+                vods.append(vod)
+
+        if not vods:
+            logger.info("Kick API returned 0 VODs, trying yt-dlp fallback")
+            return await self._list_public_vods_ytdlp(limit)
+
+        return vods[:limit]
 
     # --- Yayin Durumu (auth-free) ---
     async def get_livestream_info(self) -> Dict[str, Any]:

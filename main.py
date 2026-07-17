@@ -2,8 +2,13 @@
 Ana FastAPI uygulaması.
 Tüm router'ları birleştirir, CORS ve middleware ayarlarını yapar.
 """
-import logging
 import os
+
+# .env dosyasını, diğer tüm import'lardan önce yükle (auth devre dışı vs. için)
+from dotenv import load_dotenv
+load_dotenv()
+
+import logging
 import time
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -246,7 +251,6 @@ if _platform_available and platform_router is not None:
     app.include_router(platform_router.router)
 app.include_router(projects.router)
 app.include_router(graphql_router.router)
-app.include_router(search_router.router)
 app.include_router(search_router.router)
 app.include_router(social_router.router)
 

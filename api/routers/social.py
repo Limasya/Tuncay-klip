@@ -6,12 +6,19 @@ TikTok, Reels ve Shorts için otomatik video kurgusu üretilmesini sağlayan end
 import logging
 from typing import Any, Dict
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException
-from pydantic import BaseModel
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from pydantic import BaseModel, Field
 
+from services.kick_archive import (
+    TARGET_CHANNEL_SLUG,
+    TARGET_CHANNEL_URL,
+    is_target_vod_url,
+    kick_archive,
+)
 from services.social_video_generator import social_video_gen
 from services.master_pipeline import master_pipeline
 from services.ai_pipeline import ai_pipeline
+from utils.auth_compat import Principal, Scope, require_scope
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/social", tags=["social"])
@@ -54,14 +61,31 @@ async def generate_viral_video_endpoint(
 class MasterPipelineRequest(BaseModel):
     url: str
 
+
+class KickArchiveSyncRequest(BaseModel):
+    """Bounded archive job options; no source channel or URL is accepted."""
+    vod_limit: int | None = Field(default=None, ge=1, le=50)
+    max_clips_per_vod: int | None = Field(default=None, ge=1, le=10)
+
 @router.post("/generate-master-pipeline", status_code=202)
 async def generate_master_pipeline_endpoint(
-    request: MasterPipelineRequest, background_tasks: BackgroundTasks
+    request: MasterPipelineRequest,
+    background_tasks: BackgroundTasks,
+    _principal: Principal = Depends(require_scope(Scope.CLIPS_WRITE)),
 ):
     """
     Sadece URL vererek tüm süreci otonom işletir.
     (İndirme -> LLM Kırpma -> Yüz Takibi -> Render)
     """
+    if not is_target_vod_url(request.url):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Only public VOD URLs from "
+                f"{TARGET_CHANNEL_URL}/videos/... can be processed."
+            ),
+        )
+
     try:
         async def background_master():
             logger.info("Starting background master pipeline for %s", request.url)
@@ -73,3 +97,33 @@ async def generate_master_pipeline_endpoint(
     except Exception as e:
         logger.error("Failed to start master pipeline: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/kick-archive/sync", status_code=202)
+async def start_kick_archive_sync(
+    request: KickArchiveSyncRequest,
+    _principal: Principal = Depends(require_scope(Scope.STREAMS_MANAGE)),
+):
+    """Discover and process new public VODs from the fixed Tuncay channel."""
+    result = kick_archive.start_sync(
+        vod_limit=request.vod_limit,
+        max_clips_per_vod=request.max_clips_per_vod,
+    )
+    return {
+        **result,
+        "message": (
+            "Public Tuncay VOD archive processing started."
+            if result["status"] == "accepted"
+            else "A public Tuncay VOD archive job is already running."
+        ),
+        "channel": TARGET_CHANNEL_SLUG,
+        "channel_url": TARGET_CHANNEL_URL,
+    }
+
+
+@router.get("/kick-archive/status")
+async def get_kick_archive_status(
+    _principal: Principal = Depends(require_scope(Scope.ANALYTICS_READ)),
+):
+    """Return archive progress and deduplication state for the fixed channel."""
+    return await kick_archive.get_status()

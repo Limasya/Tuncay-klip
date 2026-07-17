@@ -20,7 +20,8 @@ class Settings(BaseSettings):
     kick_client_secret: str = ""
     kick_redirect_uri: str = "http://localhost:8000/auth/callback"
     kick_broadcaster_user_id: str = ""
-    kick_channel_slug: str = ""
+    # This deployment intentionally processes public data from one channel only.
+    kick_channel_slug: str = "thetuncay"
 
     # Kick API Endpoints
     kick_api_base: str = "https://kick.com/api/v2"
@@ -34,6 +35,14 @@ class Settings(BaseSettings):
     clip_post_seconds: int = 5
     analysis_fps: int = 2
     max_clip_duration: int = 60
+
+    # Public Kick VOD archive processing. The archive service always uses the
+    # fixed channel above and keeps a local state file to avoid reprocessing VODs.
+    kick_archive_autostart: bool = False
+    kick_archive_vod_limit: int = 3
+    kick_archive_max_clips_per_vod: int = 5
+    kick_archive_interval_minutes: int = 360
+    kick_archive_state_file: str = "data/kick_archive_state.json"
 
     # Redis
     redis_url: str = "redis://localhost:6379/0"
@@ -83,6 +92,7 @@ class Settings(BaseSettings):
     secret_key: str = "change-me-in-production"
     algorithm: str = "HS256"
     access_token_expire_minutes: int = 1440
+    auth_disabled: bool = False
 
     # LLM Providers
     openai_api_key: str = ""
@@ -122,6 +132,17 @@ class Settings(BaseSettings):
         if self.secret_key == "change-me-in-production" and self.deployment_environment == "production":
             raise ValueError("secret_key must be set to a secure value in production")
         return self
+
+    @field_validator("kick_channel_slug", mode="before")
+    @classmethod
+    def enforce_target_kick_channel(cls, value):
+        """Prevent this deployment from being redirected to another channel."""
+        slug = str(value or "thetuncay").strip().lower()
+        if slug != "thetuncay":
+            raise ValueError(
+                "This deployment is restricted to the public Kick channel 'thetuncay'."
+            )
+        return slug
 
     # Server
     host: str = "0.0.0.0"

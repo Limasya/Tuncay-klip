@@ -13,6 +13,8 @@ services:
       - REDIS_URL=redis://redis:6379/0
       - DATABASE_URL=postgresql+asyncpg://klip:klip@postgres:5432/klip
       - EVENT_BUS_BACKEND=redis
+      - KICK_CHANNEL_SLUG=thetuncay
+      - KICK_ARCHIVE_AUTOSTART=true
     depends_on:
       redis:
         condition: service_healthy

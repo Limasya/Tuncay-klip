@@ -55,6 +55,7 @@ async def auto_boot() -> dict:
         "auto_backup": False,
         "event_bus_broadcast": False,
         "task_queue": False,
+        "kick_archive_scheduler": False,
         "errors": [],
     }
 
@@ -182,6 +183,18 @@ async def auto_boot() -> dict:
         except Exception as e:
             report["errors"].append(f"task_queue: {e}")
 
+    # ── Step 8: Optional public Tuncay VOD archive scheduler ──
+    with _maybe_span("boot.kick_archive"):
+        try:
+            from config import get_settings
+            archive_settings = get_settings()
+            if archive_settings.kick_archive_autostart:
+                from services.kick_archive import kick_archive
+                report["kick_archive_scheduler"] = await kick_archive.start_scheduler()
+        except Exception as e:
+            report["errors"].append(f"kick_archive: {e}")
+            logger.warning("Kick archive scheduler failed to start: %s", e)
+
     elapsed = (time.time() - start) * 1000
     report["boot_time_ms"] = round(elapsed, 1)
     logger.info("Auto-boot completed in %.1fms (%d errors)", elapsed, len(report["errors"]))
@@ -204,6 +217,11 @@ async def auto_shutdown():
     try:
         from services.task_queue import task_queue
         await task_queue.stop()
+    except Exception:
+        pass
+    try:
+        from services.kick_archive import kick_archive
+        await kick_archive.stop()
     except Exception:
         pass
     try:

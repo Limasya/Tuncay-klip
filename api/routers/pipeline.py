@@ -33,7 +33,6 @@ def _get_orch():
 
 
 class StartStreamRequest(BaseModel):
-    stream_url: str
     target_fps: int = 2
     buffer_seconds: int = 30
 
@@ -73,23 +72,35 @@ class SubtitleRequest(BaseModel):
 
 @router.post("/start")
 async def start_pipeline(
-    request: StartStreamRequest,
+    request: StartStreamRequest = StartStreamRequest(),
     _principal: Principal = Depends(require_scope(Scope.STREAMS_MANAGE)),
 ):
-    """Start the event-driven pipeline with a stream URL."""
+    """Start the event-driven pipeline for the fixed public Kick channel."""
     orchestrator = _get_orch()
     if orchestrator is None:
         raise HTTPException(503, "Microservices orchestrator unavailable (Redis required)")
     if orchestrator._is_running:
         raise HTTPException(400, "Pipeline already running")
 
+    try:
+        from services.kick_api import kick_service
+        stream_url = await kick_service.get_stream_url()
+    except Exception as exc:
+        raise HTTPException(503, f"Target Kick stream could not be resolved: {exc}")
+
+    if not stream_url:
+        raise HTTPException(409, "The target Kick channel is not currently live")
+
     asyncio.create_task(orchestrator.start_stream(
-        stream_url=request.stream_url,
+        stream_url=stream_url,
         target_fps=request.target_fps,
         buffer_seconds=request.buffer_seconds,
     ))
 
-    return {"message": "Pipeline starting...", "url": request.stream_url}
+    return {
+        "message": "Pipeline starting...",
+        "channel": "thetuncay",
+    }
 
 
 @router.post("/stop")
