@@ -14,6 +14,9 @@ from platform_eng.observability.tracing import (
     init_tracing,
     get_tracer,
     instrument_fastapi,
+    start_span,
+    inject_context,
+    extracted_context,
     OTEL_AVAILABLE,
 )
 
@@ -31,5 +34,8 @@ __all__ = [
     "init_tracing",
     "get_tracer",
     "instrument_fastapi",
+    "start_span",
+    "inject_context",
+    "extracted_context",
     "OTEL_AVAILABLE",
 ]

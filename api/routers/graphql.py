@@ -1,6 +1,7 @@
 from typing import Optional, List
 import strawberry
 from strawberry.fastapi import GraphQLRouter
+from strawberry.scalars import JSON
 from services.vector_store import vector_store
 
 
@@ -8,7 +9,7 @@ from services.vector_store import vector_store
 class SearchResult:
     clip_id: str
     similarity_score: float
-    metadata: dict
+    metadata: JSON
 
 
 @strawberry.type
@@ -18,22 +19,22 @@ class Query:
         self,
         query: str,
         top_k: int = 10,
-        filters: Optional[dict] = None
+        filters: Optional[JSON] = None
     ) -> List[SearchResult]:
-        """
-        ChromaDB üzerinden semantik arama yapar.
-        
-        Args:
-            query: Arama metni (örn: "en komik rage anları", "clutch kazanma sahneleri")
-            top_k: Kaç sonuç döndürülsün (varsayılan 10)
-            filters: ChromaDB where filtresi (örn: {"category": "exciting"})
-        
-        Returns:
-            Benzerlik skoruna göre sıralı klip listesi
-        """
+        """ChromaDB üzerinden semantik klip araması."""
         results = await vector_store.search(query=query, top_k=top_k, filters=filters)
         return [SearchResult(**res) for res in results]
 
 
 schema = strawberry.Schema(query=Query)
-router = GraphQLRouter(schema)
+
+
+async def get_context() -> dict:
+    return {}
+
+
+def get_context_sync() -> dict:
+    return {}
+
+
+router = GraphQLRouter(schema, path="/graphql", context_getter=get_context_sync)

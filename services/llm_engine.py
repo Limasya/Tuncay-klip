@@ -33,8 +33,25 @@ import os
 import re
 import time
 from collections import deque
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
+
+try:
+    from platform_eng.observability import start_span as _otel_span
+    _OTEL_SPAN_AVAILABLE = True
+except Exception:
+    _OTEL_SPAN_AVAILABLE = False
+
+
+@contextmanager
+def _maybe_span(name: str, **attributes):
+    if _OTEL_SPAN_AVAILABLE:
+        with _otel_span(name, **attributes) as span:
+            yield span
+    else:
+        yield None
+
 
 logger = logging.getLogger("llm_engine")
 
@@ -759,49 +776,43 @@ class LLMEngine:
         """
         self._stats["total_requests"] += 1
 
-        # Build prompt
-        if prompt_template in PROMPT_TEMPLATES:
-            template = PROMPT_TEMPLATES[prompt_template]
-            ctx = context or {}
-            ctx.setdefault("language", "Turkish" if language == "tr" else "English")
-            # Fill missing keys with empty string to avoid KeyError
-            prompt = template.format(**{k: ctx.get(k, "") for k in ctx})
-        else:
-            prompt = prompt_template
+        with _maybe_span(
+            "llm.generate",
+            prompt_template=prompt_template,
+            language=language,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            use_cache=use_cache,
+        ):
+            # Build prompt
+            if prompt_template in PROMPT_TEMPLATES:
+                template = PROMPT_TEMPLATES[prompt_template]
+                ctx = context or {}
+                ctx.setdefault("language", "Turkish" if language == "tr" else "English")
+                # Fill missing keys with empty string to avoid KeyError
+                prompt = template.format(**{k: ctx.get(k, "") for k in ctx})
+            else:
+                prompt = prompt_template
 
-        # Check cache
-        cache_key = self._build_cache_key(prompt, language, temperature)
-        if use_cache and cache_key in self._cache:
-            ts, cached = self._cache[cache_key]
-            if time.time() - ts < self._cache_ttl:
-                self._stats["cache_hits"] += 1
-                return cached
+            # Check cache
+            cache_key = self._build_cache_key(prompt, language, temperature)
+            if use_cache and cache_key in self._cache:
+                ts, cached = self._cache[cache_key]
+                if time.time() - ts < self._cache_ttl:
+                    self._stats["cache_hits"] += 1
+                    return cached
 
-        # Try providers in order
-        last_error = None
-        for provider_name, provider_fn in self._providers:
-            try:
-                result = await asyncio.wait_for(
-                    provider_fn(
-                        prompt,
-                        max_tokens=max_tokens,
-                        temperature=temperature,
-                        system_prompt=system_prompt,
-                    ),
-                    timeout=60.0,
-                )
-                if result and len(result.strip()) > 5:
-                    if use_cache:
-                        self._cache[cache_key] = (time.time(), result)
-                    return result
-            except asyncio.TimeoutError:
-                logger.warning("Provider %s timed out, trying next", provider_name)
-                last_error = "timeout"
-            except TypeError:
-                # Provider doesn't accept system_prompt kwarg
+            # Try providers in order
+            last_error = None
+            for provider_name, provider_fn in self._providers:
                 try:
                     result = await asyncio.wait_for(
-                        provider_fn(prompt, max_tokens=max_tokens, temperature=temperature),
+                        provider_fn(
+                            prompt,
+                            max_tokens=max_tokens,
+                            temperature=temperature,
+                            system_prompt=system_prompt,
+                        ),
                         timeout=60.0,
                     )
                     if result and len(result.strip()) > 5:
@@ -809,17 +820,31 @@ class LLMEngine:
                             self._cache[cache_key] = (time.time(), result)
                         return result
                 except asyncio.TimeoutError:
+                    logger.warning("Provider %s timed out, trying next", provider_name)
                     last_error = "timeout"
-                except Exception as e2:
-                    last_error = str(e2)
+                except TypeError:
+                    # Provider doesn't accept system_prompt kwarg
+                    try:
+                        result = await asyncio.wait_for(
+                            provider_fn(prompt, max_tokens=max_tokens, temperature=temperature),
+                            timeout=60.0,
+                        )
+                        if result and len(result.strip()) > 5:
+                            if use_cache:
+                                self._cache[cache_key] = (time.time(), result)
+                            return result
+                    except asyncio.TimeoutError:
+                        last_error = "timeout"
+                    except Exception as e2:
+                        last_error = str(e2)
+                        self._stats["fallback_count"] += 1
+                except Exception as e:
+                    logger.warning("Provider %s failed: %s", provider_name, e)
+                    last_error = str(e)
                     self._stats["fallback_count"] += 1
-            except Exception as e:
-                logger.warning("Provider %s failed: %s", provider_name, e)
-                last_error = str(e)
-                self._stats["fallback_count"] += 1
 
-        logger.error("All providers failed: %s", last_error)
-        return self._emergency_fallback(prompt_template, context or {})
+            logger.error("All providers failed: %s", last_error)
+            return self._emergency_fallback(prompt_template, context or {})
 
     async def generate_json(
         self,
