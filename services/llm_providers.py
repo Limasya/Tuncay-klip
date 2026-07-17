@@ -26,24 +26,29 @@ class OpenAIProvider:
         self._http_client = None
 
     async def __call__(
-        self, prompt: str, max_tokens: int = 1024, temperature: float = 0.7
+        self, prompt: str, max_tokens: int = 1024, temperature: float = 0.7,
+        system_prompt: str | None = None,
     ) -> str:
         try:
             import aiohttp
         except ImportError:
-            return await self._sync_call(prompt, max_tokens, temperature)
+            return await self._sync_call(prompt, max_tokens, temperature, system_prompt)
 
         url = "https://api.openai.com/v1/chat/completions"
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
         }
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        else:
+            messages.append({"role": "system", "content": "You are a viral content creator for gaming/streaming clips. Always respond with valid JSON when requested."})
+        messages.append({"role": "user", "content": prompt})
+
         payload = {
             "model": self.model,
-            "messages": [
-                {"role": "system", "content": "You are a viral content creator for gaming/streaming clips. Always respond with valid JSON when requested."},
-                {"role": "user", "content": prompt},
-            ],
+            "messages": messages,
             "max_tokens": max_tokens,
             "temperature": temperature,
         }
@@ -57,16 +62,21 @@ class OpenAIProvider:
                 return data["choices"][0]["message"]["content"].strip()
 
     async def _sync_call(
-        self, prompt: str, max_tokens: int, temperature: float
+        self, prompt: str, max_tokens: int, temperature: float,
+        system_prompt: str | None = None,
     ) -> str:
         """Fallback sync call when aiohttp unavailable."""
         import urllib.request
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        else:
+            messages.append({"role": "system", "content": "You are a viral content creator for gaming/streaming clips. Always respond with valid JSON when requested."})
+        messages.append({"role": "user", "content": prompt})
+
         payload = json.dumps({
             "model": self.model,
-            "messages": [
-                {"role": "system", "content": "You are a viral content creator for gaming/streaming clips. Always respond with valid JSON when requested."},
-                {"role": "user", "content": prompt},
-            ],
+            "messages": messages,
             "max_tokens": max_tokens,
             "temperature": temperature,
         }).encode()
@@ -95,12 +105,13 @@ class ClaudeProvider:
         self.api_version = "2023-06-01"
 
     async def __call__(
-        self, prompt: str, max_tokens: int = 1024, temperature: float = 0.7
+        self, prompt: str, max_tokens: int = 1024, temperature: float = 0.7,
+        system_prompt: str | None = None,
     ) -> str:
         try:
             import aiohttp
         except ImportError:
-            return await self._sync_call(prompt, max_tokens, temperature)
+            return await self._sync_call(prompt, max_tokens, temperature, system_prompt)
 
         url = "https://api.anthropic.com/v1/messages"
         headers = {
@@ -108,7 +119,7 @@ class ClaudeProvider:
             "anthropic-version": self.api_version,
             "Content-Type": "application/json",
         }
-        payload = {
+        payload: dict[str, Any] = {
             "model": self.model,
             "max_tokens": max_tokens,
             "temperature": temperature,
@@ -116,6 +127,8 @@ class ClaudeProvider:
                 {"role": "user", "content": prompt},
             ],
         }
+        if system_prompt:
+            payload["system"] = system_prompt
 
         async with aiohttp.ClientSession() as session:
             async with session.post(url, json=payload, headers=headers, timeout=30) as resp:
@@ -126,15 +139,19 @@ class ClaudeProvider:
                 return data["content"][0]["text"].strip()
 
     async def _sync_call(
-        self, prompt: str, max_tokens: int, temperature: float
+        self, prompt: str, max_tokens: int, temperature: float,
+        system_prompt: str | None = None,
     ) -> str:
         import urllib.request
-        payload = json.dumps({
+        payload_data: dict[str, Any] = {
             "model": self.model,
             "max_tokens": max_tokens,
             "temperature": temperature,
             "messages": [{"role": "user", "content": prompt}],
-        }).encode()
+        }
+        if system_prompt:
+            payload_data["system"] = system_prompt
+        payload = json.dumps(payload_data).encode()
         req = urllib.request.Request(
             "https://api.anthropic.com/v1/messages",
             data=payload,
@@ -160,15 +177,16 @@ class OllamaProvider:
         self.model = model
 
     async def __call__(
-        self, prompt: str, max_tokens: int = 1024, temperature: float = 0.7
+        self, prompt: str, max_tokens: int = 1024, temperature: float = 0.7,
+        system_prompt: str | None = None,
     ) -> str:
         try:
             import aiohttp
         except ImportError:
-            return await self._sync_call(prompt, max_tokens, temperature)
+            return await self._sync_call(prompt, max_tokens, temperature, system_prompt)
 
         url = f"{self.base_url}/api/generate"
-        payload = {
+        payload: dict[str, Any] = {
             "model": self.model,
             "prompt": prompt,
             "stream": False,
@@ -177,6 +195,8 @@ class OllamaProvider:
                 "temperature": temperature,
             },
         }
+        if system_prompt:
+            payload["system"] = system_prompt
 
         async with aiohttp.ClientSession() as session:
             async with session.post(url, json=payload, timeout=60) as resp:
@@ -187,15 +207,19 @@ class OllamaProvider:
                 return data.get("response", "").strip()
 
     async def _sync_call(
-        self, prompt: str, max_tokens: int, temperature: float
+        self, prompt: str, max_tokens: int, temperature: float,
+        system_prompt: str | None = None,
     ) -> str:
         import urllib.request
-        payload = json.dumps({
+        payload_data: dict[str, Any] = {
             "model": self.model,
             "prompt": prompt,
             "stream": False,
             "options": {"num_predict": max_tokens, "temperature": temperature},
-        }).encode()
+        }
+        if system_prompt:
+            payload_data["system"] = system_prompt
+        payload = json.dumps(payload_data).encode()
         req = urllib.request.Request(
             f"{self.base_url}/api/generate",
             data=payload,
