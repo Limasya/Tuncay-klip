@@ -24,6 +24,7 @@ from api.routers import (
     smart_editor as smart_editor_router,
     social as social_router,
     system,
+    graphql as graphql_router,
 )
 from api.routers import analytics as analytics_router
 from api.routers import recommendations as recommendations_router
@@ -243,6 +244,7 @@ app.include_router(llm_status_router.router)
 if _platform_available and platform_router is not None:
     app.include_router(platform_router.router)
 app.include_router(projects.router)
+app.include_router(graphql_router.router)
 app.include_router(social_router.router)
 
 # Admin router (new)

@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Dict, Any, List
 
 from services.youtube_downloader import youtube_downloader
-from services.faster_whisper_service import faster_whisper_service
+from services.faster_whisper_service import faster_whisper
 from services.llm_reasoner import llm_reasoner
 from services.social_video_generator import social_video_gen
 from services.action_recognizer import action_recognizer
@@ -84,7 +84,7 @@ class MasterPipeline:
 
         # ─── Adım 2: Faster-Whisper Transkripsiyon ─────────────────────────
         logger.info("Adım 2/7 — Faster-Whisper ile transkripsiyon yapılıyor...")
-        transcript = await faster_whisper_service.transcribe(vod_path, word_timestamps=True)
+        transcript = await faster_whisper.transcribe(vod_path, word_timestamps=True)
         if not transcript.get("success"):
             return {"error": "Transkripsiyon başarısız."}
 
@@ -184,7 +184,7 @@ class MasterPipeline:
             )
 
             # Klip transkripti
-            clip_transcript = await faster_whisper_service.transcribe(sliced_path, word_timestamps=True)
+            clip_transcript = await faster_whisper.transcribe(sliced_path, word_timestamps=True)
             clip_transcript_data = clip_transcript.get("data")
 
             # Mega Viral Editor (tüm mekanikler)

@@ -7,7 +7,7 @@ koordinatlarını hesaplar (yumuşatılmış kamera hareketiyle).
 """
 import asyncio
 import logging
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Any
 import json
 import tempfile
 import os
