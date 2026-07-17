@@ -1,0 +1,35 @@
+{
+  "dashboard": {
+    "title": "Tuncay Klip API Dashboard",
+    "uid": "tuncay-klip-api",
+    "panels": [
+      {
+        "title": "HTTP Requests",
+        "targets": [
+          {
+            "expr": "rate(http_requests_total[1m])"
+          }
+        ],
+        "type": "graph"
+      },
+      {
+        "title": "Response Time",
+        "targets": [
+          {
+            "expr": "rate(http_request_duration_seconds_sum[1m]) / rate(http_request_duration_seconds_count[1m])"
+          }
+        ],
+        "type": "graph"
+      },
+      {
+        "title": "Error Rate",
+        "targets": [
+          {
+            "expr": "rate(http_requests_total{status=~\"5..\"}[1m])"
+          }
+        ],
+        "type": "graph"
+      }
+    ]
+  }
+}
