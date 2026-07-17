@@ -132,6 +132,7 @@ class KickArchiveService:
         self,
         vod_limit: int | None = None,
         max_clips_per_vod: int | None = None,
+        pipeline_config=None,
     ) -> dict[str, Any]:
         """Process unprocessed public VODs, one at a time, with deduplication."""
         settings = get_settings()
@@ -185,6 +186,7 @@ class KickArchiveService:
                 try:
                     result = await self.pipeline.process_url(
                         vod["url"],
+                        config=pipeline_config,
                         max_clips=max_clips_per_vod,
                         game=str(vod.get("category") or "Kick"),
                         streamer="Tuncay",
@@ -222,9 +224,9 @@ class KickArchiveService:
             self._last_report = report
             return report
 
-    async def _run_sync_task(self, vod_limit: int | None, max_clips_per_vod: int | None) -> None:
+    async def _run_sync_task(self, vod_limit: int | None, max_clips_per_vod: int | None, pipeline_config=None) -> None:
         try:
-            self._last_report = await self.sync_archive(vod_limit, max_clips_per_vod)
+            self._last_report = await self.sync_archive(vod_limit, max_clips_per_vod, pipeline_config=pipeline_config)
         except Exception as exc:  # pragma: no cover - defensive task boundary
             logger.exception("Kick archive task failed")
             self._last_report = {
@@ -237,6 +239,7 @@ class KickArchiveService:
         self,
         vod_limit: int | None = None,
         max_clips_per_vod: int | None = None,
+        pipeline_config=None,
     ) -> dict[str, Any]:
         """Start one archive pass in the background without accepting a URL."""
         if self._sync_lock.locked() or (self._active_task and not self._active_task.done()):
@@ -246,7 +249,7 @@ class KickArchiveService:
                 "channel_url": TARGET_CHANNEL_URL,
             }
         self._active_task = asyncio.create_task(
-            self._run_sync_task(vod_limit, max_clips_per_vod),
+            self._run_sync_task(vod_limit, max_clips_per_vod, pipeline_config=pipeline_config),
             name="kick-archive-sync",
         )
         return {

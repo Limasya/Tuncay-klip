@@ -28,6 +28,7 @@ ultralytics>=8.2.0
 
 # Video Downloading
 yt-dlp>=2024.1.0
+curl_cffi>=0.15.0
 
 # ML/AI
 torch>=2.3.1

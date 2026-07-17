@@ -150,9 +150,20 @@ async def cmd_publish(args):
 
 async def cmd_sync_kick_archive(args):
     """Yalnizca thetuncay kanalinin yeni acik VOD'larini analiz eder."""
+    from services.master_pipeline import PipelineConfig
+
+    config = PipelineConfig(
+        mode=args.mode,
+        export_format=args.export_format,
+        max_clips=args.max_clips_per_vod,
+        use_brainrot=not args.no_brainrot,
+        use_bgm=not args.no_bgm,
+    )
+
     report = await kick_archive.sync_archive(
         vod_limit=args.vod_limit,
         max_clips_per_vod=args.max_clips_per_vod,
+        pipeline_config=config,
     )
     print(
         "Arsiv taramasi tamamlandi: "
@@ -162,6 +173,52 @@ async def cmd_sync_kick_archive(args):
         f"basarisiz={report['failed']}, "
         f"klip={report['clips_generated']}"
     )
+
+
+async def cmd_pipeline(args):
+    """Tek bir VOD URL'i uzerinde moduler pipeline calistir."""
+    from services.master_pipeline import master_pipeline, PipelineConfig
+
+    config = PipelineConfig(
+        url=args.url,
+        mode=args.mode,
+        export_format=args.export_format,
+        max_clips=args.max_clips,
+        game=args.game,
+        streamer=args.streamer,
+        use_brainrot=not args.no_brainrot,
+        use_bgm=not args.no_bgm,
+        custom_ffmpeg=args.custom_ffmpeg,
+    )
+
+    print(f"Pipeline baslatiliyor: mod={args.mode}, fmt={args.export_format}")
+    print(f"URL: {args.url}")
+    print(f"Max klip: {args.max_clips}")
+
+    result = await master_pipeline.process_url(args.url, config=config)
+
+    if result.get("success"):
+        print(f"\nBasarili! {result.get('total_clips', 0)} klip uretildi.")
+        for clip in result.get("generated_clips", []):
+            print(f"  #{clip.get('rank', '?')}: {clip.get('output_path', '?')} (skor: {clip.get('viral_score', 0):.2f})")
+    else:
+        print(f"\nHata: {result.get('error', 'Bilinmeyen hata')}")
+
+
+async def cmd_strategies(args):
+    """Mevcut indirme stratejilerini goster."""
+    from services.youtube_downloader import youtube_downloader
+    from services.master_pipeline import master_pipeline
+
+    print("=== Indirme Stratejileri ===")
+    for s in youtube_downloader.get_strategies():
+        status = "AKTIF" if s["enabled"] else "PASIF"
+        avail = "MEVCUT" if s["available"] else "YUKLU DEGIL"
+        print(f"  [{status}] {s['name']} ({avail})")
+
+    print("\n=== Export Formatlari ===")
+    for k, v in master_pipeline.get_export_formats().items():
+        print(f"  {k}: {v}")
 
 
 def main():
@@ -214,12 +271,38 @@ def main():
     pub.add_argument("--privacy", default="private", choices=["private", "public", "unlisted"])
     pub.set_defaults(func=cmd_publish)
 
+    # Pipeline — moduler CLI
+    pl = subparsers.add_parser("pipeline", help="Tek VOD uzerinde moduler pipeline")
+    pl.add_argument("url", help="Kick VOD URL'si")
+    pl.add_argument("--mode", default="full", choices=["full", "download", "analyze", "export"],
+                     help="Pipeline modu: full/download/analyze/export")
+    pl.add_argument("--export-format", default="social",
+                     choices=["social", "landscape", "raw", "short"],
+                     help="Export formati: social(9:16)/landscape(16:9)/raw/short")
+    pl.add_argument("--max-clips", type=int, default=5, help="Maksimum klip sayisi")
+    pl.add_argument("--game", default="Kick", help="Oyun kategorisi")
+    pl.add_argument("--streamer", default="Tuncay", help="Yayinci adi")
+    pl.add_argument("--no-brainrot", action="store_true", help="Brainrot efektlerini kapat")
+    pl.add_argument("--no-bgm", action="store_true", help="BGM eklemeyi kapat")
+    pl.add_argument("--custom-ffmpeg", default=None, help="Ozel FFmpeg parametreleri")
+    pl.set_defaults(func=cmd_pipeline)
+
+    # Strategies — stratejileri goster
+    st = subparsers.add_parser("strategies", help="Mevcut indirme stratejilerini ve formatlari goster")
+    st.set_defaults(func=cmd_strategies)
+
+    # Sync Archive — moduler
     archive = subparsers.add_parser(
         "sync-kick-archive",
-        help="Sadece kick.com/thetuncay acik VOD arsivini analiz et",
+        help="kick.com/thetuncay acik VOD arsivini analiz et",
     )
     archive.add_argument("--vod-limit", type=int, default=3, choices=range(1, 51))
     archive.add_argument("--max-clips-per-vod", type=int, default=5, choices=range(1, 11))
+    archive.add_argument("--mode", default="full", choices=["full", "download", "analyze", "export"])
+    archive.add_argument("--export-format", default="social",
+                         choices=["social", "landscape", "raw", "short"])
+    archive.add_argument("--no-brainrot", action="store_true")
+    archive.add_argument("--no-bgm", action="store_true")
     archive.set_defaults(func=cmd_sync_kick_archive)
 
     args = parser.parse_args()

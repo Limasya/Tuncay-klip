@@ -43,6 +43,7 @@ class Settings(BaseSettings):
     kick_archive_max_clips_per_vod: int = 5
     kick_archive_interval_minutes: int = 360
     kick_archive_state_file: str = "data/kick_archive_state.json"
+    kick_ytdlp_cookies_file: str = ""
 
     # Redis
     redis_url: str = "redis://localhost:6379/0"

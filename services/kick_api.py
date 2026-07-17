@@ -11,8 +11,15 @@ import json
 import logging
 import subprocess
 from datetime import datetime
+from pathlib import Path
 from typing import Optional, Dict, Any, Callable, Awaitable
 from config import get_settings
+
+try:
+    from curl_cffi.requests import Session as CurlSession
+    _CURL_CFFI_AVAILABLE = True
+except ImportError:
+    _CURL_CFFI_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -204,85 +211,93 @@ class KickAPIService:
             ),
         }
 
-    async def _list_public_vods_ytdlp(self, limit: int) -> list[dict[str, Any]]:
-        """yt-dlp fallback: channel videos playlist sayfasından VOD metadata'sını çıkar."""
-        channel_url = f"https://kick.com/{settings.kick_channel_slug}"
-        try:
-            cmd = [
-                "yt-dlp",
-                "--flat-playlist",
-                "--dump-json",
-                "--playlist-end", str(min(limit, 50)),
-                "--no-warnings",
-                f"{channel_url}/videos",
-            ]
-            proc = await asyncio.to_thread(
-                subprocess.run,
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=60,
-            )
-            if proc.returncode != 0:
-                logger.warning("yt-dlp VOD list failed (rc=%d): %s", proc.returncode, proc.stderr[:300])
-                return []
-
-            vods: list[dict[str, Any]] = []
-            for line in proc.stdout.strip().splitlines():
-                if not line.strip():
-                    continue
-                try:
-                    entry = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                vod_id = entry.get("id") or entry.get("url", "").rstrip("/").split("/")[-1]
-                if not vod_id:
-                    continue
-                title = entry.get("title") or "Untitled VOD"
-                web_url = entry.get("webpage_url") or entry.get("url") or f"{channel_url}/videos/{vod_id}"
-                duration = entry.get("duration") or 0
-                created = entry.get("upload_date") or entry.get("timestamp") or ""
-                thumbnail = entry.get("thumbnail") or entry.get("thumbnails", [{}])[0].get("url", "") if entry.get("thumbnails") else ""
-                vods.append({
-                    "vod_id": str(vod_id),
-                    "url": web_url,
-                    "title": title,
-                    "created_at": str(created),
-                    "duration": duration,
-                    "thumbnail_url": thumbnail,
-                    "category": entry.get("category") or "Kick",
-                })
-            return vods[:limit]
-        except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as exc:
-            logger.warning("yt-dlp VOD discovery failed: %s", exc)
+    async def _list_public_vods_curl_cffi(self, limit: int) -> list[dict[str, Any]]:
+        """curl_cffi ile Cloudflare bypass ederek VOD listesi çek."""
+        if not _CURL_CFFI_AVAILABLE:
+            logger.info("curl_cffi not installed, skipping")
             return []
+
+        slug = settings.kick_channel_slug
+        url = f"https://kick.com/api/v2/channels/{slug}/videos"
+        try:
+            def _fetch():
+                session = CurlSession(impersonate="chrome124")
+                resp = session.get(url, params={"limit": limit, "sort": "date"}, timeout=15)
+                resp.raise_for_status()
+                return resp.json()
+
+            data = await asyncio.to_thread(_fetch)
+        except Exception as exc:
+            logger.info("curl_cffi VOD list failed: %s", exc)
+            return []
+
+        items = data if isinstance(data, list) else data if isinstance(data, dict) else []
+        if isinstance(data, dict):
+            items = data.get("data") or data.get("videos") or data.get("results") or []
+
+        vods: list[dict[str, Any]] = []
+        for raw in items:
+            if not isinstance(raw, dict):
+                continue
+            vod_id = str(raw.get("id") or raw.get("slug") or "")
+            if not vod_id:
+                continue
+            title = raw.get("session_title") or raw.get("title") or "Untitled VOD"
+            thumb = raw.get("thumbnail") or {}
+            if isinstance(thumb, dict):
+                thumbnail_url = thumb.get("src") or ""
+            else:
+                thumbnail_url = str(thumb)
+            created_at = raw.get("created_at") or raw.get("start_time") or ""
+            duration_raw = raw.get("duration") or 0
+            duration = duration_raw / 1000 if duration_raw > 100000 else duration_raw
+            vod_slug = raw.get("slug") or vod_id
+            web_url = f"https://kick.com/{slug}/videos/{vod_slug}"
+
+            vods.append({
+                "vod_id": vod_id,
+                "url": web_url,
+                "title": title,
+                "created_at": str(created_at),
+                "duration": duration,
+                "thumbnail_url": thumbnail_url,
+                "category": "Kick",
+            })
+        logger.info("curl_cffi discovered %d VODs", len(vods))
+        return vods[:limit]
 
     async def list_public_vods(self, limit: int = 10) -> list[dict[str, Any]]:
         """List public VODs for the configured, fixed Kick channel.
 
-        Tries the Kick API first; on 403/empty response falls back to yt-dlp.
+        Öncelik sırası: curl_cffi (Cloudflare bypass) > httpx (eski API) > yt-dlp.
         """
         limit = max(1, min(int(limit), 50))
+
+        # Strateji 1: curl_cffi ile Cloudflare bypass
+        vods = await self._list_public_vods_curl_cffi(limit)
+        if vods:
+            return vods
+
+        # Strateji 2: httpx ile doğrudan Kick API (eski, 403 alabilir)
         client = await self._get_client()
         url = f"{settings.kick_api_base}/channels/{settings.kick_channel_slug}/videos"
         try:
             response = await client.get(url, params={"limit": limit, "sort": "date"})
             response.raise_for_status()
-        except httpx.HTTPError as exc:
-            logger.warning("Kick API VOD list failed (%s), falling back to yt-dlp", exc)
-            return await self._list_public_vods_ytdlp(limit)
+            vods = []
+            for raw in self._extract_vod_items(response.json()):
+                vod = self._normalize_public_vod(raw)
+                if vod is not None:
+                    vods.append(vod)
+            if vods:
+                return vods[:limit]
+        except httpx.HTTPError:
+            pass
 
-        vods: list[dict[str, Any]] = []
-        for raw in self._extract_vod_items(response.json()):
-            vod = self._normalize_public_vod(raw)
-            if vod is not None:
-                vods.append(vod)
-
-        if not vods:
-            logger.info("Kick API returned 0 VODs, trying yt-dlp fallback")
-            return await self._list_public_vods_ytdlp(limit)
-
-        return vods[:limit]
+        # Strateji 3: yt-dlp fallback
+        return await self._try_ytdlp(
+            f"https://kick.com/{settings.kick_channel_slug}", limit, cookie_args=[]
+        )
 
     # --- Yayin Durumu (auth-free) ---
     async def get_livestream_info(self) -> Dict[str, Any]:

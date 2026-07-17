@@ -25,12 +25,13 @@ class FakePipeline:
     def __init__(self):
         self.calls = []
 
-    async def process_url(self, url, max_clips, game, streamer):
+    async def process_url(self, url, max_clips, game, streamer, **kwargs):
         self.calls.append({
             "url": url,
             "max_clips": max_clips,
             "game": game,
             "streamer": streamer,
+            "config": kwargs.get("config"),
         })
         return {"success": True, "total_clips": 2}
 
@@ -92,7 +93,7 @@ async def test_sync_processes_target_vod_once_and_persists_state(tmp_path):
 @pytest.mark.asyncio
 async def test_sync_records_failed_vod_for_later_retry(tmp_path):
     class FailingPipeline:
-        async def process_url(self, url, max_clips, game, streamer):
+        async def process_url(self, url, max_clips, game, streamer, **kwargs):
             return {"success": False, "error": "download failed"}
 
     state_path = tmp_path / "kick_archive_state.json"
