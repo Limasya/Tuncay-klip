@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator
 
 from services.edit_spec import AspectRatio
 from services.project_store import (
@@ -31,7 +31,8 @@ class RationalTimeModel(BaseModel):
     numerator: int
     denominator: int = 1
 
-    @validator("denominator")
+    @field_validator("denominator")
+    @classmethod
     def denominator_must_not_be_zero(cls, value: int) -> int:
         if value == 0:
             raise ValueError("denominator cannot be zero")
@@ -81,7 +82,8 @@ class RangeEditRequest(BaseModel):
     time_range: TimeRangeModel
     mode: EditMode
 
-    @validator("mode")
+    @field_validator("mode")
+    @classmethod
     def mode_must_remove(cls, value: EditMode) -> EditMode:
         if value not in (EditMode.LIFT, EditMode.EXTRACT):
             raise ValueError("range edit mode must be lift or extract")

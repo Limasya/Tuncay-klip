@@ -10,45 +10,51 @@ import pytest
 from fastapi.testclient import TestClient
 from main import app
 
-client = TestClient(app)
+
+@pytest.fixture(scope="module")
+def client():
+    """Lifespan (auto-boot) tetiklemek için context manager kullan."""
+    with TestClient(app) as c:
+        yield c
+
 
 class TestAdminEndpoints:
-    def test_discovery_endpoint(self):
+    def test_discovery_endpoint(self, client):
         resp = client.get("/api/admin/discovery")
         assert resp.status_code == 200
         data = resp.json()
         assert "providers" in data
         assert "available_count" in data
 
-    def test_auto_configure(self):
+    def test_auto_configure(self, client):
         resp = client.post("/api/admin/discovery/configure")
         assert resp.status_code == 200
         data = resp.json()
         assert "available" in data
         assert isinstance(data["env_applied"], dict)
 
-    def test_health_monitor(self):
+    def test_health_monitor(self, client):
         resp = client.get("/api/admin/health-monitor")
         assert resp.status_code == 200
         data = resp.json()
         assert data["running"] is True
         assert "services" in data
 
-    def test_backups(self):
+    def test_backups(self, client):
         resp = client.get("/api/admin/backups")
         assert resp.status_code == 200
         data = resp.json()
         assert "total_backups" in data
         assert "latest" in data
 
-    def test_backup_trigger(self):
+    def test_backup_trigger(self, client):
         # Ensure we can trigger an immediate db backup
         resp = client.post("/api/admin/backups/trigger")
         assert resp.status_code == 200
         data = resp.json()
         assert data["status"] in ("created", "skipped")
 
-    def test_llm_providers(self):
+    def test_llm_providers(self, client):
         resp = client.get("/api/admin/llm/providers")
         assert resp.status_code == 200
         data = resp.json()

@@ -28,6 +28,7 @@ from api.routers import (
 )
 from api.routers import analytics as analytics_router
 from api.routers import recommendations as recommendations_router
+from api.routers import search as search_router
 
 _platform_available = False
 platform_router = None
@@ -245,6 +246,8 @@ if _platform_available and platform_router is not None:
     app.include_router(platform_router.router)
 app.include_router(projects.router)
 app.include_router(graphql_router.router)
+app.include_router(search_router.router)
+app.include_router(search_router.router)
 app.include_router(social_router.router)
 
 # Admin router (new)

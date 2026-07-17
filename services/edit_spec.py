@@ -1,9 +1,9 @@
 """
 ClipSpec v1 - AI edit talimatları için Pydantic modelleri.
 AI motorunun ürettiği edit talimatlarını temsil eder.
-Pydantic v1 uyumlu.
+Pydantic v2 uyumlu.
 """
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator
 from typing import Optional, List, Dict, Any
 from enum import Enum
 from datetime import datetime
@@ -71,9 +71,9 @@ class ColorPreset(str, Enum):
     DESATURATED = "desaturated"
 
 
-# --- Pydantic v1 Config helper ---
+# --- Pydantic v2 Config helper ---
 class ImmutableConfig:
-    allow_mutation = False
+    frozen = True
     use_enum_values = True
 
 
@@ -450,12 +450,13 @@ class MontageSpec(BaseModel):
     background_music: Optional[AudioTrack] = None
     output_path: str = "data/exports/montage.mp4"
 
-    @validator("clips")
+    @field_validator("clips")
+    @classmethod
     def clips_min_length(cls, v):
         if len(v) < 1:
             raise ValueError("En az 1 klip gerekli")
         return v
 
 
-# Forward ref
-ClipSpec.update_forward_refs()
+# Forward ref (Pydantic v2 uses model_rebuild)
+ClipSpec.model_rebuild()

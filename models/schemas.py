@@ -53,7 +53,7 @@ class BroadcasterResponse(BaseModel):
     created_at: datetime
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 
 # --- Stream Info ---
@@ -107,7 +107,7 @@ class ClipResponse(BaseModel):
     created_at: datetime
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 
 class ClipListResponse(BaseModel):
@@ -186,7 +186,7 @@ class UserPreferencesResponse(BaseModel):
     sort_by: str
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 
 # --- Auth ---
@@ -222,7 +222,7 @@ class ChatMessageResponse(BaseModel):
     timestamp: datetime
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 
 # --- Otomatik Edit ---

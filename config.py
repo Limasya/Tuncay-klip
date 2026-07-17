@@ -1,17 +1,20 @@
 """
 Merkezi yapılandırma modülü - tüm ortam değişkenlerini yönetir.
-Pydantic v1 uyumlu.
+Pydantic v2 uyumlu.
 """
-import utils.pydantic_compat  # noqa: F401  patch v1 BaseModel
-from pydantic import BaseSettings, validator, root_validator
+import utils.pydantic_compat  # noqa: F401  patch v1/v2 compatibility
 import os
 from functools import lru_cache
+from pydantic_settings import BaseSettings
+from pydantic import field_validator, model_validator
 
 
 class Settings(BaseSettings):
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
+    model_config = {
+        "env_file": ".env",
+        "env_file_encoding": "utf-8",
+        "extra": "ignore",
+    }
     # Kick API
     kick_client_id: str = ""
     kick_client_secret: str = ""
@@ -81,12 +84,44 @@ class Settings(BaseSettings):
     algorithm: str = "HS256"
     access_token_expire_minutes: int = 1440
 
-    @root_validator
-    def check_secret_key(cls, values):
+    # LLM Providers
+    openai_api_key: str = ""
+    openai_model: str = "gpt-4o-mini"
+    anthropic_api_key: str = ""
+    claude_model: str = "claude-3-haiku-20240307"
+    gemini_api_key: str = ""
+    gemini_model: str = "gemini-2.0-flash"
+    mistral_api_key: str = ""
+    mistral_model: str = "mistral-small-latest"
+    groq_api_key: str = ""
+    groq_model: str = "llama-3.1-70b-versatile"
+    cohere_api_key: str = ""
+    cohere_model: str = "command-r"
+    together_api_key: str = ""
+    together_model: str = "meta-llama/Llama-3.1-70B-Instruct-Turbo"
+    cerebras_api_key: str = ""
+    cerebras_model: str = "llama3.1-70b"
+    openrouter_api_key: str = ""
+    openrouter_model: str = "meta-llama/llama-3.1-8b-instruct:free"
+    ollama_host: str = ""
+    ollama_model: str = "llama3.1:8b"
+    vllm_host: str = ""
+    vllm_model: str = "meta-llama/Llama-3-8B-Instruct"
+    lm_studio_host: str = ""
+    lm_studio_model: str = "default"
+    localai_host: str = ""
+    localai_model: str = "gpt-3.5-turbo"
+    textgen_host: str = ""
+    textgen_model: str = "default"
+    huggingface_api_token: str = ""
+    huggingface_model: str = "HuggingFaceH4/zephyr-7b-beta"
+
+    @model_validator(mode='after')
+    def check_secret_key(self):
         # Enforce secret_key change only in production environment
-        if values.get('secret_key') == "change-me-in-production" and values.get('deployment_environment', 'production') == 'production':
+        if self.secret_key == "change-me-in-production" and self.deployment_environment == "production":
             raise ValueError("secret_key must be set to a secure value in production")
-        return values
+        return self
 
     # Server
     host: str = "0.0.0.0"
@@ -105,11 +140,31 @@ class Settings(BaseSettings):
     otel_enabled: bool = False
     otel_exporter_otlp_endpoint: str = "http://otel-collector:4317"
     otel_sample_ratio: float = 0.1
-    deployment_environment: str = "production"
+    deployment_environment: str = "development"
     prometheus_metrics_enabled: bool = True
 
     # Feature Flags (IP_PART6 Bölüm 37)
     feature_flags_file: str = ""  # opsiyonel JSON dosya yolu
+
+    # LLM Providers (API keys — boş bırakılırsa ilgili sağlayıcı devre dışı)
+    openai_api_key: str = ""
+    anthropic_api_key: str = ""
+    gemini_api_key: str = ""
+    mistral_api_key: str = ""
+    groq_api_key: str = ""
+    cohere_api_key: str = ""
+    together_api_key: str = ""
+    cerebras_api_key: str = ""
+    openrouter_api_key: str = ""
+    nvidia_api_key: str = ""
+    huggingface_api_token: str = ""
+
+    # Local LLM hosts (boş bırakılırsa devre dışı)
+    ollama_host: str = ""
+    vllm_host: str = ""
+    lm_studio_host: str = ""
+    localai_host: str = ""
+    textgen_host: str = ""
 
 
 

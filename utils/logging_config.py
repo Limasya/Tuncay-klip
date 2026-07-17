@@ -121,21 +121,34 @@ def setup_logging(
     else:
         console_fmt = ColorFormatter()
 
-    console_handler = logging.StreamHandler(sys.stdout)
+    # Windows için stderr kullan (stdout'ta hata olabilir)
+    try:
+        console_handler = logging.StreamHandler(sys.stdout)
+    except OSError:
+        console_handler = logging.StreamHandler(sys.stderr)
+    
     console_handler.setFormatter(console_fmt)
     console_handler.setLevel(root_level)
+    # Windows'ta encoding sorunu için errors='ignore' ekle
+    if hasattr(console_handler.stream, 'encoding'):
+        console_handler.stream.reconfigure(encoding='utf-8', errors='ignore')
     root.addHandler(console_handler)
 
     # File handler (always structured)
     if log_file:
         file_fmt = StructuredFormatter()
-        file_handler = logging.FileHandler(
-            str(LOG_DIR / "app.log"),
-            encoding="utf-8",
-        )
-        file_handler.setFormatter(file_fmt)
-        file_handler.setLevel(logging.INFO)
-        root.addHandler(file_handler)
+        try:
+            file_handler = logging.FileHandler(
+                str(LOG_DIR / "app.log"),
+                encoding="utf-8",
+                errors='ignore',
+            )
+            file_handler.setFormatter(file_fmt)
+            file_handler.setLevel(logging.INFO)
+            root.addHandler(file_handler)
+        except Exception as e:
+            # File handler hatası olduğunda sadece console'a devam et
+            root.warning(f"Failed to create file handler: {e}")
 
     # Per-service levels
     for logger_name, logger_level in SERVICE_LEVELS.items():
