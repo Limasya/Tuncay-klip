@@ -123,6 +123,49 @@ PUT /api/preferences/
 }
 ```
 
+### Semantik Arama (REST)
+
+```bash
+# ChromaDB üzerinden semantik klip araması
+GET /api/search/semantic?q=en komik rage&top_k=10&filters={"category":"funny"}
+```
+
+- `q` – arama metni (zorunlu)
+- `top_k` – 1‑50 arası sonuç sayısı (varsayılan 10)
+- `filters` – JSON formatlı ek metadata filtresi (opsiyonel)
+
+### Semantik Arama (GraphQL)
+
+GraphQL uç noktası `/graphql` üzerinden Strawberry ile çalışır:
+
+```graphql
+query {
+  search(query: "en iyi rage anları", topK: 5) {
+    clipId
+    similarityScore
+    metadata
+  }
+  vectorStats {
+    initialized
+    totalClips
+    embedder
+    model
+    dbDir
+  }
+}
+```
+
+- `search` alanı ChromaDB üzerinden en benzer klipleri döner.
+- `vectorStats` alanı vektör veritabanının sağlık durumunu raporlar.
+- GraphQL sorguları OpenTelemetry `graphql.search` span'ı ile izlenir.
+
+### Gozlemlenebilirlik (OpenTelemetry)
+
+`OTEL_ENABLED=true` ayarıyla OpenTelemetry izleme açılır. Tüm önemli
+operasyonlar (`boot.*`, `llm.generate`, `graphql.search` vb.) OTLP üzerinden
+harici bir backend'e (Jaeger/Tempo/Honeycomb…) gönderilir. Devre dışıysa
+tüm span'lar no-op olur ve uygulama etkilenmez.
+
 ## Proje Yapisi
 
 ```
@@ -159,7 +202,18 @@ Tuncay-klip/
 ├── api/routers/                # FastAPI endpoint'leri
 │   ├── clips.py                # Klip CRUD
 │   ├── system.py               # Sistem kontrolu
-│   └── preferences.py          # Tercihler
+│   ├── preferences.py          # Tercihler
+│   ├── pipeline.py             # Streaming pipeline kontrolu
+│   ├── edit.py                 # Video duzenleme (altyazi, format)
+│   ├── analytics.py            # Analitik & raporlama
+│   ├── recommendations.py      # Oneri motoru
+│   ├── smart_editor.py         # AI akilli editor
+│   ├── llm_status.py           # LLM saglik & durum
+│   ├── projects.py             # Proje yonetimi
+│   ├── platform.py             # Platform API anahtarlari
+│   ├── graphql.py              # Strawberry GraphQL (/graphql)
+│   ├── search.py               # REST semantik arama (/api/search/semantic)
+│   └── social.py               # Sosyal medya hesap baglantilari
 │
 ├── models/
 │   ├── database.py             # SQLAlchemy ORM
@@ -223,6 +277,17 @@ EXCITEMENT_THRESHOLD=0.8
 AWS_ACCESS_KEY_ID=...
 AWS_SECRET_ACCESS_KEY=...
 S3_BUCKET_NAME=...
+
+# OpenTelemetry (opsiyonel)
+OTEL_ENABLED=true
+OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+OTEL_SAMPLE_RATIO=1.0
+DEPLOYMENT_ENVIRONMENT=production
+
+# Hız sınırlama (opsiyonel)
+RATE_LIMIT_ENABLED=false
+RATE_LIMIT_MAX=200
+RATE_LIMIT_WINDOW=60
 ```
 
 ## Testler
