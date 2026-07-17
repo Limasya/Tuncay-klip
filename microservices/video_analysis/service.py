@@ -29,6 +29,14 @@ from shared.event_schemas import (
     ObjectDetection, OCRResult, FrameAnalysisResult,
 )
 
+# Import Vision AI module
+try:
+    from services.vision_ai import SceneDetector, ObjectDetector, GestureRecognizer, KeyFrameSelector
+    _VISION_AI_AVAILABLE = True
+except ImportError as e:
+    logger.warning("Vision AI module not available: %s", e)
+    _VISION_AI_AVAILABLE = False
+
 logger = logging.getLogger("video_analysis")
 
 
@@ -368,13 +376,29 @@ class VideoAnalysisService:
         self.emotion_recognizer = EmotionRecognizer()
         self.pose_estimator = PoseEstimator()
 
-        self._frame_store: dict[str, np.ndarray] = {}  # frame_id → image
+        # Advanced Vision AI modules
+        if _VISION_AI_AVAILABLE:
+            self.scene_detector = SceneDetector()
+            self.object_detector = ObjectDetector()
+            self.gesture_recognizer = GestureRecognizer()
+            self.key_frame_selector = KeyFrameSelector()
+        else:
+            self.scene_detector = None
+            self.object_detector = None
+            self.gesture_recognizer = None
+            self.key_frame_selector = None
+
+        self._frame_store: dict[str, np.ndarray] = {}
         self._max_store = 50
+        self._frame_idx = 0
         self._metrics = {
             "frames_analyzed": 0,
             "avg_inference_ms": 0.0,
             "faces_detected": 0,
             "emotions_detected": 0,
+            "scenes_detected": 0,
+            "gestures_detected": 0,
+            "objects_detected": 0,
         }
 
         # Subscribe to frame events
@@ -394,8 +418,15 @@ class VideoAnalysisService:
         Analyze a single frame through all models.
 
         This is the main entry point called by the orchestrator.
+
+        Enhanced v2 pipeline:
+        1. Face Detection → 2. Emotion Recognition
+        3. Pose Estimation → 4. Gesture Recognition
+        5. Scene Detection → 6. Object Detection
+        7. Key Frame Scoring
         """
         start = time.time()
+        self._frame_idx += 1
 
         # Step 1: Face detection (must run first)
         faces = self.face_detector.detect(frame_image)
@@ -410,28 +441,76 @@ class VideoAnalysisService:
                 if crop is not None and crop.size > 0:
                     crops.append(crop)
             emotions = self.emotion_recognizer.recognize_batch(crops)
-            # Assign face IDs
             for i, emotion in enumerate(emotions):
                 if i < len(faces):
                     emotion.face_id = faces[i].face_id
             self._metrics["emotions_detected"] += len(emotions)
 
-        # Step 3: Pose estimation (parallel-safe)
+        # Step 3: Pose estimation
         poses = self.pose_estimator.estimate(frame_image)
 
-        # Step 4: Publish results
+        # Step 4: Gesture recognition (advanced)
+        gestures = []
+        if self.gesture_recognizer is not None and poses:
+            for pose_data in poses:
+                gesture_results = self.gesture_recognizer.recognize(
+                    pose_data.keypoints, time.time(),
+                )
+                gestures.extend(gesture_results)
+                self._metrics["gestures_detected"] += len(gesture_results)
+
+        # Step 5: Scene detection
+        scene_info = None
+        if self.scene_detector is not None:
+            scene_info = self.scene_detector.detect(frame_image)
+            if scene_info.get("is_scene_change"):
+                self._metrics["scenes_detected"] += 1
+
+        # Step 6: Object detection
+        objects = []
+        if self.object_detector is not None:
+            objects = self.object_detector.detect(frame_image)
+            self._metrics["objects_detected"] += len(objects)
+
+        # Step 7: Key frame scoring (for thumbnail selection)
+        if self.key_frame_selector is not None:
+            motion_score = poses[0].motion_score if poses else 0.0
+            top_emotion = emotions[0] if emotions else None
+            emotion_dict = None
+            if top_emotion:
+                emotion_dict = {
+                    "label": top_emotion.label,
+                    "confidence": top_emotion.confidence,
+                }
+            self.key_frame_selector.add_frame(
+                self._frame_idx, frame_image, faces, emotion_dict, motion_score,
+            )
+
+        # Build result
         result = FrameAnalysisResult(
-            frame_id=frame_id,
+            frame_id=frame_id or f"frame_{self._frame_idx}",
             timestamp=datetime.utcnow(),
             faces=faces,
             emotions=emotions,
             poses=poses,
-            objects=[],
+            objects=[] if not objects else [
+                ObjectDetection(
+                    label=o.get("label", "unknown"),
+                    confidence=o.get("confidence", 0.0),
+                    bbox=BoundingBox(
+                        x1=o.get("bbox", {}).get("x1", 0),
+                        y1=o.get("bbox", {}).get("y1", 0),
+                        x2=o.get("bbox", {}).get("x2", 0),
+                        y2=o.get("bbox", {}).get("y2", 0),
+                    ),
+                )
+                for o in objects
+            ],
             texts=[],
             inference_time_ms=(time.time() - start) * 1000,
         )
 
-        # Publish individual events for granular routing
+        # Publish events
         if faces:
             await self.event_bus.publish_quick(
                 EventType.FACE_DETECTED,
@@ -453,6 +532,30 @@ class VideoAnalysisService:
                 EventType.POSE_DETECTED,
                 {"frame_id": frame_id,
                  "poses": [p.model_dump(mode="json") for p in poses]},
+                source_service="video-analysis",
+            )
+
+        if scene_info and scene_info.get("is_scene_change"):
+            await self.event_bus.publish_quick(
+                EventType.SCENE_CHANGE,
+                scene_info,
+                source_service="video-analysis",
+            )
+
+        if gestures:
+            await self.event_bus.publish_quick(
+                EventType.GESTURE_DETECTED,
+                {"frame_id": frame_id, "gestures": gestures},
+                source_service="video-analysis",
+            )
+
+        if objects:
+            await self.event_bus.publish_quick(
+                EventType.OBJECT_DETECTED,
+                {"frame_id": frame_id, "objects": [
+                    {"label": o.get("label", ""), "confidence": o.get("confidence", 0)}
+                    for o in objects
+                ]},
                 source_service="video-analysis",
             )
 
@@ -484,4 +587,13 @@ class VideoAnalysisService:
         return frame[y1:y2, x1:x2]
 
     def get_status(self) -> dict:
-        return dict(self._metrics)
+        status = dict(self._metrics)
+        if self.scene_detector is not None:
+            status["scene_detector"] = self.scene_detector.get_status()
+        if self.gesture_recognizer is not None:
+            status["gesture_recognizer"] = self.gesture_recognizer.get_status()
+        if self.key_frame_selector is not None:
+            status["key_frame_selector"] = self.key_frame_selector.get_status()
+        if self.object_detector is not None:
+            status["object_detector"] = self.object_detector.get_status()
+        return status

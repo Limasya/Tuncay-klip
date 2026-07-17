@@ -18,6 +18,18 @@ import numpy as np
 from shared.event_bus import EventBus, get_event_bus
 from shared.event_schemas import EventType, AudioFeatures, AudioSpikeEvent
 
+try:
+    from services.audio_ai import (
+        SpeechEmotionRecognizer,
+        AudioEventClassifier,
+        CrowdReactionDetector,
+        MusicDetector,
+    )
+    _AUDIO_AI_AVAILABLE = True
+except ImportError as e:
+    logger.warning("Audio AI module not available: %s", e)
+    _AUDIO_AI_AVAILABLE = False
+
 logger = logging.getLogger("audio_analysis")
 
 
@@ -133,23 +145,45 @@ class AudioAnalysisService:
     """
     Main audio analysis service.
     Subscribes to audio chunk events, publishes analysis results.
+
+    Enhanced v2 pipeline:
+    1. Feature Extraction (energy, ZCR, spectral)
+    2. Spike Detection (sustained audio bursts)
+    3. Speech Emotion Recognition
+    4. Audio Event Classification (scream, laugh, clap, etc.)
+    5. Crowd Reaction Detection (cheer, boo)
+    6. Music Detection (presence, genre)
     """
 
     def __init__(self, event_bus: Optional[EventBus] = None):
         self.event_bus = event_bus or get_event_bus()
         self.extractor = AudioFeatureExtractor()
         self.spike_detector = AudioSpikeDetector()
+
+        if _AUDIO_AI_AVAILABLE:
+            self.speech_emotion = SpeechEmotionRecognizer()
+            self.event_classifier = AudioEventClassifier()
+            self.crowd_detector = CrowdReactionDetector()
+            self.music_detector = MusicDetector()
+        else:
+            self.speech_emotion = None
+            self.event_classifier = None
+            self.crowd_detector = None
+            self.music_detector = None
+
         self._metrics = {
             "chunks_analyzed": 0,
             "spikes_detected": 0,
             "avg_rms": 0.0,
+            "emotions_detected": 0,
+            "events_classified": 0,
+            "crowd_reactions": 0,
         }
 
     async def analyze_chunk(self, audio_data: np.ndarray) -> AudioFeatures:
         features = self.extractor.extract(audio_data)
         now = time.time()
 
-        # Check for sustained spike
         spike = self.spike_detector.process(features, now)
         if spike:
             self._metrics["spikes_detected"] += 1
@@ -159,12 +193,56 @@ class AudioAnalysisService:
                 source_service="audio-analysis",
             )
 
-        # Always publish audio features
         await self.event_bus.publish_quick(
             EventType.AUDIO_FEATURES,
             features.model_dump(mode="json"),
             source_service="audio-analysis",
         )
+
+        if self.speech_emotion is not None:
+            emotion = self.speech_emotion.recognize(audio_data)
+            if emotion.get("confidence", 0) > 0.4:
+                self._metrics["emotions_detected"] += 1
+                await self.event_bus.publish_quick(
+                    EventType.SPEECH_EMOTION,
+                    {"timestamp": now, **emotion},
+                    source_service="audio-analysis",
+                )
+
+        if self.event_classifier is not None:
+            feat_dict = {
+                "rms_energy": features.rms_energy,
+                "spectral_centroid": features.spectral_centroid,
+                "zero_crossing_rate": features.zero_crossing_rate,
+            }
+            events = self.event_classifier.classify(audio_data, feat_dict)
+            if events:
+                self._metrics["events_classified"] += len(events)
+                for evt in events:
+                    await self.event_bus.publish_quick(
+                        EventType.AUDIO_SPIKE,
+                        {"timestamp": now, "audio_event": evt},
+                        source_service="audio-analysis",
+                    )
+
+        if self.crowd_detector is not None:
+            crowd = self.crowd_detector.detect(audio_data, {})
+            if crowd:
+                self._metrics["crowd_reactions"] += 1
+                await self.event_bus.publish_quick(
+                    EventType.CHAT_SPIKE,
+                    {"timestamp": now, "crowd": crowd},
+                    source_service="audio-analysis",
+                )
+
+        if self.music_detector is not None:
+            music = self.music_detector.analyze(audio_data, {})
+            if music.get("music_present") and music.get("confidence", 0) > 0.5:
+                await self.event_bus.publish_quick(
+                    EventType.SPEECH_EMOTION,
+                    {"timestamp": now, "music": music},
+                    source_service="audio-analysis",
+                )
 
         self._metrics["chunks_analyzed"] += 1
         self._metrics["avg_rms"] = (
@@ -174,4 +252,13 @@ class AudioAnalysisService:
         return features
 
     def get_status(self) -> dict:
-        return dict(self._metrics)
+        status = dict(self._metrics)
+        if self.speech_emotion is not None:
+            status["speech_emotion"] = self.speech_emotion.get_status()
+        if self.event_classifier is not None:
+            status["event_classifier"] = self.event_classifier.get_status()
+        if self.crowd_detector is not None:
+            status["crowd_detector"] = self.crowd_detector.get_status()
+        if self.music_detector is not None:
+            status["music_detector"] = self.music_detector.get_status()
+        return status

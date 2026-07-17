@@ -33,6 +33,8 @@ class EventType(str, Enum):
     POSE_DETECTED = "analysis.pose_detected"
     OBJECT_DETECTED = "analysis.object_detected"
     TEXT_DETECTED = "analysis.text_detected"
+    SCENE_CHANGE = "analysis.scene_change"
+    GESTURE_DETECTED = "analysis.gesture_detected"
 
     # Audio events
     AUDIO_FEATURES = "audio.features"
