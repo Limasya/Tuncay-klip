@@ -12,6 +12,27 @@ Bant genişliği kullanımı:
   Analiz: ~2-5 KB (API metadata JSON)
   Render: ~2-5 MB (sadece onaylanan clip segmenti, 30-60 sn)
   Toplam: 1 VOD analiz + 3 clip render ≈ 10-15 MB (vs eski: 1-3 GB tam VOD indirme)
+
+────────────────────────────────────────────────────────────────────────────────
+TOPLULUK CLIP POLITIKASI (HAK/TİFLİF)
+────────────────────────────────────────────────────────────────────────────────
+Community clip'ler SADECE zaman/ilgi sinyali olarak kullanılır.
+
+Nasıl çalışır:
+  1. Kick API'den topluluk clip metadata'sı çekilir (sadece JSON, video indirilmez)
+  2. Bu clip'ler "bu VOD'un bu bölümü ilgi çekici" sinyali olarak LLM'e bağlam verir
+  3. LLM bu sinyalleri ve VOD metadata'sını analiz ederek clip önerileri üretir
+  4. Nihai render her zaman ana VOD kaynağından (HLS stream) kendi pipeline'ımızla yapılır
+
+Neden bu şekilde:
+  - İzleyicinin oluşturduğu klip dosyası (m3u8/mp4) doğrudan yayınlanmaz
+  - Community clip'in içindeki video yayıncının yayını + izleyicinin editoryal seçimi
+  - İzin vermeden birinin clip dosyasını kullanmak telif/hak sorunu olabilir
+  - Bu tasarım: izleyicinin clip'i sinyal olarak kullanılır, ancak kendi kaynağımızdan render ederiz
+
+NOT: render_clip() fonksiyonu her zaman vod_url'den (ana VOD HLS kaynağından) render eder,
+     community clip URL'si asla doğrudan render kaynağı olarak kullanılmaz.
+────────────────────────────────────────────────────────────────────────────────
 """
 from __future__ import annotations
 
@@ -49,6 +70,8 @@ class ClipSuggestion:
     community_views: int = 0
     community_likes: int = 0
     community_creator: str = ""
+    estimated_position_sec: float = 0.0
+    position_confidence: str = "none"  # "none" | "approximate" | "exact"
 
 
 @dataclass
@@ -77,12 +100,90 @@ class ZeroBandwidthClipper:
 
     Hiçbir video/ses indirmez. Sadece Kick API'den JSON metadata çeker
     (sadece birkaç KB) ve LLM ile analiz eder.
+
+    Ses-only Fallback:
+      Community clip'i olmayan VOD'lar için opsiyonel olarak ses-only
+      transkripsiyon yapılabilir. Bu mod aktif edildiğinde:
+      - AAC 64kbps ses indirilir (~28.8 MB/saat)
+      - faster-whisper ile transkripsiyon yapılır
+      - Transkripsiyon sonucu LLM'e bağlam olarak sunulur
+      - Bu mod bant genişliği kullanır, bu yüzden varsayılan kapalıdır.
     """
 
     def __init__(self):
         self._analysis_cache: dict[str, VODAnalysis] = {}
         self._render_dir = Path("data/rendered_clips")
         self._render_dir.mkdir(parents=True, exist_ok=True)
+        self.audio_only_fallback_enabled: bool = False
+        # Cloudflare risk takibi
+        self._cf_block_count: int = 0
+        self._cf_last_block_time: float = 0
+        self._cf_alert_logged: bool = False
+
+    # Cloudflare sabitleri — yeni tarayici surumleri guncellenecek
+    # curl_cffi docs: https://github.com/lexiforest/curl_cffi
+    # Yeni Chrome surumu ciktikca burasi guncellenmeli
+    _CF_IMPERSONATE = "chrome124"
+
+    def _check_cloudflare_block(self, status_code: int, response_text: str) -> bool:
+        """Cloudflare tarafindan engellenip engellenmedigini kontrol et.
+
+        Cloudflare belirtileri:
+        - 403 Forbidden (CF challenge)
+        - 503 Service Unavailable (CF maintenance/blocked)
+        - Response icinde 'cf-' header'lari veya challenge sayfasi
+        """
+        if status_code in (403, 503):
+            self._cf_block_count += 1
+            self._cf_last_block_time = time.monotonic()
+
+            if not self._cf_alert_logged or self._cf_block_count % 10 == 0:
+                logger.critical(
+                    "CLOUDFLARE ALARMI: %d kez engellendi! "
+                    "Impersonate surumu: %s. "
+                    "Yeni Chrome surumuna gecilmesi gerekebilir. "
+                    "Son yanit (ilk 200 karakter): %s",
+                    self._cf_block_count,
+                    self._CF_IMPERSONATE,
+                    response_text[:200],
+                )
+                self._cf_alert_logged = True
+            return True
+
+        # Challenge sayfasi kontrolu (CF bazen 200 dondurur ama challenge icerir)
+        if status_code == 200 and response_text:
+            text_lower = response_text[:1000].lower()
+            if any(marker in text_lower for marker in [
+                "cf-browser-verification",
+                "cloudflare",
+                "challenge-platform",
+                "checking your browser",
+                "just a moment",
+            ]):
+                self._cf_block_count += 1
+                self._cf_last_block_time = time.monotonic()
+                logger.critical(
+                    "CLOUDFLARE CHALLENGE ALGILANDI (200 ama challenge sayfasi)! "
+                    "Impersonate: %s | Toplam engelleme: %d",
+                    self._CF_IMPERSONATE, self._cf_block_count,
+                )
+                return True
+
+        return False
+
+    def get_cf_health(self) -> dict[str, Any]:
+        """Cloudflare saglik durumu."""
+        return {
+            "cf_block_count": self._cf_block_count,
+            "cf_last_block_time": self._cf_last_block_time,
+            "impersonate_version": self._CF_IMPERSONATE,
+            "is_healthy": self._cf_block_count == 0,
+            "recommendation": (
+                "Durum normal."
+                if self._cf_block_count == 0
+                else f"{self._cf_block_count} engelleme. Impersonate surumunu guncelleyin: {self._CF_IMPERSONATE}"
+            ),
+        }
 
     # ─── Adım 1: Metadata Çek (sadece birkaç KB) ───────────────────────────
 
@@ -194,16 +295,26 @@ class ZeroBandwidthClipper:
             from curl_cffi.requests import Session as CurlSession
 
             def _fetch():
-                session = CurlSession(impersonate="chrome124")
+                session = CurlSession(impersonate=self._CF_IMPERSONATE)
                 resp = session.get(
                     "https://kick.com/api/v2/channels/thetuncay/clips",
                     params={"limit": 50},
                     timeout=15,
                 )
-                resp.raise_for_status()
-                return resp.json()
+                return resp.status_code, resp.text
 
-            data = await asyncio.to_thread(_fetch)
+            status_code, response_text = await asyncio.to_thread(_fetch)
+
+            # Cloudflare algilama
+            if self._check_cloudflare_block(status_code, response_text):
+                logger.warning("Community clip'ler Cloudflare tarafindan engellendi (HTTP %d)", status_code)
+                return []
+
+            if status_code != 200:
+                logger.warning("Community clip API hatasi: HTTP %d", status_code)
+                return []
+
+            data = json.loads(response_text)
             items = data if isinstance(data, list) else data.get("data", data.get("clips", []))
 
             # VOD ID'yi hem string hem int olarak dene
@@ -235,7 +346,7 @@ class ZeroBandwidthClipper:
             logger.warning("Community clip cekme hatasi: %s", e)
             return []
 
-    def _format_clips_for_llm(self, clips: list[dict[str, Any]]) -> str:
+    def _format_clips_for_llm(self, clips: list[dict[str, Any]], vod_start_time: str = "", vod_duration: float = 0) -> str:
         """Community clip'lerini LLM prompt'u icin formatla."""
         if not clips:
             return "Bu VOD icin topluluk clip'i bulunamadi."
@@ -247,13 +358,23 @@ class ZeroBandwidthClipper:
             views = c.get("views", 0) or c.get("view_count", 0)
             likes = c.get("likes", 0) or c.get("likes_count", 0)
             creator = c.get("creator_username", "")
+
+            # Yaklaşık konum bilgisi
+            pos_info = ""
+            if vod_start_time and vod_duration > 0:
+                created = c.get("created_at", "")
+                est, conf = self._estimate_clip_position(created, vod_start_time, vod_duration)
+                if conf == "approximate":
+                    pos_info = f", tahmini konum: ~{int(est)}s ({est/60:.1f} dk, ±90s)"
+
             lines.append(
                 f"  {i}. \"{title}\" ({duration}sn, {views} goruntulenme, {likes} begeni, "
-                f"kiran: {creator})"
+                f"kiran: {creator}{pos_info})"
             )
 
         lines.append("")
         lines.append("Onemli: Bu clip'ler izleyicilerin gercekten begendigi ve kaydettigi anlar.")
+        lines.append("Tahmini konumlar clip.created_at - vod.start_time farkindan hesaplanmistir (±90s tolerans).")
         lines.append("Bu clip'lerin zaman araliklarini referans alarak ek oneriler uret.")
         lines.append("Ayrica bu clip'lerin basliklarindan icerik hakkinda cikarim yap.")
         return "\n".join(lines)
@@ -261,9 +382,10 @@ class ZeroBandwidthClipper:
     # ─── Adım 2: LLM Analiz (sıfır bant genişliği) ────────────────────────
 
     async def _analyze_with_llm(
-        self, metadata: dict[str, Any], community_clips: list[dict[str, Any]]
+        self, metadata: dict[str, Any], community_clips: list[dict[str, Any]],
+        transcription_text: Optional[str] = None,
     ) -> dict[str, Any]:
-        """Metadata + community clips ile LLM analiz — sıfır internet (analiz aşaması)."""
+        """Metadata + community clips + (opsiyonel) ses transkripsiyonu ile LLM analiz."""
         title = str(metadata.get("session_title") or metadata.get("title") or "")
         duration_raw = metadata.get("duration", 0)
         duration_sec = float(duration_raw) if duration_raw else 3600
@@ -277,9 +399,17 @@ class ZeroBandwidthClipper:
             category = cats
 
         created = metadata.get("created_at", metadata.get("published_at", ""))
+        vod_start = str(metadata.get("start_time") or metadata.get("created_at", ""))
 
-        # Community clips bağlamını oluştur
-        clips_context = self._format_clips_for_llm(community_clips)
+        # Community clips bağlamını oluştur (tahmini konumlar dahil)
+        clips_context = self._format_clips_for_llm(community_clips, vod_start, duration_sec)
+
+        # Ses transkripsiyonu baglami ekle (fallback)
+        if transcription_text:
+            clips_context += (
+                f"\n\nSes Transkripsiyonu (community clip olmayan VOD icin ses-only analiz):\n"
+                f"{transcription_text[:3000]}"
+            )
 
         system_prompt = (
             "Sen bir Twitch/Kick clip analiz uzmanısın. "
@@ -420,6 +550,232 @@ Yanıtı şu JSON formatında ver:
 
     # ─── Adım 3: Clip Önerileri Oluştur ───────────────────────────────────
 
+    @staticmethod
+    def _calculate_community_confidence(
+        views: int, likes: int, max_views_in_vod: int, same_area_count: int
+    ) -> float:
+        """Community clip confidence'ını engagement'a göre ağırlıklandır.
+
+        Formül:
+          base = 0.50 (0 view için bile bir sinyal var)
+          view_bonus: max_views_in_vod'a göreceli (0.00 - 0.25)
+          like_bonus: likes'a göre (0.00 - 0.10)
+          cluster_bonus: aynı bölgede birden fazla clip varsa (0.00 - 0.15)
+          cap: 0.95 (asla kesin değil)
+
+        Kanal küçük olduğu için mutlak sayılar düşük kalır —
+        bu yüzden kanal-göreceli normalize kullanılır.
+        """
+        base = 0.50
+
+        # View bonus: bu VOD'daki en çok view alan klibe göreceli
+        if max_views_in_vod > 0:
+            view_ratio = min(views / max_views_in_vod, 1.0)
+        else:
+            view_ratio = 0.0
+        view_bonus = view_ratio * 0.25
+
+        # Like bonus: mutlak olarak (kanal küçük olduğu için)
+        like_bonus = min(likes * 0.02, 0.10)
+
+        # Cluster bonus: aynı bölgede 3+ clip = güçlü sinyal
+        if same_area_count >= 5:
+            cluster_bonus = 0.15
+        elif same_area_count >= 3:
+            cluster_bonus = 0.10
+        elif same_area_count >= 2:
+            cluster_bonus = 0.05
+        else:
+            cluster_bonus = 0.0
+
+        confidence = min(base + view_bonus + like_bonus + cluster_bonus, 0.95)
+        return round(confidence, 3)
+
+    @staticmethod
+    def _estimate_clip_position(
+        clip_created_at: str, vod_start_time: str, vod_duration: float
+    ) -> tuple[float, str]:
+        """clip.created_at - vod.start_time farkından yaklaşık VOD-içi konum tahmini.
+
+        Returns: (estimated_position_sec, position_confidence)
+        """
+        if not clip_created_at or not vod_start_time or vod_duration <= 0:
+            return (0.0, "none")
+
+        def _parse_dt(s: str):
+            if not s:
+                return None
+            try:
+                dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                return dt
+            except Exception:
+                pass
+            for fmt in ["%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M:%S.%f"]:
+                try:
+                    return datetime.strptime(s, fmt).replace(tzinfo=timezone.utc)
+                except Exception:
+                    pass
+            return None
+
+        clip_dt = _parse_dt(clip_created_at)
+        vod_dt = _parse_dt(vod_start_time)
+
+        if not clip_dt or not vod_dt:
+            return (0.0, "none")
+
+        diff_sec = (clip_dt - vod_dt).total_seconds()
+
+        # Mantıklı aralık kontrolü: 0 ile VOD süresi arasında olmalı
+        # ±120 saniye tolerans (stream başlangıç/son sapmaları için)
+        if diff_sec < -120 or diff_sec > vod_duration + 120:
+            return (0.0, "none")
+
+        # VOD süresi içindeyse
+        estimated = max(0.0, min(diff_sec, vod_duration))
+        return (estimated, "approximate")
+
+    @staticmethod
+    def _detect_clip_clusters(
+        community_clips: list[dict[str, Any]], vod_start_time: str
+    ) -> dict[str, int]:
+        """Community clip'lerinin zaman bazlı cluster'larını tespit et.
+
+        Aynı 3 dakikalık pencere içine düşen clip'leri gruplar.
+        Returns: {clip_index: same_area_count}
+        """
+        if not community_clips or not vod_start_time:
+            return {}
+
+        def _parse_dt(s: str):
+            if not s:
+                return None
+            try:
+                dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                return dt
+            except Exception:
+                return None
+
+        vod_dt = _parse_dt(vod_start_time)
+        if not vod_dt:
+            return {}
+
+        # Her clip için saniye cinsinden pozisyonu hesapla
+        positions = []
+        for c in community_clips:
+            clip_dt = _parse_dt(c.get("created_at", ""))
+            if clip_dt and vod_dt:
+                pos = (clip_dt - vod_dt).total_seconds()
+                positions.append(pos)
+            else:
+                positions.append(None)
+
+        # Cluster tespiti: 180 saniye (3 dk) pencere
+        WINDOW = 180
+        clusters = {}
+        for i, pos_i in enumerate(positions):
+            if pos_i is None:
+                clusters[i] = 0
+                continue
+            count = 0
+            for j, pos_j in enumerate(positions):
+                if i != j and pos_j is not None and abs(pos_i - pos_j) <= WINDOW:
+                    count += 1
+            clusters[i] = count + 1  # +1: kendisi dahil
+
+        return clusters
+
+    # ─── Ses-only Fallback (community clip yoksa) ──────────────────────────
+
+    async def _transcribe_audio_only(
+        self, hls_url: str, duration_sec: float
+    ) -> Optional[str]:
+        """Sadece ses indirip faster-whisper ile transkripsiyon yapar.
+
+        AAC 64kbps = ~28.8 MB/saat. 2 saatlik VOD icin ~57.6 MB.
+        Sadece community clip'i olmayan VOD'larda kullanilir.
+        """
+        try:
+            import subprocess
+            import tempfile
+
+            audio_chunks_dir = Path(tempfile.mkdtemp(prefix="kb_audio_"))
+
+            # 5 dakikalik chunk'lara bol (cok buyuk dosya olusturmayalim)
+            chunk_duration = 300  # 5 dk
+            total_chunks = int(duration_sec / chunk_duration) + 1
+            chunk_texts = []
+
+            for ci in range(min(total_chunks, 24)):  # max 2 saat
+                start = ci * chunk_duration
+                chunk_path = audio_chunks_dir / f"chunk_{ci:03d}.aac"
+
+                cmd = [
+                    "ffmpeg", "-y",
+                    "-headers", "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36\r\nReferer: https://kick.com/\r\n",
+                    "-ss", str(start),
+                    "-i", hls_url,
+                    "-t", str(chunk_duration),
+                    "-vn",
+                    "-c:a", "aac", "-b:a", "64k",
+                    "-ac", "1", "-ar", "16000",
+                    str(chunk_path),
+                ]
+
+                proc = await asyncio.create_subprocess_exec(
+                    *cmd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                await asyncio.wait_for(proc.communicate(), timeout=60)
+
+                if proc.returncode != 0 or not chunk_path.exists():
+                    continue
+
+                # faster-whisper ile transkripsiyon
+                try:
+                    from faster_whisper import WhisperModel
+                    model = WhisperModel("tiny", device="cpu", compute_type="int8")
+                    segments, _ = model.transcribe(
+                        str(chunk_path), language="tr",
+                        beam_size=1, vad_filter=True,
+                    )
+                    chunk_text = " ".join(seg.text for seg in segments)
+                    if chunk_text.strip():
+                        chunk_texts.append(f"[{start//60:.0f}dk] {chunk_text.strip()}")
+                except Exception as e:
+                    logger.warning("Chunk %d transkripsiyon hatasi: %s", ci, e)
+
+                # Gecici dosyayi sil
+                try:
+                    chunk_path.unlink(missing_ok=True)
+                except Exception:
+                    pass
+
+            # Gecici dizini temizle
+            try:
+                audio_chunks_dir.rmdir()
+            except Exception:
+                pass
+
+            if chunk_texts:
+                full_text = "\n".join(chunk_texts)
+                logger.info("Ses-only transkripsiyon tamamlandi: %d chunk, %d karakter",
+                           len(chunk_texts), len(full_text))
+                return full_text
+
+            logger.warning("Ses-only transkripsiyon: hicbir metin cikarilamadi")
+            return None
+
+        except Exception as e:
+            logger.error("Ses-only transkripsiyon hatasi: %s", e)
+            return None
+
+    # ─── Adım 3: Clip Önerileri Oluştur ───────────────────────────────────
+
     def _build_clip_suggestions(
         self, vod_id: str, vod_url: str, metadata: dict[str, Any],
         llm_result: dict[str, Any], community_clips: list[dict[str, Any]]
@@ -441,9 +797,49 @@ Yanıtı şu JSON formatında ver:
 
         clips = []
 
+        # Community clip'ler için cluster tespiti yap
+        vod_start = str(metadata.get("start_time") or metadata.get("created_at", ""))
+        cluster_map = self._detect_clip_clusters(community_clips, vod_start)
+
+        # Bu VOD'daki en çok view alan clip'i bul (normalize için)
+        max_views = max(
+            (cc.get("views", 0) or cc.get("view_count", 0) for cc in community_clips),
+            default=0,
+        )
+
         # Topluluk clip'lerini ClipSuggestion'a dönüştür
         for i, cc in enumerate(community_clips):
             clip_duration = float(cc.get("duration", 30))
+            views = cc.get("views", 0) or cc.get("view_count", 0)
+            likes = cc.get("likes", 0) or cc.get("likes_count", 0)
+            same_area_count = cluster_map.get(i, 1)
+
+            # Engagement-ağırlıklı confidence
+            conf = self._calculate_community_confidence(
+                views=views, likes=likes,
+                max_views_in_vod=max_views,
+                same_area_count=same_area_count,
+            )
+
+            # Yaklaşık VOD-içi konum tahmini
+            clip_created = cc.get("created_at", "")
+            est_pos, pos_conf = self._estimate_clip_position(
+                clip_created, vod_start, duration_sec
+            )
+
+            # Tolerans penceresi bilgisi
+            reason_parts = [
+                f"Bu an izleyiciler tarafindan klipletildi ({views} goruntulenme)",
+            ]
+            if same_area_count > 1:
+                reason_parts.append(
+                    f"{same_area_count} klip ayni bolgeye dustu (guvenli bolge)"
+                )
+            if pos_conf == "approximate":
+                reason_parts.append(
+                    f"Tahmini VOD konumu: ~{int(est_pos)}s ({est_pos/60:.1f} dk, ±90s tolerans)"
+                )
+
             clip = ClipSuggestion(
                 clip_id=f"{vod_id}_community_{i+1}",
                 title=cc.get("title", f"Community Clip {i+1}"),
@@ -451,14 +847,16 @@ Yanıtı şu JSON formatında ver:
                 start_time=0,  # VOD'daki kesin zaman bilinmiyor
                 end_time=0,
                 duration=clip_duration,
-                confidence=0.85,  # Topluluk clip = gercek veri, yuksek guven
-                reason=f"Bu an izleyiciler tarafindan klipletildi ({cc.get('views', 0)} goruntulenme)",
+                confidence=conf,
+                reason=" | ".join(reason_parts),
                 source="community_clip",
                 platform="tiktok",
                 tags=["community_verified"],
-                community_views=cc.get("views", 0) or cc.get("view_count", 0),
-                community_likes=cc.get("likes", 0) or cc.get("likes_count", 0),
+                community_views=views,
+                community_likes=likes,
                 community_creator=cc.get("creator_username", ""),
+                estimated_position_sec=est_pos,
+                position_confidence=pos_conf,
             )
             clips.append(clip)
 
@@ -558,16 +956,33 @@ Yanıtı şu JSON formatında ver:
         if not metadata:
             raise ValueError(f"VOD metadata çekilemedi: {vod_url}")
 
+        # Duration ve start_time hesapla (fallback icin gerekli)
+        duration_raw = metadata.get("duration", 0)
+        duration_sec = float(duration_raw) if duration_raw else 3600
+        if duration_sec > 86400:
+            duration_sec = duration_sec / 1000.0
+        vod_start = str(metadata.get("start_time") or metadata.get("created_at", ""))
+
         # Adım 1b: Community clips çek (sadece birkaç KB)
         # Numeric VOD ID'yi metadata'dan al (livestream_id eşleşmesi için)
         numeric_vod_id = str(metadata.get("id", vod_id))
         logger.info("Adim 1b: Community clip'ler cekiliyor (VOD numeric_id=%s)...", numeric_vod_id)
         community_clips = await self._fetch_community_clips(numeric_vod_id)
 
-        # Adım 2: LLM analiz (metadata + community clips bağlamıyla)
-        logger.info("Adim 2: LLM ile analiz ediliyor (%d community clip baglamiyla)...",
-                     len(community_clips))
-        llm_result = await self._analyze_with_llm(metadata, community_clips)
+        # Ses-only fallback: community clip yoksa ve enabled ise
+        transcription_text = None
+        if not community_clips and self.audio_only_fallback_enabled:
+            logger.info("Community clip yok, ses-only fallback baslatiliyor...")
+            hls_url = await self._get_hls_source(vod_url)
+            if hls_url:
+                transcription_text = await self._transcribe_audio_only(hls_url, duration_sec)
+                if transcription_text:
+                    logger.info("Ses transkripsiyonu basarili: %d karakter", len(transcription_text))
+
+        # Adım 2: LLM analiz (metadata + community clips + ses transkripsiyonu)
+        logger.info("Adim 2: LLM ile analiz ediliyor (%d community clip, transcription=%s)...",
+                     len(community_clips), "var" if transcription_text else "yok")
+        llm_result = await self._analyze_with_llm(metadata, community_clips, transcription_text)
 
         # Adım 3: Clip önerileri oluştur
         analysis = self._build_clip_suggestions(vod_id, vod_url, metadata, llm_result, community_clips)
@@ -595,6 +1010,9 @@ Yanıtı şu JSON formatında ver:
 
         Sadece clip süresi kadar video segmenti indirilir (~2-5 MB per 30sn).
         Tam VOD indirilmez.
+
+        Telif/Hak: Render her zaman vod_url'den (ana VOD HLS kaynağından) yapılır.
+        Community clip URL'si asla render kaynağı olarak kullanılmaz.
         """
         logger.info("Clip render başlatılıyor: %s (%.0f-%.0f sn)", clip.title, clip.start_time, clip.end_time)
 

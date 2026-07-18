@@ -61,6 +61,17 @@ async def deep_health(
     except Exception:
         checks["ai_pipeline"] = "error"
 
+    # Cloudflare health (Kick API erisimi)
+    try:
+        from services.zero_bandwidth_clipper import zero_bandwidth_clipper
+        cf_health = zero_bandwidth_clipper.get_cf_health()
+        if cf_health["is_healthy"]:
+            checks["cloudflare"] = "ok"
+        else:
+            checks["cloudflare"] = f"warning: {cf_health['recommendation']}"
+    except Exception:
+        checks["cloudflare"] = "unknown"
+
     all_ok = all(v == "ok" for v in checks.values() if "unavailable" not in v and "idle" not in v)
     return {"status": "healthy" if all_ok else "degraded", "checks": checks}
 
