@@ -32,6 +32,9 @@ from services.thumbnail_generator import thumbnail_generator
 from services.scene_detection import SceneDetectionEngine
 from services.social_media_ai import social_media_ai
 from services.emotion_detector import emotion_detector
+from services.ai_critic import ai_critic
+from services.critic_analytics import critic_analytics
+from services.audio_analyzer import audio_analyzer
 from services.kick_archive import TARGET_CHANNEL_URL, is_target_vod_url
 
 logger = logging.getLogger("master_pipeline")
@@ -98,6 +101,15 @@ class PipelineConfig:
     use_effects: bool = True
     use_stickers: bool = True
     use_quality_check: bool = True
+
+    # AI Critic — kapalı döngü kalite kontrolü (5 boyutlu)
+    use_ai_critic: bool = True
+    critic_target_score: float = 8.5
+    critic_max_rounds: int = 3          # ilk render + en fazla 3 düzeltme turu
+    critic_autofix_hook: bool = True    # açılış/hook auto-fix
+    critic_autofix_subtitle: bool = True  # altyazı boyut auto-fix
+    critic_autofix_zoom: bool = True     # zoom timing auto-fix
+    critic_autofix_cut: bool = True      # kesim noktası auto-fix
 
     def apply_mode(self):
         """Mode degerine gore adim bayraklarini ayarla."""
@@ -373,56 +385,142 @@ class MasterPipeline:
                     "viral_score": 0, "reason": clip.get("reason", ""),
                 })
 
-        # ─── Adim 5-7: Render + Thumbnail + Medya Kit ─────────────────────
+        # ─── Adim 5-7: Render + AI Critic (kapalı döngü) + Thumbnail + Medya Kit ──
         final_videos: list[dict] = []
+
+        # Renderer'da kullanılan altyazı font boyutunu critic'e ilet
+        try:
+            from services.advanced_subtitle import advanced_subtitle
+            _vt = advanced_subtitle._styles.get("viral_tiktok")
+            subtitle_fontsize = getattr(_vt, "fontsize", 24) if _vt else 24
+        except Exception:
+            subtitle_fontsize = 24
 
         for rank, sc in enumerate(scored_clips):
             idx = sc["idx"]
             sliced_path = sc["sliced_path"]
             clip = sc["clip"]
 
-            # Render
-            if config.do_render:
-                logger.info("Adim 5 — Klip %d/%d render ediliyor (fmt=%s)...",
-                            rank + 1, len(scored_clips), config.export_format)
+            fmt_spec = EXPORT_FORMATS.get(config.export_format, EXPORT_FORMATS["social"])
 
-                fmt_spec = EXPORT_FORMATS.get(config.export_format, EXPORT_FORMATS["social"])
-
-                if fmt_spec.get("use_viral_editor"):
-                    clip_transcript = await faster_whisper.transcribe(sliced_path, word_timestamps=True)
-                    final_res = await social_video_gen.generate_viral_video(
-                        input_video_path=sliced_path,
-                        transcript_data=clip_transcript.get("data"),
-                        facecam_position="auto",
-                        remove_silences=True,
-                        use_brainrot=config.use_brainrot,
-                        use_bgm=config.use_bgm,
-                        use_auto_zoom=config.use_auto_zoom,
-                        use_ai_denoise=config.use_ai_denoise,
-                        use_auto_censor=config.use_auto_censor,
-                        inject_emojis=config.inject_emojis,
-                        use_beat_sync=config.use_beat_sync,
-                        use_scene_detect=False,
-                        use_effects=config.use_effects,
-                        use_stickers=config.use_stickers,
-                        use_quality_check=config.use_quality_check,
-                        generate_social_kit=config.do_media_kit,
-                        metadata={"game": config.game, "streamer": config.streamer},
-                    )
-                    if not final_res.get("success"):
-                        logger.error("Klip %d render basarisiz: %s", idx, final_res.get("error"))
-                        continue
-                else:
-                    final_res = {"success": True, "output_path": sliced_path}
-
-                final_res["rank"] = rank + 1
-                final_res["viral_score"] = sc.get("viral_score", 0)
-                final_videos.append(final_res)
-            else:
+            # Render kapalı veya viral editor kullanılmayan formatlar → ham klip
+            if not config.do_render or not fmt_spec.get("use_viral_editor"):
                 final_videos.append({
                     "success": True, "output_path": sliced_path,
                     "rank": rank + 1, "viral_score": sc.get("viral_score", 0),
                 })
+                continue
+
+            # ── Kapalı döngü: render → critic → multi-fix → yeniden render ──
+            current_input = sliced_path
+            best_res: Optional[dict] = None
+            best_report = None
+            round_idx = 0
+
+            while True:
+                logger.info("Adim 5 — Klip %d/%d render (tur %d, fmt=%s)...",
+                            rank + 1, len(scored_clips), round_idx + 1, config.export_format)
+
+                clip_transcript = await faster_whisper.transcribe(current_input, word_timestamps=True)
+                final_res = await social_video_gen.generate_viral_video(
+                    input_video_path=current_input,
+                    transcript_data=clip_transcript.get("data"),
+                    facecam_position="auto",
+                    remove_silences=True,
+                    use_brainrot=config.use_brainrot,
+                    use_bgm=config.use_bgm,
+                    use_auto_zoom=config.use_auto_zoom,
+                    use_ai_denoise=config.use_ai_denoise,
+                    use_auto_censor=config.use_auto_censor,
+                    inject_emojis=config.inject_emojis,
+                    use_beat_sync=config.use_beat_sync,
+                    use_scene_detect=False,
+                    use_effects=config.use_effects,
+                    use_stickers=config.use_stickers,
+                    use_quality_check=config.use_quality_check,
+                    generate_social_kit=config.do_media_kit,
+                    metadata={"game": config.game, "streamer": config.streamer},
+                )
+                if not final_res.get("success"):
+                    logger.error("Klip %d render basarisiz: %s", idx, final_res.get("error"))
+                    break
+
+                # AI Critic devre dışıysa tek render ile bitir
+                if not config.use_ai_critic:
+                    best_res = final_res
+                    break
+
+                report = await ai_critic.critique(
+                    video_path=final_res.get("output_path", ""),
+                    transcript_data=clip_transcript.get("data"),
+                    subtitle_fontsize=subtitle_fontsize,
+                    subtitle_ass_path=final_res.get("subtitle_ass_path"),
+                    metadata={"game": config.game, "streamer": config.streamer},
+                )
+                final_res["critique"] = report.to_dict()
+                logger.info("Klip %d — %s", rank + 1, report.summary().replace("\n", " "))
+
+                # ── A/B ölçümü için turu kaydet ──
+                prev_scores = best_report.dimension_scores if best_report else None
+                critic_analytics.record_round(
+                    clip_id=f"clip_{rank}",
+                    round_idx=round_idx,
+                    video_path=final_res.get("output_path", ""),
+                    dimension_scores=report.dimension_scores,
+                    total_score=report.score,
+                    applied_fixes=report.applied_fixes,
+                    previous_scores=prev_scores,
+                    passed=report.passed,
+                )
+
+                # En yüksek puanlı render'ı sakla
+                if best_report is None or report.score > best_report.score:
+                    best_res, best_report = final_res, report
+
+                round_idx += 1
+                # Durma koşulları
+                if report.passed or round_idx > config.critic_max_rounds:
+                    break
+                # Hiçbir auto-fix aktif mi?
+                any_autofix = (
+                    config.critic_autofix_hook
+                    or config.critic_autofix_subtitle
+                    or config.critic_autofix_zoom
+                    or config.critic_autofix_cut
+                )
+                if not any_autofix:
+                    break
+                # Düzeltilmeye değer sorun kaldı mı?
+                fixable_dims = {i.dimension for i in report.issues} & {
+                    d for d, enabled in [
+                        ("opening", config.critic_autofix_hook),
+                        ("subtitle", config.critic_autofix_subtitle),
+                        ("zoom", config.critic_autofix_zoom),
+                        ("cut", config.critic_autofix_cut),
+                    ] if enabled
+                }
+                if not fixable_dims:
+                    break
+
+                # ── Multi-dimensional auto-fix uygula ──
+                fixed_path, applied_fixes = await ai_critic.auto_fix(
+                    video_path=current_input,
+                    report=report,
+                    subtitle_fontsize=subtitle_fontsize,
+                    transcript_data=clip_transcript.get("data"),
+                    fix_round=round_idx,
+                )
+                if not fixed_path:
+                    break
+                current_input = fixed_path
+
+            if best_res is None:
+                continue
+            best_res["rank"] = rank + 1
+            best_res["viral_score"] = sc.get("viral_score", 0)
+            if best_report is not None:
+                best_res["critic_rounds"] = round_idx
+            final_videos.append(best_res)
 
         # Thumbnail
         if config.do_thumbnail and final_videos:
@@ -436,8 +534,8 @@ class MasterPipeline:
                         timestamp=0,
                     )
                     fv["thumbnail_path"] = thumb
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug("Thumbnail üretilemedi: %s", e)
 
         # Medya Kit
         if config.do_media_kit and final_videos:
@@ -457,8 +555,8 @@ class MasterPipeline:
                         if kit:
                             f.write(json.dumps(kit, ensure_ascii=False, indent=2))
                     fv["media_kit_path"] = txt_path
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug("Medya kit oluşturulamadı: %s", e)
 
         result.success = True
         result.total_clips = len(final_videos)

@@ -98,6 +98,77 @@ class LLMReasoner:
             logger.error(f"Error during LLM Semantic Reasoning: {str(e)}")
             return []
 
+    async def critique_video(
+        self, metrics: Dict[str, Any], transcript_snippet: str = ""
+    ) -> Dict[str, Any]:
+        """
+        AI Critic — render edilmiş klibin objektif metriklerini (altyazı boyutu,
+        ilk 3sn enerjisi, thumbnail kalitesi, zoom zamanlaması) alır ve
+        0-10 arası bir puan + gerekçe listesi üretir.
+
+        metrics örneği:
+          {"subtitle": 0.4, "opening": 0.3, "thumbnail": 0.6, "zoom": 0.5,
+           "zoom_first_peak_s": 6.2, "subtitle_ratio": 0.012}
+
+        Dönüş:
+          {"score": 8.7, "verdict": "...", "reasons": ["Altyazı küçük", ...]}
+        Boş dict dönerse çağıran taraf heuristik fallback kullanmalı.
+        """
+        if not self.api_key:
+            return {}
+
+        system_prompt = (
+            "Sen deneyimli bir TikTok/Shorts kurgu editörü ve içerik eleştirmenisin. "
+            "Sana bir dikey viral klip için ölçülmüş objektif metrikler (0-1 arası, "
+            "1=mükemmel) verilecek. Bu metriklere ve klip metnine bakarak videoyu "
+            "10 üzerinden puanla ve neden puan kırdığını kısa, somut maddelerle açıkla. "
+            "Sadece JSON dön, başka yazı yazma.\n"
+            "Format: {\"score\": 8.7, \"verdict\": \"tek cümle özet\", "
+            "\"reasons\": [\"Altyazı küçük\", \"İlk 3 saniye sıkıcı\"]}"
+        )
+
+        user_content = (
+            f"Metrikler (0-1):\n{json.dumps(metrics, ensure_ascii=False)}\n\n"
+            f"Klip metni (ilk kısım):\n{transcript_snippet[:1500]}"
+        )
+
+        payload = {
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_content},
+            ],
+            "response_format": {"type": "json_object"} if "groq" in self.api_url else None,
+            "temperature": 0.3,
+        }
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(self.api_url, headers=headers, json=payload) as resp:
+                    if resp.status != 200:
+                        logger.error("Critic LLM API Error: %s", resp.status)
+                        return {}
+                    data = await resp.json()
+                    content = data["choices"][0]["message"]["content"]
+                    parsed = json.loads(content)
+                    if not isinstance(parsed, dict):
+                        return {}
+                    return {
+                        "score": float(parsed.get("score", 0)),
+                        "verdict": str(parsed.get("verdict", "")),
+                        "reasons": list(parsed.get("reasons", [])),
+                    }
+        except (json.JSONDecodeError, KeyError, ValueError, TypeError) as e:
+            logger.error("Critic LLM parse error: %s", e)
+            return {}
+        except Exception as e:
+            logger.error("Critic LLM request error: %s", e)
+            return {}
+
     async def get_media_kit(self, clip_transcript: str) -> Dict[str, str]:
         """
         Klibin transkriptine bakarak viral bir başlık (Hook),
@@ -142,10 +213,10 @@ class LLMReasoner:
                                 "description": parsed.get("description", "Bu anları kaçırmayın!"),
                                 "tags": parsed.get("tags", "#viral #kesfet")
                             }
-                        except:
-                            pass
-        except Exception:
-            pass
+                        except (json.JSONDecodeError, KeyError, TypeError) as e:
+                            logger.debug("LLM yanıtı parse edilemedi, varsayılana düşülüyor: %s", e)
+        except Exception as e:
+            logger.warning("LLM reasoner isteği başarısız, varsayılana düşülüyor: %s", e)
             
         return {"title": "Büyük An!", "description": "İyi seyirler.", "tags": "#oyun #viral"}
 

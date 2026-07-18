@@ -176,8 +176,8 @@ class ObjectDetector:
                 self.net = cv2.dnn.readNetFromCaffe(proto_path, model_path)
                 logger.info("Object detector loaded (MobileNet-SSD)")
                 return
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("MobileNet-SSD yüklenemedi, motion-based fallback: %s", e)
 
         logger.info("Object detector: using motion-based fallback")
 

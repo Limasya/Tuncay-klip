@@ -189,3 +189,90 @@ async def get_platform_analytics(
             "total_shares": int(row.total_shares),
             "avg_engagement_rate": round(float(row.avg_engagement), 2),
         }
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  AI Critic Analytics — A/B Ölçüm ve Geri Bildirim
+# ═══════════════════════════════════════════════════════════════════════════
+
+@router.get("/critic/ab-report")
+async def critic_ab_report(last_n: int = Query(50, description="Son N tur")):
+    """Auto-fix A/B ölçüm raporu — boyut bazında etkinlik analizi."""
+    from services.critic_analytics import critic_analytics
+    return critic_analytics.get_ab_report(last_n=last_n)
+
+
+@router.get("/critic/trend")
+async def critic_score_trend(limit: int = Query(50, description="Son N klip")):
+    """DB'de kalıcılaşan critic_score trendini zaman içinde okur.
+
+    save_pipeline_clip_to_db critique yazdıkça bu endpoint dolar; DB
+    persistansının çalıştığının doğrulaması budur.
+    """
+    from services.database import async_session
+    from models.database import Clip
+    from sqlalchemy import select
+
+    async with async_session() as session:
+        query = (
+            select(Clip.id, Clip.created_at, Clip.critic_score, Clip.category)
+            .where(Clip.critic_score.is_not(None))
+            .order_by(Clip.created_at.desc())
+            .limit(limit)
+        )
+        result = await session.execute(query)
+        rows = result.all()
+
+    series = [
+        {
+            "clip_id": r.id,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+            "critic_score": r.critic_score,
+            "category": r.category.value if r.category else None,
+        }
+        for r in rows
+    ]
+    scores = [s["critic_score"] for s in series if s["critic_score"] is not None]
+    return {
+        "count": len(series),
+        "avg_critic_score": round(sum(scores) / len(scores), 2) if scores else None,
+        "min": min(scores) if scores else None,
+        "max": max(scores) if scores else None,
+        # created_at desc döndü → grafik için kronolojik sırala
+        "trend": list(reversed(series)),
+    }
+
+
+
+@router.get("/critic/correlation")
+async def critic_correlation():
+    """AI Critic skoru ile gerçek performans arasındaki korelasyon."""
+    from services.critic_analytics import critic_analytics
+    return critic_analytics.get_correlation_report()
+
+
+@router.get("/critic/dimensions")
+async def critic_dimensions():
+    """Hangi auto-fix boyutu gerçekten işe yarıyor?"""
+    from services.critic_analytics import critic_analytics
+    return critic_analytics.get_dimension_effectiveness()
+
+
+@router.post("/critic/performance")
+async def record_performance(request: dict):
+    """Gerçek platform performansı kaydet (geri bildirim döngüsü)."""
+    from services.critic_analytics import critic_analytics
+    record = critic_analytics.record_performance(
+        clip_id=request.get("clip_id", ""),
+        platform=request.get("platform", ""),
+        views=request.get("views", 0),
+        likes=request.get("likes", 0),
+        comments=request.get("comments", 0),
+        shares=request.get("shares", 0),
+        watch_time_seconds=request.get("watch_time_seconds", 0),
+        avg_watch_percentage=request.get("avg_watch_percentage", 0),
+        predicted_score=request.get("predicted_score", 0),
+        auto_fix_applied=request.get("auto_fix_applied", False),
+        fixes=request.get("fixes", []),
+    )
+    return {"message": "Performance recorded", "clip_id": record.clip_id}

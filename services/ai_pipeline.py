@@ -341,8 +341,8 @@ class AIPipelineHub:
             if svc is not None and hasattr(svc, 'get_status'):
                 try:
                     status[f"service_{name}"] = svc.get_status()
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug("%s servis durumu alınamadı: %s", name, e)
         return status
 
     @property

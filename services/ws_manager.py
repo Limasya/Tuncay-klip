@@ -35,14 +35,14 @@ class WSClient:
     async def send(self, data: dict):
         try:
             await self.ws.send_json(data)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("WS send başarısız (%s, muhtemelen kopmuş): %s", self.client_id, e)
 
     async def close(self):
         try:
             await self.ws.close()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("WS close hatası (%s): %s", self.client_id, e)
 
 
 class WSManager:

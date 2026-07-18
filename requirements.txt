@@ -1,70 +1,12 @@
-# Core Web Framework
-fastapi>=0.111.0
-uvicorn[standard]>=0.30.1
-python-dotenv>=1.0.1
-pydantic>=2.7.0
-pydantic-settings>=2.3.0
-httpx>=0.27.0
-aiohttp>=3.9.5
-websockets>=12.0
+# ─────────────────────────────────────────────────────────────────────────
+# requirements.txt — tam ortam (base + ml). Geriye dönük uyumlu giriş noktası.
+# ─────────────────────────────────────────────────────────────────────────
+# Bağımlılıklar iki dosyaya ayrıldı:
+#   • requirements-base.txt → FastAPI/API katmanı (hafif)
+#   • requirements-ml.txt   → torch/tensorflow/mediapipe/... (ağır) + base
+#
+# `pip install -r requirements.txt` eskisiyle BİREBİR aynı tam seti kurar
+# (monolit / CI için). Hafif bir mikroservis kurmak isteyen sadece
+# `requirements-base.txt` kurar ve ~10x küçük bir ortam elde eder.
 
-# Message Queue
-redis>=5.0.7
-celery>=5.4.0
-
-# Database
-sqlalchemy>=2.0.31
-aiosqlite>=0.22.0
-asyncpg>=0.29.0
-alembic>=1.13.1
-chromadb>=0.5.5
-
-# Video/Audio Processing
-opencv-python-headless>=4.10.0
-ffmpeg-python>=0.2.0
-numpy>=1.26.0
-faster-whisper>=1.0.2
-ultralytics>=8.2.0
-
-# Video Downloading
-yt-dlp>=2024.1.0
-curl_cffi>=0.15.0
-
-# ML/AI
-torch>=2.3.1
-torchvision>=0.18.1
-transformers>=4.42.3
-mediapipe>=0.10.14
-Pillow>=10.4.0
-scipy>=1.14.0
-groq>=0.9.0
-cohere>=5.5.0
-together>=1.3.0
-openai>=1.35.0
-tensorflow>=2.16.0
-
-# Cloud Storage
-boto3>=1.34.131
-
-# Auth & Security
-python-jose[cryptography]>=3.3.0
-passlib[bcrypt]>=1.7.4
-python-multipart>=0.0.9
-
-# Utilities
-srt>=3.5.3
-jinja2>=3.1.4
-aiofiles>=24.1.0
-psutil>=5.9.0
-
-# Testing
-pytest>=8.0.0
-pytest-asyncio>=0.23.0
-
-# Observability (IP_PART6 — Platform Engineering)
-prometheus-client>=0.20.0
-opentelemetry-api>=1.25.0
-opentelemetry-sdk>=1.25.0
-opentelemetry-instrumentation-fastapi>=0.46b0
-opentelemetry-exporter-otlp-proto-grpc>=1.25.0
-strawberry-graphql[fastapi]>=0.206.0
+-r requirements-ml.txt

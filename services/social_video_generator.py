@@ -339,12 +339,15 @@ class SocialVideoGenerator:
         qc_result = None
         if use_quality_check:
             try:
-                qc_report = await _qc.check(str(output_path))
+                # 9:16 dikey çıktı — run_qc varsayılan 1080x1920 beklentisiyle uyumlu.
+                qc_report = await _qc.run_qc(str(output_path))
                 qc_result = {"passed": qc_report.passed, "score": qc_report.score, "summary": qc_report.summary()}
                 features_used.append(f"QC: {qc_report.summary()}")
                 logger.info("QC Report: %s", qc_report.summary())
             except Exception as e:
-                logger.warning("QC failed: %s", e)
+                # Sessizce yutma — QC hatası görünür olmalı (önceden _qc.check AttributeError'ı gizliyordu).
+                logger.warning("QC çalıştırılamadı: %s", e, exc_info=True)
+                qc_result = {"passed": False, "score": 0.0, "summary": f"QC error: {e}", "error": True}
 
         # ── 15. Social Media AI (Viral Kit) ────────────────────────────────────
         social_kit = None

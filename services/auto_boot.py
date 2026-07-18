@@ -1,6 +1,6 @@
 """
 Auto-Boot Orchestrator
-──────────────────────
+─────────────────────
 Single entry point that boots the entire system:
   1. Auto-discovers available LLM providers
   2. Auto-downloads missing models (Ollama, ML)
@@ -9,6 +9,8 @@ Single entry point that boots the entire system:
   5. Starts auto-backup scheduler
   6. Starts WebSocket broadcast wiring
   7. Reports full system status
+  8. Starts Kick Stream Monitor (canli yayin izleme)
+  9. Starts Kick Clips Collector (公众clip toplama)
 
 Usage from main.py lifespan:
     from services.auto_boot import auto_boot
@@ -55,7 +57,16 @@ async def auto_boot() -> dict:
         "auto_backup": False,
         "event_bus_broadcast": False,
         "task_queue": False,
-        "kick_archive_scheduler": False,
+        "kick_stream_monitor": False,
+        "kick_clips_collector": False,
+        "intelligence_graph": False,
+        "knowledge_base": False,
+        "critic_analytics": False,
+        "publisher": False,
+        "ab_test": False,
+        "quality_dashboard": False,
+        "cost_tracker": False,
+        "user_feedback": False,
         "errors": [],
     }
 
@@ -160,8 +171,8 @@ async def auto_boot() -> dict:
                         "payload": event.payload if isinstance(event.payload, dict) else str(event.payload),
                     }
                     await ws_manager.broadcast(payload)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug("Dashboard broadcast hatası: %s", e)
 
             event_bus.subscribe_wildcard("*", _broadcast_to_dashboard)
             report["event_bus_broadcast"] = True
@@ -183,17 +194,113 @@ async def auto_boot() -> dict:
         except Exception as e:
             report["errors"].append(f"task_queue: {e}")
 
-    # ── Step 8: Optional public Tuncay VOD archive scheduler ──
-    with _maybe_span("boot.kick_archive"):
+# ── Step 8: Kick Stream Monitor — canli yayini izle, hafizada klip cikar ──
+    with _maybe_span("boot.kick_stream_monitor"):
         try:
-            from config import get_settings
-            archive_settings = get_settings()
-            if archive_settings.kick_archive_autostart:
-                from services.kick_archive import kick_archive
-                report["kick_archive_scheduler"] = await kick_archive.start_scheduler()
+            from services.kick_stream_monitor import kick_stream_monitor
+            report["kick_stream_monitor"] = await kick_stream_monitor.start()
+            logger.info("Kick Stream Monitor basladi — canli yayin bekleniyor")
         except Exception as e:
-            report["errors"].append(f"kick_archive: {e}")
-            logger.warning("Kick archive scheduler failed to start: %s", e)
+            report["errors"].append(f"kick_stream_monitor: {e}")
+            logger.warning("Kick Stream Monitor baslatilamadi: %s", e)
+
+    # ── Step 9: Kick Clips Collector —公众clip'leri topla ──
+    with _maybe_span("boot.kick_clips_collector"):
+        try:
+            from services.kick_clips_collector import kick_clips_collector
+            report["kick_clips_collector"] = await kick_clips_collector.start()
+            logger.info("Kick Clips Collector basladi —公众clip'ler toplaniyor")
+        except Exception as e:
+            report["errors"].append(f"kick_clips_collector: {e}")
+            logger.warning("Kick Clips Collector baslatilamadi: %s", e)
+
+    # ── Step 10: Content Intelligence Graph ──
+    with _maybe_span("boot.intelligence_graph"):
+        try:
+            from services.intelligence_graph import graph_builder
+            await graph_builder.start()
+            report["intelligence_graph"] = True
+            logger.info("Content Intelligence Graph basladi")
+        except Exception as e:
+            report["errors"].append(f"intelligence_graph: {e}")
+            logger.warning("Intelligence Graph baslatilamadi: %s", e)
+
+    # ── Step 11: Knowledge Base — tüm yayınların bilgi bankası ──
+    with _maybe_span("boot.knowledge_base"):
+        try:
+            from services.knowledge_base import knowledge_base
+            await knowledge_base.load()
+            report["knowledge_base"] = True
+            logger.info("Knowledge Base basladi — bilgi bankasi yuklendi")
+        except Exception as e:
+            report["errors"].append(f"knowledge_base: {e}")
+            logger.warning("Knowledge Base baslatilamadi: %s", e)
+
+    # ── Step 12: Critic Analytics — A/B ölçüm ve geri bildirim ──
+    with _maybe_span("boot.critic_analytics"):
+        try:
+            from services.critic_analytics import critic_analytics
+            await critic_analytics.load()
+            report["critic_analytics"] = True
+            logger.info("Critic Analytics basladi")
+        except Exception as e:
+            report["errors"].append(f"critic_analytics: {e}")
+            logger.warning("Critic Analytics baslatilamadi: %s", e)
+
+    # ── Step 13: Multi-Platform Publisher ──
+    with _maybe_span("boot.publisher"):
+        try:
+            from services.multi_platform_publisher import multi_platform_publisher
+            await multi_platform_publisher.load()
+            report["publisher"] = True
+            logger.info("Multi-Platform Publisher basladi")
+        except Exception as e:
+            report["errors"].append(f"publisher: {e}")
+            logger.warning("Publisher baslatilamadi: %s", e)
+
+    # ── Step 14: Thumbnail A/B Test ──
+    with _maybe_span("boot.ab_test"):
+        try:
+            from services.thumbnail_ab_test import thumbnail_ab_test
+            await thumbnail_ab_test.load()
+            report["ab_test"] = True
+            logger.info("Thumbnail A/B Test basladi")
+        except Exception as e:
+            report["errors"].append(f"ab_test: {e}")
+            logger.warning("A/B Test baslatilamadi: %s", e)
+
+    # ── Step 15: Quality Dashboard ──
+    with _maybe_span("boot.quality_dashboard"):
+        try:
+            from services.quality_dashboard import quality_dashboard
+            await quality_dashboard.load()
+            report["quality_dashboard"] = True
+            logger.info("Quality Dashboard basladi")
+        except Exception as e:
+            report["errors"].append(f"quality_dashboard: {e}")
+            logger.warning("Quality Dashboard baslatilamadi: %s", e)
+
+    # ── Step 16: Cost Tracker ──
+    with _maybe_span("boot.cost_tracker"):
+        try:
+            from services.cost_tracker import cost_tracker
+            await cost_tracker.load()
+            report["cost_tracker"] = True
+            logger.info("Cost Tracker basladi")
+        except Exception as e:
+            report["errors"].append(f"cost_tracker: {e}")
+            logger.warning("Cost Tracker baslatilamadi: %s", e)
+
+    # ── Step 17: User Feedback ──
+    with _maybe_span("boot.user_feedback"):
+        try:
+            from services.user_feedback import user_feedback
+            await user_feedback.load()
+            report["user_feedback"] = True
+            logger.info("User Feedback basladi")
+        except Exception as e:
+            report["errors"].append(f"user_feedback: {e}")
+            logger.warning("User Feedback baslatilamadi: %s", e)
 
     elapsed = (time.time() - start) * 1000
     report["boot_time_ms"] = round(elapsed, 1)
@@ -207,27 +314,73 @@ async def auto_shutdown():
     try:
         from services.health_monitor import health_monitor
         await health_monitor.stop()
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("health_monitor durdurulamadı: %s", e)
     try:
         from services.auto_backup import backup_scheduler
         await backup_scheduler.stop()
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("backup_scheduler durdurulamadı: %s", e)
     try:
         from services.task_queue import task_queue
         await task_queue.stop()
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("task_queue durdurulamadı: %s", e)
     try:
-        from services.kick_archive import kick_archive
-        await kick_archive.stop()
-    except Exception:
-        pass
+        from services.kick_stream_monitor import kick_stream_monitor
+        await kick_stream_monitor.stop()
+    except Exception as e:
+        logger.debug("kick_stream_monitor durdurulamadı: %s", e)
+    try:
+        from services.kick_clips_collector import kick_clips_collector
+        await kick_clips_collector.stop()
+    except Exception as e:
+        logger.debug("kick_clips_collector durdurulamadı: %s", e)
+    try:
+        from services.intelligence_graph import graph_builder
+        from services.intelligence_graph import intelligence_graph
+        await intelligence_graph.save()
+    except Exception as e:
+        logger.debug("intelligence_graph kaydedilemedi: %s", e)
+    try:
+        from services.knowledge_base import knowledge_base
+        await knowledge_base.save()
+    except Exception as e:
+        logger.debug("knowledge_base kaydedilemedi: %s", e)
+    try:
+        from services.critic_analytics import critic_analytics
+        await critic_analytics.save()
+    except Exception as e:
+        logger.debug("critic_analytics kaydedilemedi: %s", e)
+    try:
+        from services.multi_platform_publisher import multi_platform_publisher
+        await multi_platform_publisher.save()
+    except Exception as e:
+        logger.debug("multi_platform_publisher kaydedilemedi: %s", e)
+    try:
+        from services.thumbnail_ab_test import thumbnail_ab_test
+        await thumbnail_ab_test.save()
+    except Exception as e:
+        logger.debug("thumbnail_ab_test kaydedilemedi: %s", e)
+    try:
+        from services.quality_dashboard import quality_dashboard
+        await quality_dashboard.save()
+    except Exception as e:
+        logger.debug("quality_dashboard kaydedilemedi: %s", e)
+    try:
+        from services.cost_tracker import cost_tracker
+        await cost_tracker.save()
+    except Exception as e:
+        logger.debug("cost_tracker kaydedilemedi: %s", e)
+    try:
+        from services.user_feedback import user_feedback
+        await user_feedback.save()
+    except Exception as e:
+        logger.debug("user_feedback kaydedilemedi: %s", e)
     try:
         from shared.event_bus import get_event_bus
         bus = get_event_bus()
         await bus.stop()
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("event_bus durdurulamadı: %s", e)
     logger.info("Auto-shutdown completed")

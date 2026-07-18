@@ -1,0 +1,28 @@
+# ─────────────────────────────────────────────────────────────────────────
+# requirements-ml.txt — ağır ML/AI bağımlılıkları (GPU-uyumlu)
+# ─────────────────────────────────────────────────────────────────────────
+# Bu set base'in üstüne kurulur; tek komutla tam ortam:
+#   pip install -r requirements-ml.txt
+# İmaj boyutunun büyük kısmı (torch/tensorflow/mediapipe/ultralytics/chromadb)
+# burada. API-only servisler bunu KURMAMALI (bkz. requirements-base.txt).
+
+-r requirements-base.txt
+
+# Vector DB
+chromadb>=0.5.5
+
+# Video/Audio Processing
+opencv-python-headless>=4.10.0
+ffmpeg-python>=0.2.0
+numpy>=1.26.0
+faster-whisper>=1.0.2
+ultralytics>=8.2.0
+
+# Deep Learning / ML
+torch>=2.3.1
+torchvision>=0.18.1
+transformers>=4.42.3
+mediapipe>=0.10.14
+Pillow>=10.4.0
+scipy>=1.14.0
+tensorflow>=2.16.0

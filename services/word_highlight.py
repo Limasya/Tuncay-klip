@@ -93,8 +93,8 @@ class WordHighlightEngine:
                 from config import get_settings
                 settings = get_settings()
                 model_size = getattr(settings, "whisper_model_size", "base")
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("whisper_model_size config'ten okunamadı, 'base' kullanılıyor: %s", e)
             logger.info("Whisper modeli yukleniyor: %s", model_size)
             self._whisper_model = whisper.load_model(model_size)
             logger.info("Whisper modeli yuklendi.")
@@ -228,8 +228,8 @@ class WordHighlightEngine:
         if audio_path != video_path:
             try:
                 Path(audio_path).unlink(missing_ok=True)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("Geçici audio dosyası silinemedi: %s", e)
 
         return words
 

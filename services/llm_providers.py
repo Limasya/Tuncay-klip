@@ -305,8 +305,8 @@ class HuggingFaceProvider:
                 payload, headers, timeout=30,
             )
             return data["choices"][0]["message"]["content"].strip()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("chat/completions başarısız, text-generation fallback'e geçiliyor: %s", e)
 
         # Fallback: text-generation pipeline
         full_prompt = f"{system_prompt or DEFAULT_SYSTEM_PROMPT}\n\n{prompt}"

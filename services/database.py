@@ -1,5 +1,11 @@
 """
-Veritabanı bağlantı yönetimi.
+Veritabanı BAĞLANTI yönetimi — async engine, session factory, init/dependency.
+
+Bu modül SADECE bağlantı katmanını içerir (create_async_engine, async_session,
+init_db, get_db). Tablo/model tanımları için bkz. models/database.py.
+
+İki dosya da `database.py` adını taşır ama sorumlulukları ayrıdır:
+ models.database = ŞEMA (Base + tablolar), services.database = BAĞLANTI (engine/session).
 """
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from config import get_settings

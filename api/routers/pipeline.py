@@ -233,15 +233,15 @@ async def websocket_events(websocket: WebSocket):
         if orchestrator:
             status = orchestrator.get_full_status()
             await websocket.send_json({"type": "status", "data": status})
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("WS başlangıç status gönderilemedi: %s", e)
 
     async def _ws_event_handler(event):
         try:
             data = event.model_dump(mode="json") if hasattr(event, "model_dump") else event
             await websocket.send_json({"type": "event", "data": data})
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("WS event gönderilemedi (istemci kopmuş olabilir): %s", e)
 
     if orchestrator and orchestrator.event_bus:
         orchestrator.event_bus.subscribe_wildcard("*", _ws_event_handler)
@@ -504,6 +504,12 @@ async def save_pipeline_clip_to_db(clip_data: dict):
             cat = clip_data.get("category", "other")
             db_category = category_map.get(cat, ClipCategory.OTHER)
 
+            # AI Critic sonucu (varsa) — closed-loop QC skorunu kalıcılaştır.
+            critique = clip_data.get("critique")
+            critic_score = None
+            if isinstance(critique, dict):
+                critic_score = critique.get("score")
+
             clip = Clip(
                 broadcaster_id=1,
                 title=f"Pipeline Clip - {cat.title()}",
@@ -515,6 +521,8 @@ async def save_pipeline_clip_to_db(clip_data: dict):
                 video_path=clip_data.get("file_path", ""),
                 thumbnail_path=clip_data.get("thumbnail_path", ""),
                 emotion_score=clip_data.get("highlight_score", 0),
+                critic_score=critic_score,
+                critique=critique if isinstance(critique, dict) else None,
             )
             session.add(clip)
             await session.commit()

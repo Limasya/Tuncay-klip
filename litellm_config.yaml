@@ -1,0 +1,243 @@
+# LiteLLM SDK router configuration draft.
+#
+# The application facade loads this file and materializes only providers with
+# enabled: true. Do not pass this draft directly to `litellm --config` until
+# the facade has been added.
+#
+# Zero-cost policy:
+# - No provider can auto-enable from an API key alone.
+# - Remote providers require a completed live signup verification first.
+# - The facade never falls through to paid or trial providers.
+# - TemplateContentFallback is the terminal fallback after every enabled
+#   zero-cost provider is exhausted or rate limited.
+
+tuncay_klip:
+  policy:
+    mode: zero_cost_only
+    require_live_signup_verification: true
+    automatic_paid_fallback: false
+    automatic_trial_fallback: false
+    terminal_fallback: template_content_fallback
+    template_fallback_on:
+      - rate_limit
+      - authentication_error
+      - provider_error
+      - timeout
+      - router_exhausted
+
+  # These sequences are strict priority chains, not load-balanced pools.
+  # Entries with enabled: false are skipped by the facade.
+  chains:
+    clip_fast:
+      - groq
+      - cerebras
+      - gemini
+      - ollama
+      - template_content_fallback
+    clip_balanced:
+      - gemini
+      - groq
+      - openrouter_free
+      - mistral_free
+      - ollama
+      - template_content_fallback
+    clip_quality:
+      - gemini
+      - groq
+      - openrouter_free
+      - ollama
+      - template_content_fallback
+    clip_json:
+      - groq
+      - gemini
+      - cerebras
+      - openrouter_free
+      - template_content_fallback
+    clip_local:
+      - ollama
+      - vllm
+      - lm_studio
+      - localai
+      - textgen
+      - template_content_fallback
+
+  providers:
+    # Self-hosted providers are permanently zero-cost software. They activate
+    # only when their configured host is reachable.
+    ollama:
+      enabled: true
+      category: local
+      provider_model: ollama_chat/llama3.1:8b
+      model_env: OLLAMA_MODEL
+      api_base_env: OLLAMA_HOST
+      default_api_base: http://localhost:11434
+      registration_required: false
+      payment_card_required: false
+      permanent_free: true
+
+    vllm:
+      enabled: true
+      category: local
+      provider_model: openai/meta-llama/Llama-3-8B-Instruct
+      model_env: VLLM_MODEL
+      api_base_env: VLLM_HOST
+      default_api_base: http://localhost:8000/v1
+      api_key: local-no-key
+      registration_required: false
+      payment_card_required: false
+      permanent_free: true
+
+    lm_studio:
+      enabled: true
+      category: local
+      provider_model: lm_studio/default
+      model_env: LM_STUDIO_MODEL
+      api_base_env: LM_STUDIO_HOST
+      default_api_base: http://localhost:1234/v1
+      registration_required: false
+      payment_card_required: false
+      permanent_free: true
+
+    localai:
+      enabled: true
+      category: local
+      provider_model: openai/gpt-3.5-turbo
+      model_env: LOCALAI_MODEL
+      api_base_env: LOCALAI_HOST
+      default_api_base: http://localhost:8080/v1
+      api_key: local-no-key
+      registration_required: false
+      payment_card_required: false
+      permanent_free: true
+
+    textgen:
+      enabled: true
+      category: local
+      provider_model: openai/default
+      model_env: TEXTGEN_MODEL
+      api_base_env: TEXTGEN_HOST
+      default_api_base: http://localhost:5000/v1
+      api_key: local-no-key
+      registration_required: false
+      payment_card_required: false
+      permanent_free: true
+
+    # Cloud candidates remain disabled until an actual new-account signup is
+    # documented as no-card and permanent-free in the project verification log.
+    groq:
+      enabled: false
+      category: permanent_free_candidate
+      provider_model: groq/llama-3.3-70b-versatile
+      model_env: GROQ_MODEL
+      api_key_env: GROQ_API_KEY
+      registration_required: true
+      payment_card_required: unverified_live_signup
+      permanent_free: unverified_live_signup
+      verification_status: pending_live_signup
+      signup_url: https://console.groq.com
+
+    gemini:
+      enabled: false
+      category: permanent_free_candidate
+      provider_model: gemini/gemini-2.0-flash
+      model_env: GEMINI_MODEL
+      api_key_env: GEMINI_API_KEY
+      registration_required: true
+      payment_card_required: unverified_live_signup
+      permanent_free: unverified_live_signup
+      verification_status: pending_live_signup
+      signup_url: https://aistudio.google.com
+
+    cerebras:
+      enabled: false
+      category: permanent_free_candidate
+      provider_model: cerebras/llama3.1-70b
+      model_env: CEREBRAS_MODEL
+      api_key_env: CEREBRAS_API_KEY
+      registration_required: true
+      payment_card_required: unverified_live_signup
+      permanent_free: unverified_live_signup
+      verification_status: pending_live_signup
+      signup_url: https://cloud.cerebras.ai
+
+    openrouter_free:
+      enabled: false
+      category: permanent_free_candidate
+      provider_model_env: OPENROUTER_FREE_MODEL
+      required_model_suffix: :free
+      api_key_env: OPENROUTER_API_KEY
+      registration_required: true
+      payment_card_required: unverified_live_signup
+      permanent_free: unverified_live_signup
+      verification_status: pending_live_signup
+      signup_url: https://openrouter.ai
+
+    mistral_free:
+      enabled: false
+      category: permanent_free_candidate
+      provider_model_env: MISTRAL_FREE_MODEL
+      api_key_env: MISTRAL_API_KEY
+      registration_required: true
+      payment_card_required: unverified_live_signup
+      permanent_free: unverified_live_signup
+      verification_status: pending_live_signup
+      signup_url: https://console.mistral.ai
+
+    # These providers are never eligible for automatic routing. A user may
+    # explicitly enable one after adding their own key, but it stays outside
+    # every default zero-cost chain.
+    openai:
+      enabled: false
+      category: paid_optional
+      provider_model: openai/gpt-4o-mini
+      model_env: OPENAI_MODEL
+      api_key_env: OPENAI_API_KEY
+      manual_opt_in_only: true
+
+    anthropic:
+      enabled: false
+      category: paid_optional
+      provider_model: anthropic/claude-3-haiku-20240307
+      model_env: CLAUDE_MODEL
+      api_key_env: ANTHROPIC_API_KEY
+      manual_opt_in_only: true
+
+    together:
+      enabled: false
+      category: trial_or_credit_optional
+      provider_model: together_ai/meta-llama/Llama-3.1-70B-Instruct-Turbo
+      model_env: TOGETHER_MODEL
+      api_key_env: TOGETHER_API_KEY
+      manual_opt_in_only: true
+
+    nvidia_nim:
+      enabled: false
+      category: trial_or_credit_optional
+      provider_model: nvidia_nim/meta/llama-3.1-70b-instruct
+      model_env: NVIDIA_MODEL
+      api_key_env: NVIDIA_API_KEY
+      manual_opt_in_only: true
+
+    huggingface:
+      enabled: false
+      category: trial_or_credit_optional
+      provider_model_env: HUGGINGFACE_MODEL
+      api_key_env: HUGGINGFACE_API_TOKEN
+      manual_opt_in_only: true
+
+  template_content_fallback:
+    enabled: true
+    category: application_local
+    implementation: services.template_content_fallback
+    registration_required: false
+    payment_card_required: false
+    permanent_free: true
+
+# LiteLLM Router defaults used after the facade builds the enabled model list.
+router_settings:
+  routing_strategy: simple-shuffle
+  enable_pre_call_checks: true
+  num_retries: 1
+  allowed_fails: 1
+  cooldown_time: 60
+  timeout: 30

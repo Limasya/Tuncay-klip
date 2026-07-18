@@ -401,6 +401,151 @@ class KickAPIService:
             logger.error("Stream URL alinamadi: %s", e)
             return None
 
+    # --- Public Clips (auth-free web API) ---
+    async def list_channel_clips(
+        self,
+        limit: int = 25,
+        sort: str = "newest",
+    ) -> list[dict[str, Any]]:
+        """Kanal公众clip'lerini listele (auth-free).
+
+        Endpoint: GET /api/v2/channels/{slug}/clips
+        """
+        client = await self._get_client()
+        slug = settings.kick_channel_slug
+
+        url = f"{settings.kick_api_base}/channels/{slug}/clips"
+        params = {"limit": limit, "sort": sort}
+
+        try:
+            response = await client.get(url, params=params)
+            response.raise_for_status()
+            data = response.json()
+
+            clips = []
+            items = data if isinstance(data, list) else data.get("data", data.get("clips", []))
+            if isinstance(items, list):
+                for item in items:
+                    if not isinstance(item, dict):
+                        continue
+                    clip = self._normalize_clip(item)
+                    if clip:
+                        clips.append(clip)
+
+            logger.info("Discovered %d public clips for %s", len(clips), slug)
+            return clips[:limit]
+
+        except httpx.HTTPError as e:
+            logger.error("Clips listesi alinamadi: %s", e)
+            return []
+
+    async def list_clips(
+        self,
+        limit: int = 25,
+        page: int = 1,
+    ) -> list[dict[str, Any]]:
+        """Tum public clip'leri listele (kick.com/api/v2/clips).
+
+        Farkli kanallardan da clip gelebilir, sadece thetuncay filtrelenir.
+        """
+        client = await self._get_client()
+
+        url = f"{settings.kick_api_base}/clips"
+        params = {"limit": min(limit, 50), "page": max(page, 1)}
+
+        try:
+            response = await client.get(url, params=params)
+            response.raise_for_status()
+            data = response.json()
+
+            clips = []
+            items = data if isinstance(data, list) else data.get("data", [])
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                clip = self._normalize_clip(item)
+                if clip and clip.get("channel_slug") == settings.kick_channel_slug:
+                    clips.append(clip)
+
+            return clips[:limit]
+
+        except httpx.HTTPError as e:
+            logger.error("Global clips listesi alinamadi: %s", e)
+            return []
+
+    async def get_clip_details(self, clip_id: str) -> Optional[Dict[str, Any]]:
+        """Tek bir clip'in detayini cek.
+
+        Endpoint: GET /api/v2/clips/{clip_id}
+        """
+        client = await self._get_client()
+        url = f"{settings.kick_api_base}/clips/{clip_id}"
+
+        try:
+            response = await client.get(url)
+            response.raise_for_status()
+            data = response.json()
+            return self._normalize_clip(data)
+        except httpx.HTTPError as e:
+            logger.error("Clip detayi alinamadi: %s", e)
+            return None
+
+    def _normalize_clip(self, raw: dict[str, Any]) -> Optional[dict[str, Any]]:
+        """Clip payload'unu normalize et."""
+        clip_id = raw.get("id") or raw.get("clip_id") or raw.get("uuid")
+        if not clip_id:
+            return None
+
+        # Kanal bilgisi
+        channel = raw.get("channel", {})
+        if isinstance(channel, dict):
+            channel_slug = channel.get("slug", "")
+        else:
+            channel_slug = raw.get("channel_slug", "")
+
+        # Sadece hedef kanalin clip'leri
+        if channel_slug and channel_slug != settings.kick_channel_slug:
+            return None
+
+        # Clip URL
+        clip_url = (
+            raw.get("clip_url")
+            or raw.get("url")
+            or raw.get("share_url")
+            or raw.get("video_url")
+            or f"https://kick.com/{channel_slug}/clip/{clip_id}"
+        )
+
+        # Süre (saniye)
+        duration = raw.get("duration", 0)
+        if duration > 1000:
+            duration = duration / 1000
+
+        # Kullanıcı bilgisi
+        creator = raw.get("creator", raw.get("user", {}))
+        creator_name = ""
+        creator_id = ""
+        if isinstance(creator, dict):
+            creator_name = creator.get("username", creator.get("display_name", ""))
+            creator_id = str(creator.get("id", ""))
+
+        return {
+            "clip_id": str(clip_id),
+            "channel_slug": channel_slug,
+            "channel_url": f"https://kick.com/{channel_slug}",
+            "clip_url": clip_url,
+            "title": raw.get("title", raw.get("session_title", "")),
+            "creator_username": creator_name,
+            "creator_id": creator_id,
+            "created_at": raw.get("created_at", raw.get("created", "")),
+            "duration": duration,
+            "views": raw.get("views", raw.get("view_count", 0)),
+            "likes": raw.get("likes", raw.get("like_count", 0)),
+            "thumbnail_url": raw.get("thumbnail", raw.get("thumbnail_url", "")),
+            "language": raw.get("language", ""),
+            "category": raw.get("category", ""),
+        }
+
     # --- Chat Mesajlari ---
     async def get_chat_messages(self, cursor: Optional[str] = None) -> Dict[str, Any]:
         """Kanal sohbet mesajlarini ceker."""

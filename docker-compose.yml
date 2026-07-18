@@ -11,7 +11,7 @@ services:
     environment:
       - DEPLOYMENT_ENVIRONMENT=production
       - REDIS_URL=redis://redis:6379/0
-      - DATABASE_URL=postgresql+asyncpg://klip:klip@postgres:5432/klip
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-klip}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-klip}
       - EVENT_BUS_BACKEND=redis
       - KICK_CHANNEL_SLUG=thetuncay
       - KICK_ARCHIVE_AUTOSTART=true
@@ -52,9 +52,9 @@ services:
     ports:
       - "5432:5432"
     environment:
-      POSTGRES_DB: klip
-      POSTGRES_USER: klip
-      POSTGRES_PASSWORD: klip
+      POSTGRES_DB: ${POSTGRES_DB:-klip}
+      POSTGRES_USER: ${POSTGRES_USER:-klip}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -70,8 +70,8 @@ services:
     ports:
       - "3000:3000"
     environment:
-      - GF_SECURITY_ADMIN_USER=admin
-      - GF_SECURITY_ADMIN_PASSWORD=tuncay-klip
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:?set GRAFANA_ADMIN_PASSWORD in .env}
       - GF_USERS_ALLOW_SIGN_UP=false
     volumes:
       - grafana_data:/var/lib/grafana

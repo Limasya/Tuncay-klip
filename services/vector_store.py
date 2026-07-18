@@ -307,8 +307,8 @@ class ClipVectorStore:
         if self._collection is not None:
             try:
                 count = await asyncio.to_thread(self._collection.count)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("Vector store count alınamadı: %s", e)
 
         if self._embedder:
             embedder_type = self._embedder[0]

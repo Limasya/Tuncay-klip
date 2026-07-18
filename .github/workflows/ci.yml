@@ -48,6 +48,12 @@ jobs:
         run: |
           AUTH_DISABLED=1 pytest -q --tb=no 2>&1 | tail -1
 
+      - name: Security scan (bandit)
+        # ci.yaml'dan taşındı — bulguları raporlar ama CI'ı bloklamaz.
+        run: |
+          pip install bandit
+          bandit -r services microservices platform_eng -ll || true
+
   build:
     needs: test
     runs-on: ubuntu-latest

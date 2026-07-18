@@ -1,6 +1,6 @@
 """
 Ana FastAPI uygulaması.
-Tüm router'ları birleştirir, CORS ve middleware ayarlarını yapar.
+Domain bazlı modüler yapı — her domain kendi router'larını kaydeder.
 """
 import os
 
@@ -12,47 +12,11 @@ import logging
 import time
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import PlainTextResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
 
-import importlib
-
-from api.routers import (
-    clips,
-    edit,
-    llm_status as llm_status_router,
-    pipeline as pipeline_router,
-    preferences,
-    projects,
-    smart_editor as smart_editor_router,
-    social as social_router,
-    system,
-    graphql as graphql_router,
-)
-from api.routers import analytics as analytics_router
-from api.routers import recommendations as recommendations_router
-from api.routers import search as search_router
-
-_platform_available = False
-platform_router = None
-try:
-    platform_router = importlib.import_module("api.routers.platform")
-    _platform_available = True
-except Exception:
-    logging.debug(
-        "platform_eng ve bağımlılıkları kurulu değil; "
-        "/api/v1/platform endpoint'leri atlanıyor"
-    )
-
-# Admin router (optional)
-try:
-    from api.routers import admin as admin_router
-    _admin_available = True
-except Exception:
-    _admin_available = False
-
+from api.domains import domain_registry, register_all_domains
 from services.database import init_db
 from config import get_settings
 
@@ -132,14 +96,14 @@ async def lifespan(app: FastAPI):
     try:
         from services.auto_boot import auto_shutdown
         await auto_shutdown()
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("Auto-shutdown hatası: %s", e)
     try:
         from services.orchestrator import orchestrator as svc_orch
         if svc_orch.is_monitoring:
             await svc_orch.stop()
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("services orchestrator kapatılırken hata: %s", e)
     try:
         from microservices.orchestrator import orchestrator as pipe_orch
         if pipe_orch._is_running:
@@ -174,14 +138,22 @@ app = FastAPI(
         {"name": "System", "description": "System status, health checks, configuration"},
         {"name": "Platform", "description": "Platform management — accounts, API keys, publishing"},
         {"name": "Admin", "description": "Admin API — deep health, metrics, service management"},
+        {"name": "Knowledge", "description": "Knowledge Base — all streams, participants, topics, game events"},
     ],
 )
 
-# CORS
+# CORS — origin listesi config'den okunur (dev varsayılan localhost; prod'da set edilmeli)
+_cors_origins = settings.cors_origins_list
+if settings.deployment_environment == "production" and _cors_origins == [
+    "http://localhost:8000", "http://127.0.0.1:8000",
+]:
+    logger.warning(
+        "CORS production'da hâlâ localhost varsayılanında — CORS_ORIGINS ortam değişkenini set edin."
+    )
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:8000", "http://127.0.0.1:8000"],
-    allow_credentials=False,
+    allow_origins=_cors_origins,
+    allow_credentials=settings.cors_allow_credentials,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -198,16 +170,16 @@ if settings.deployment_environment == "production":
         from services.rate_limiter import RateLimitMiddleware as NewRateLimitMiddleware
         app.add_middleware(NewRateLimitMiddleware, requests_per_minute=120, burst=30)
         logger.info("Production rate limiter enabled: 120 req/min")
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("Production rate limiter init edilemedi: %s", e)
 
 # Prometheus metrics (services/metrics.py)
 try:
     from services.metrics import setup_metrics
     setup_metrics(app)
     logger.info("Prometheus metrics middleware enabled")
-except Exception:
-    pass
+except Exception as e:
+    logger.debug("Prometheus metrics setup atlandı: %s", e)
 
 # Observability (IP_PART6 34-36) — Prometheus RED metrics + OTel tracing
 try:
@@ -237,27 +209,21 @@ if settings.otel_enabled:
 # Static files
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
-# Routers
-app.include_router(clips.router)
-app.include_router(system.router)
-app.include_router(preferences.router)
-app.include_router(pipeline_router.router)
-app.include_router(edit.router)
-app.include_router(analytics_router.router)
-app.include_router(recommendations_router.router)
-app.include_router(smart_editor_router.router)
-app.include_router(llm_status_router.router)
-if _platform_available and platform_router is not None:
-    app.include_router(platform_router.router)
-app.include_router(projects.router)
-app.include_router(graphql_router.router)
-app.include_router(search_router.router)
-app.include_router(social_router.router)
+# Routers — Domain Registry ile modüler kayıt
+register_all_domains(domain_registry)
+domain_registry.include_all(app)
 
-# Admin router (new)
-if _admin_available:
-    app.include_router(admin_router.router)
-    logger.info("Admin API registered at /api/admin/*")
+# Legacy: GraphQL mount
+try:
+    from api.routers import graphql as graphql_router
+    app.include_router(graphql_router.router)
+except Exception as e:
+    logger.debug("GraphQL router mount edilmedi: %s", e)
+
+logger.info(
+    "Domains registered: %s",
+    ", ".join(domain_registry._domains.keys()),
+)
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -499,8 +465,8 @@ async def prometheus_metrics():
         if PROMETHEUS_AVAILABLE:
             payload, _ = render_latest()
             output += payload.decode("utf-8")
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("Prometheus RED metrikleri eklenemedi: %s", e)
 
     return output
 

@@ -22,5 +22,11 @@
     "type": "permission",
     "rollout_percentage": 100,
     "enabled_targets": ["staff-1", "staff-2"]
+  },
+  "llm_litellm_router": {
+    "enabled": false,
+    "type": "release",
+    "rollout_percentage": 100,
+    "comment": "LiteLLM SDK facade (services/llm_client.py) kapalıyken çağrılar mevcut llm_engine'e düşer."
   }
 }

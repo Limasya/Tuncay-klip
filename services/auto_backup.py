@@ -85,8 +85,8 @@ async def auto_backup_clips(max_age_days: int = 7) -> dict:
                 clip_file.unlink()
                 archived += 1
                 freed_bytes += clip_file.stat().st_size
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("Eski klip silinemedi (%s): %s", clip_file.name, e)
 
     return {
         "status": "completed",
@@ -105,8 +105,8 @@ async def _rotate_backups():
         try:
             old_backup.unlink()
             logger.debug("Rotated old backup: %s", old_backup.name)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Eski yedek silinemedi (%s): %s", old_backup.name, e)
 
 
 async def get_backup_status() -> dict:

@@ -1088,8 +1088,8 @@ class RenderPipeline:
         for f in self._temp_files:
             try:
                 Path(f).unlink(missing_ok=True)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("Geçici dosya silinemedi (%s): %s", f, e)
         self._temp_files.clear()
 
 

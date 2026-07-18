@@ -290,8 +290,11 @@ class RedisEventBus:
                         )
                         self._metrics["events_dlq"] += 1
                         self._dlq.append((event, str(e)))
-                    except Exception:
-                        pass
+                    except Exception as dlq_err:
+                        logger.warning(
+                            "DLQ'ya yazılamadı (%s), event kaybı riski: %s",
+                            event_type, dlq_err,
+                        )
 
             # ACK the message
             await self._redis.xack(stream_key, CONSUMER_GROUP, msg_id)

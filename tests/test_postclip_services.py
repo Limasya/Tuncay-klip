@@ -343,3 +343,30 @@ class TestPostClipEventFlow:
         await svc._on_edit_ready(edit_event)
         # Cache should be popped even if file missing
         assert len(svc._metadata_cache) == 0
+
+
+# ── Quality Control regression (post-render QC bug) ──────────────
+
+class TestQualityControlWiring:
+    """Regression guard for the QC method-name bug.
+
+    social_video_generator önceden `_qc.check(...)` çağırıyordu ama
+    QualityControl'da böyle bir metod yok; AttributeError sessizce
+    yutuluyordu ve QC hiç çalışmıyordu. Doğru metod adı `run_qc`.
+    """
+
+    def test_quality_control_exposes_run_qc_not_check(self):
+        from services.quality_control import QualityControl
+        assert hasattr(QualityControl, "run_qc"), "run_qc metodu bulunmalı"
+        assert not hasattr(QualityControl, "check"), (
+            "QualityControl.check yok — generator run_qc kullanmalı"
+        )
+
+    def test_social_generator_calls_run_qc(self):
+        import inspect
+        from services.social_video_generator import SocialVideoGenerator
+        # Sınıftaki QC çağrısını yapan metodu bul ve kaynağını incele.
+        src = inspect.getsource(SocialVideoGenerator)
+        assert "_qc.run_qc(" in src, "generator _qc.run_qc çağırmalı"
+        assert "_qc.check(" not in src, "eski _qc.check çağrısı geri gelmiş!"
+

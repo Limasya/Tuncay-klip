@@ -45,6 +45,15 @@ class Settings(BaseSettings):
     kick_archive_state_file: str = "data/kick_archive_state.json"
     kick_ytdlp_cookies_file: str = ""
 
+    # Content Intelligence Graph
+    intelligence_graph_state_file: str = "data/intelligence_graph_state.json"
+    intelligence_graph_auto_connect_interval: float = 30.0
+    intelligence_graph_moment_window: float = 10.0
+    intelligence_graph_moment_min_score: float = 0.6
+
+    # Knowledge Base
+    knowledge_base_state_file: str = "data/knowledge_base_state.json"
+
     # Redis
     redis_url: str = "redis://localhost:6379/0"
     event_bus_backend: str = "memory"  # "memory" or "redis"
@@ -95,6 +104,10 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = 1440
     auth_disabled: bool = False
 
+    # CORS — virgülle ayrılmış origin listesi. Prod'da gerçek origin'ler set edilmeli.
+    cors_origins: str = "http://localhost:8000,http://127.0.0.1:8000"
+    cors_allow_credentials: bool = False
+
     # LLM Providers
     openai_api_key: str = ""
     openai_model: str = "gpt-4o-mini"
@@ -126,12 +139,38 @@ class Settings(BaseSettings):
     textgen_model: str = "default"
     huggingface_api_token: str = ""
     huggingface_model: str = "HuggingFaceH4/zephyr-7b-beta"
+    nvidia_api_key: str = ""
+
+    @property
+    def cors_origins_list(self) -> list[str]:
+        """cors_origins string'ini temizlenmiş origin listesine çevirir."""
+        return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
 
     @model_validator(mode='after')
     def check_secret_key(self):
         # Enforce secret_key change only in production environment
         if self.secret_key == "change-me-in-production" and self.deployment_environment == "production":
             raise ValueError("secret_key must be set to a secure value in production")
+        return self
+
+    @model_validator(mode='after')
+    def check_auth_disabled(self):
+        # auth_disabled bir dev/test kolaylığıdır; production'da kimlik doğrulamayı
+        # kapatmak kritik güvenlik açığıdır — secret_key ile aynı mantıkta engelle.
+        if self.auth_disabled and self.deployment_environment == "production":
+            raise ValueError(
+                "auth_disabled=True production ortamında kullanılamaz "
+                "(kimlik doğrulama devre dışı bırakılamaz)."
+            )
+        return self
+
+    @model_validator(mode='after')
+    def check_cors_origins(self):
+        # Prod'da wildcard '*' origin (özellikle credentials ile) güvenlik açığıdır.
+        if self.deployment_environment == "production" and "*" in self.cors_origins_list:
+            raise ValueError(
+                "CORS origin '*' production'da kullanılamaz — açık origin listesi verin."
+            )
         return self
 
     @field_validator("kick_channel_slug", mode="before")
@@ -167,27 +206,6 @@ class Settings(BaseSettings):
 
     # Feature Flags (IP_PART6 Bölüm 37)
     feature_flags_file: str = ""  # opsiyonel JSON dosya yolu
-
-    # LLM Providers (API keys — boş bırakılırsa ilgili sağlayıcı devre dışı)
-    openai_api_key: str = ""
-    anthropic_api_key: str = ""
-    gemini_api_key: str = ""
-    mistral_api_key: str = ""
-    groq_api_key: str = ""
-    cohere_api_key: str = ""
-    together_api_key: str = ""
-    cerebras_api_key: str = ""
-    openrouter_api_key: str = ""
-    nvidia_api_key: str = ""
-    huggingface_api_token: str = ""
-
-    # Local LLM hosts (boş bırakılırsa devre dışı)
-    ollama_host: str = ""
-    vllm_host: str = ""
-    lm_studio_host: str = ""
-    localai_host: str = ""
-    textgen_host: str = ""
-
 
 
 @lru_cache()

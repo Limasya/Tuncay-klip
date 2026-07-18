@@ -12,9 +12,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg libgl1 libglib2.0-0 curl wget && \
     rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt && \
-    pip install --no-cache-dir pydantic-settings
+# Hangi bağımlılık setinin kurulacağı build-time seçilebilir:
+#   full monolit (varsayılan): requirements-ml.txt (base + ağır ML)
+#   hafif mikroservis        : --build-arg REQUIREMENTS=requirements-base.txt
+ARG REQUIREMENTS=requirements-ml.txt
+COPY requirements.txt requirements-base.txt requirements-ml.txt ./
+RUN pip install --no-cache-dir -r ${REQUIREMENTS}
 
 COPY . .
 

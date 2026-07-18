@@ -1,5 +1,12 @@
 """
-SQLAlchemy veritabanı modelleri - Klip, Yayıncı, Analiz sonuçları.
+SQLAlchemy ORM ŞEMASI — Klip, Yayıncı, Analiz sonuçları vb. tablo tanımları.
+
+Bu modül SADECE veri modellerini (declarative_base + tablo sınıfları) içerir.
+Projede tek `Base` burada tanımlıdır; alembic migration'ları bu şemayı takip eder.
+
+Bağlantı/engine/session yönetimi için bkz. services/database.py
+(iki dosya da `database.py` adını taşır ama sorumlulukları ayrıdır:
+ models.database = ŞEMA, services.database = BAĞLANTI).
 """
 from sqlalchemy import (
     Column, Integer, String, Float, Boolean, DateTime, Text,
@@ -94,6 +101,10 @@ class Clip(Base):
     chat_sentiment = Column(Float)
     tags = Column(JSON, default=list)
     classification_labels = Column(JSON, default=list)
+
+    # AI Critic (closed-loop QC) — render sonrası içerik/viral kalite skoru
+    critic_score = Column(Float, nullable=True)      # 0-10
+    critique = Column(JSON, nullable=True)           # CritiqueReport.to_dict()
 
     # Flags
     is_manual = Column(Boolean, default=False)

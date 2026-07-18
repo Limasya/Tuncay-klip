@@ -212,8 +212,8 @@ async def _probe_cloud(target: dict) -> DiscoveredProvider:
         available = True
     except urllib.error.HTTPError as e:
         available = e.code == 401  # 401 means key is valid but endpoint wrong
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("%s erişilebilirlik kontrolü başarısız: %s", target.get("name", check_url), e)
     latency_ms = (asyncio.get_event_loop().time() - start) * 1000
 
     return DiscoveredProvider(

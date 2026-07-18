@@ -192,8 +192,8 @@ class BeatSyncEngine:
         if audio_tmp and Path(audio_tmp).exists():
             try:
                 Path(audio_tmp).unlink()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("Geçici ses dosyası silinemedi (%s): %s", audio_tmp, e)
 
         return BeatGrid(
             bpm=tempo,
