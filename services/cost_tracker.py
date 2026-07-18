@@ -22,16 +22,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field
-
-logger = logging.getLogger("cost_tracker")
+from services.llm_model_defaults import get_gemini_model_default
 
 
 # ── Pricing per 1M tokens (USD) ──
 LLM_PRICING: Dict[str, Dict[str, float]] = {
     "openai": {"input": 0.15, "output": 0.60, "model": "gpt-4o-mini"},
     "anthropic": {"input": 0.25, "output": 1.25, "model": "claude-3-haiku"},
-    "gemini": {"input": 0.075, "output": 0.30, "model": "gemini-2.0-flash"},
+    "gemini": {"input": 0.075, "output": 0.30, "model": get_gemini_model_default()},
     "groq": {"input": 0.05, "output": 0.10, "model": "llama-3.1-70b"},
     "ollama": {"input": 0.0, "output": 0.0, "model": "local"},
     "deepseek": {"input": 0.14, "output": 0.28, "model": "deepseek-chat"},

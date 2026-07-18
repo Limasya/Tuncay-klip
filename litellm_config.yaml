@@ -140,6 +140,8 @@ tuncay_klip:
       signup_url: https://console.groq.com
       docs_url: https://console.groq.com/docs/rate-limits
 
+    # Gemini varsayılan model adının TEK kaynağı burasıdır.
+    # Kod: services/llm_model_defaults.get_gemini_model_default()
     gemini:
       enabled: true
       category: permanent_free_verified
