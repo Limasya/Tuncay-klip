@@ -13,7 +13,6 @@ Veri akışı:
 """
 from __future__ import annotations
 
-import json
 import logging
 import time
 from collections import defaultdict
@@ -22,6 +21,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
+from shared.utils.json_state import JsonStateStore
 
 logger = logging.getLogger("critic_analytics")
 
@@ -88,7 +88,7 @@ class CriticAnalytics:
     def __init__(self, state_path: str | Path | None = None):
         self._rounds: List[CriticRoundRecord] = []
         self._performance: List[ClipPerformanceRecord] = []
-        self._state_path = Path(state_path or "data/critic_analytics_state.json")
+        self._state = JsonStateStore(state_path or "data/critic_analytics_state.json")
 
     # ── Round Recording ──
 
@@ -378,38 +378,26 @@ class CriticAnalytics:
     # ── Persistence ──
 
     async def save(self) -> None:
-        state = {
+        await self._state.save({
             "updated_at": datetime.now(timezone.utc).isoformat(),
             "rounds": [r.model_dump() for r in self._rounds[-500:]],
             "performance": [p.model_dump() for p in self._performance[-200:]],
-        }
-        self._state_path.parent.mkdir(parents=True, exist_ok=True)
-        temp = self._state_path.with_suffix(".tmp")
-        await asyncio.to_thread(
-            temp.write_text,
-            json.dumps(state, ensure_ascii=False, indent=2, default=str),
-            "utf-8",
-        )
-        await asyncio.to_thread(temp.replace, self._state_path)
+        })
         logger.info(
             "Critic analytics saved: %d rounds, %d performance records",
             len(self._rounds), len(self._performance),
         )
 
     async def load(self) -> None:
-        if not self._state_path.exists():
+        state = await self._state.load()
+        if not state:
             return
-        try:
-            data = await asyncio.to_thread(self._state_path.read_text, encoding="utf-8")
-            state = json.loads(data)
-            self._rounds = [CriticRoundRecord(**r) for r in state.get("rounds", [])]
-            self._performance = [ClipPerformanceRecord(**p) for p in state.get("performance", [])]
-            logger.info(
-                "Critic analytics loaded: %d rounds, %d perf",
-                len(self._rounds), len(self._performance),
-            )
-        except Exception as e:
-            logger.warning("Critic analytics load failed: %s", e)
+        self._rounds = [CriticRoundRecord(**r) for r in state.get("rounds", [])]
+        self._performance = [ClipPerformanceRecord(**p) for p in state.get("performance", [])]
+        logger.info(
+            "Critic analytics loaded: %d rounds, %d perf",
+            len(self._rounds), len(self._performance),
+        )
 
 
 # ── Helpers ──
@@ -444,8 +432,6 @@ def _correlation_strength(r: float) -> str:
         return "weak"
     return "negligible"
 
-
-import asyncio
 
 # Singleton
 critic_analytics = CriticAnalytics()

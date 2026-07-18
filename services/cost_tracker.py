@@ -12,8 +12,6 @@ Features:
 """
 from __future__ import annotations
 
-import asyncio
-import json
 import logging
 import time
 from collections import defaultdict
@@ -22,7 +20,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from pydantic import BaseModel, Field
+
 from services.llm_model_defaults import get_gemini_model_default
+from shared.utils.json_state import JsonStateStore
 
 
 # ── Pricing per 1M tokens (USD) ──
@@ -74,7 +75,7 @@ class CostTracker:
 
     def __init__(self, state_path: str | Path | None = None):
         self._records: List[CostRecord] = []
-        self._state_path = Path(state_path or "data/cost_tracker_state.json")
+        self._state = JsonStateStore(state_path or "data/cost_tracker_state.json")
         self._record_counter: int = 0
 
     # ── Recording ──
@@ -303,30 +304,18 @@ class CostTracker:
     # ── Persistence ──
 
     async def save(self) -> None:
-        state = {
+        await self._state.save({
             "updated_at": datetime.now(timezone.utc).isoformat(),
             "records": [r.model_dump() for r in self._records[-2000:]],
             "counter": self._record_counter,
-        }
-        self._state_path.parent.mkdir(parents=True, exist_ok=True)
-        temp = self._state_path.with_suffix(".tmp")
-        await asyncio.to_thread(
-            temp.write_text,
-            json.dumps(state, ensure_ascii=False, indent=2, default=str),
-            "utf-8",
-        )
-        await asyncio.to_thread(temp.replace, self._state_path)
+        })
 
     async def load(self) -> None:
-        if not self._state_path.exists():
+        state = await self._state.load()
+        if not state:
             return
-        try:
-            data = await asyncio.to_thread(self._state_path.read_text, encoding="utf-8")
-            state = json.loads(data)
-            self._records = [CostRecord(**r) for r in state.get("records", [])]
-            self._record_counter = state.get("counter", len(self._records))
-        except Exception as e:
-            logger.warning("Cost tracker state load failed: %s", e)
+        self._records = [CostRecord(**r) for r in state.get("records", [])]
+        self._record_counter = state.get("counter", len(self._records))
 
 
 # Singleton

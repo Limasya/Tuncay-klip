@@ -69,6 +69,7 @@ class ColorPreset(str, Enum):
     VINTAGE = "vintage"
     HIGH_CONTRAST = "high_contrast"
     DESATURATED = "desaturated"
+    PREMIUM_DARK = "premium_dark"
 
 
 # --- Pydantic v2 Config helper ---
@@ -172,6 +173,8 @@ class VisualEffect(BaseModel):
     chromatic_aberration: float = Field(default=0.0, ge=0, le=1)
     shake: float = Field(default=0.0, ge=0, le=1)
     motion_blur: float = Field(default=0.0, ge=0, le=1)
+    frosted_glass: bool = False
+    light_leaks: float = Field(default=0.0, ge=0, le=1)
 
 
 class ThumbnailSpec(BaseModel):

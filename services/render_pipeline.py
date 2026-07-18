@@ -21,6 +21,9 @@ from services.edit_spec import (
     LowerThirdConfig, EndScreenConfig, SplitScreenConfig,
     EmotionArcConfig, SceneDetectionConfig,
 )
+from services.filter_nodes import (
+    ColorGradingNode, MotionBlurNode, FrostedGlassNode
+)
 
 logger = logging.getLogger(__name__)
 
@@ -190,31 +193,21 @@ class RenderPipeline:
             if pts_filter:
                 video_filters.append(pts_filter)
 
-        # 3. Color grading
+        # 3. Color grading (Using Modular Node)
         cg = spec.color_grading
-        eq_parts = []
-        if cg.preset != ColorPreset.NONE:
-            preset_eq = COLOR_PRESET_EQ.get(cg.preset, {})
-            cg = cg.copy(update={
-                "brightness": cg.brightness + preset_eq.get("brightness", 0),
-                "contrast": cg.contrast * preset_eq.get("contrast", 1),
-                "saturation": cg.saturation * preset_eq.get("saturation", 1),
-                "gamma": cg.gamma * preset_eq.get("gamma", 1),
-            })
+        # If preset is none, we just pass the values, but if it has a preset,
+        # the ColorGradingNode handles it automatically! We just pass preset.value
+        cg_node = ColorGradingNode(
+            preset=cg.preset.value if cg.preset != ColorPreset.NONE else "",
+            brightness=cg.brightness,
+            contrast=cg.contrast,
+            saturation=cg.saturation,
+            gamma=cg.gamma
+        )
+        if cg_node.is_active:
+            video_filters.append(cg_node.build())
 
-        if cg.brightness != 0:
-            eq_parts.append(f"brightness={cg.brightness:.3f}")
-        if cg.contrast != 1.0:
-            eq_parts.append(f"contrast={cg.contrast:.3f}")
-        if cg.saturation != 1.0:
-            eq_parts.append(f"saturation={cg.saturation:.3f}")
-        if cg.gamma != 1.0:
-            eq_parts.append(f"gamma={cg.gamma:.3f}")
-
-        if eq_parts:
-            video_filters.append(f"eq={':'.join(eq_parts)}")
-
-        # 4. Visual effects
+        # 4. Visual effects (Using Nodes where applicable)
         fx = spec.effects
         if fx.vignette > 0:
             video_filters.append(
@@ -236,6 +229,17 @@ class RenderPipeline:
             video_filters.append(self._build_chromatic_aberration(fx.chromatic_aberration))
         if fx.shake > 0:
             video_filters.append(self._build_shake_filter(fx.shake))
+            
+        # --- NEW PREMIUM MODULAR NODES ---
+        if fx.motion_blur > 0:
+            mb_node = MotionBlurNode(frames=max(3, int(fx.motion_blur * 10)))
+            if mb_node.is_active:
+                video_filters.append(mb_node.build())
+                
+        if getattr(fx, 'frosted_glass', False):
+            fg_node = FrostedGlassNode()
+            if fg_node.is_active:
+                video_filters.append(fg_node.build())
 
         # 5. Watermark (drawtext)
         if spec.watermark and spec.watermark.text:

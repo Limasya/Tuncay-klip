@@ -12,7 +12,6 @@ ASLA VOD indirmez, sadece clip metadata'sini toplar.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
@@ -20,6 +19,7 @@ from typing import Any, Optional
 
 from config import get_settings
 from services.kick_api import kick_service
+from shared.utils.json_state import JsonStateStore
 
 logger = logging.getLogger("kick_clips_collector")
 
@@ -34,7 +34,10 @@ class KickClipsCollector:
     ):
         self._settings = get_settings()
         self._kick = kick_service
-        self._state_path = Path(state_path or "data/kick_clips_state.json")
+        self._state_store = JsonStateStore(
+            state_path or "data/kick_clips_state.json",
+            default_factory=self._default_state,
+        )
         self._check_interval = check_interval
         self._monitor_task: Optional[asyncio.Task] = None
         self._is_running = False
@@ -249,7 +252,7 @@ class KickClipsCollector:
             "channel_url": f"https://kick.com/{self._settings.kick_channel_slug}",
             "check_interval": self._check_interval,
             "stats": self._stats.copy(),
-            "state_file": str(self._state_path),
+            "state_file": str(self._state_store.path),
         }
 
     # --- State Management ---
@@ -264,30 +267,16 @@ class KickClipsCollector:
         }
 
     async def _read_state(self) -> dict[str, Any]:
-        if not self._state_path.exists():
+        state = await self._state_store.load()
+        if not isinstance(state, dict):
             return self._default_state()
-        try:
-            data = await asyncio.to_thread(self._state_path.read_text, encoding="utf-8")
-            state = json.loads(data)
-            if not isinstance(state, dict):
-                return self._default_state()
-            if state.get("channel") != self._settings.kick_channel_slug:
-                return self._default_state()
-            return state
-        except (OSError, json.JSONDecodeError) as e:
-            logger.warning("State okunamadi: %s", e)
+        if state.get("channel") != self._settings.kick_channel_slug:
             return self._default_state()
+        return state
 
     async def _write_state(self, state: dict[str, Any]) -> None:
         state["updated_at"] = datetime.now(timezone.utc).isoformat()
-        self._state_path.parent.mkdir(parents=True, exist_ok=True)
-        temp_path = self._state_path.with_suffix(".tmp")
-        await asyncio.to_thread(
-            temp_path.write_text,
-            json.dumps(state, ensure_ascii=False, indent=2, default=str),
-            "utf-8",
-        )
-        await asyncio.to_thread(temp_path.replace, self._state_path)
+        await self._state_store.save(state)
 
 
 # Singleton

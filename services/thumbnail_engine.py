@@ -10,6 +10,8 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass
 
+from services.face_tracker import FaceTracker
+
 logger = logging.getLogger(__name__)
 
 THUMBS_DIR = Path("data/thumbnails")
@@ -68,26 +70,32 @@ class ThumbnailEngine:
         }
         w, h = sizes.get(platform, (1080, 1920))
 
-        # En iyi kareyi seç (yüz varsa yüz içeren)
+        # Yüz algılama ile en iyi kareyi seç (yüz koordinatlarıyla birlikte)
+        face_x, face_y = 0.5, 0.5  # varsayılan merkez
         if time_point is None:
-            time_point = await self._find_best_frame(video_path)
+            time_point, face_x, face_y = await self._find_best_frame(video_path)
 
         # Thumbnail oluştur
         filters = []
 
-        # 1. Scale + crop
+        # 1. Smart Crop + Scale
         if platform in ("tiktok", "youtube_shorts", "instagram_reels"):
+            # 9:16 crop, fakat face_x merkezli
             filters.append(
-                f"crop=ih*9/16:ih,"
+                f"crop=ih*9/16:ih:max(0\\, min(iw-ih*9/16\\, iw*{face_x} - (ih*9/16)/2)):0,"
                 f"scale={w}:{h}:force_original_aspect_ratio=decrease,"
                 f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:black"
             )
         elif platform == "instagram_feed":
+            # 1:1 crop, face_x ve face_y merkezli
             filters.append(
-                f"crop='min(iw,ih)':'min(iw,ih)',"
+                f"crop='min(iw,ih)':'min(iw,ih)':"
+                f"max(0\\, min(iw-min(iw,ih)\\, iw*{face_x} - min(iw,ih)/2)):"
+                f"max(0\\, min(ih-min(iw,ih)\\, ih*{face_y} - min(iw,ih)/2)),"
                 f"scale={w}:{h}"
             )
         else:
+            # 16:9 veya yatay formatlar
             filters.append(
                 f"scale={w}:{h}:force_original_aspect_ratio=decrease,"
                 f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:black"
@@ -275,23 +283,35 @@ class ThumbnailEngine:
 
         return await self._run_ffmpeg(cmd, output_path)
 
-    async def _find_best_frame(self, video_path: str) -> float:
+    async def _find_best_frame(self, video_path: str) -> Tuple[float, float, float]:
         """
-        En iyi kare zamanını bulur.
-        Basit yaklaşım: 1/4 ve 3/4 zamanlarını dene.
+        En iyi kare zamanını bulur ve (time, face_x, face_y) döndürür.
+        OpenCV & MediaPipe ile Saliency/Yüz analizi yapar.
         """
         info = await self._get_video_info(video_path)
-        duration = info.get("duration", 10.0)
+        duration = float(info.get("duration", 10.0))
+        default_time = duration * 0.5
+        
+        try:
+            tracker = FaceTracker()
+            trajectory = await tracker.get_face_trajectory(video_path, fps=2)
+            
+            if "error" not in trajectory and isinstance(trajectory, list) and len(trajectory) > 0:
+                # En büyük yüze (size) sahip olan frame'i bul (en net yüz)
+                best_frame = max(trajectory, key=lambda x: x.get("size", 0.0))
+                
+                time_point = float(best_frame.get("time", default_time))
+                face_x = float(best_frame.get("x", 0.5))
+                face_y = float(best_frame.get("y", 0.5))
+                
+                logger.info(f"Smart Thumbnail seçildi -> Zaman: {time_point}s, Yüz X: {face_x}")
+                return time_point, face_x, face_y
+                
+        except Exception as e:
+            logger.warning(f"FaceTracker hatası, varsayılan kareye düşülüyor: {e}")
 
-        # 3 aday kare
-        candidates = [
-            duration * 0.25,
-            duration * 0.5,
-            duration * 0.75,
-        ]
-
-        # Ortalamayı al (gerçek kullanımda yüz algılama ile seçim yapılır)
-        return candidates[1]
+        # Eğer yüz bulunamazsa veya hata olursa videonun %50'sini ve ortasını dön
+        return default_time, 0.5, 0.5
 
     async def _get_video_info(self, path: str) -> Dict:
         """Video dosyası bilgilerini alır."""

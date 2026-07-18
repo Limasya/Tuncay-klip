@@ -12,8 +12,6 @@ Features:
 """
 from __future__ import annotations
 
-import asyncio
-import json
 import logging
 import statistics
 import time
@@ -24,6 +22,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
+from shared.utils.json_state import JsonStateStore
 
 logger = logging.getLogger("quality_dashboard")
 
@@ -97,7 +96,7 @@ class QualityDashboard:
     def __init__(self, state_path: str | Path | None = None):
         self._snapshots: List[QualitySnapshot] = []
         self._alerts: List[QualityAlert] = []
-        self._state_path = Path(state_path or "data/quality_dashboard_state.json")
+        self._state = JsonStateStore(state_path or "data/quality_dashboard_state.json")
 
         # Real-time tracking
         self._recent_scores: deque = deque(maxlen=500)
@@ -431,34 +430,22 @@ class QualityDashboard:
     # ── Persistence ──
 
     async def save(self) -> None:
-        state = {
+        await self._state.save({
             "updated_at": datetime.now(timezone.utc).isoformat(),
             "snapshots": [s.model_dump() for s in self._snapshots[-500:]],
             "alerts": [a.model_dump() for a in self._alerts[-100:]],
-        }
-        self._state_path.parent.mkdir(parents=True, exist_ok=True)
-        temp = self._state_path.with_suffix(".tmp")
-        await asyncio.to_thread(
-            temp.write_text,
-            json.dumps(state, ensure_ascii=False, indent=2, default=str),
-            "utf-8",
-        )
-        await asyncio.to_thread(temp.replace, self._state_path)
+        })
 
     async def load(self) -> None:
-        if not self._state_path.exists():
+        state = await self._state.load()
+        if not state:
             return
-        try:
-            data = await asyncio.to_thread(self._state_path.read_text, encoding="utf-8")
-            state = json.loads(data)
-            self._snapshots = [QualitySnapshot(**s) for s in state.get("snapshots", [])]
-            self._alerts = [QualityAlert(**a) for a in state.get("alerts", [])]
-            self._recent_scores = deque(
-                [s.overall_score for s in self._snapshots[-500:]],
-                maxlen=500,
-            )
-        except Exception as e:
-            logger.warning("Quality dashboard state load failed: %s", e)
+        self._snapshots = [QualitySnapshot(**s) for s in state.get("snapshots", [])]
+        self._alerts = [QualityAlert(**a) for a in state.get("alerts", [])]
+        self._recent_scores = deque(
+            [s.overall_score for s in self._snapshots[-500:]],
+            maxlen=500,
+        )
 
 
 # Singleton

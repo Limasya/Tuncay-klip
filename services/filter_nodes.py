@@ -124,7 +124,7 @@ class ScaleNode(VideoFilterNode):
 
 
 class ColorGradingNode(VideoFilterNode):
-    """Renk ayarlama (brightness, contrast, saturation, gamma)."""
+    """Renk ayarlama (brightness, contrast, saturation, gamma) ve sinematik LUT/Curves."""
 
     PRESETS = {
         "vibrant": {"brightness": 0.02, "contrast": 1.1, "saturation": 1.3, "gamma": 1.0},
@@ -134,11 +134,14 @@ class ColorGradingNode(VideoFilterNode):
         "vintage": {"brightness": 0.02, "contrast": 1.1, "saturation": 0.7, "gamma": 1.1},
         "high_contrast": {"brightness": -0.03, "contrast": 1.4, "saturation": 0.9, "gamma": 1.0},
         "desaturated": {"brightness": 0.0, "contrast": 1.1, "saturation": 0.4, "gamma": 1.0},
+        "premium_dark": {"brightness": -0.04, "contrast": 1.25, "saturation": 1.15, "gamma": 0.9},
     }
 
     def __init__(self, preset: str = "", brightness: float = 0.0,
-                 contrast: float = 1.0, saturation: float = 1.0, gamma: float = 1.0):
+                 contrast: float = 1.0, saturation: float = 1.0, gamma: float = 1.0,
+                 lut_path: str = ""):
         super().__init__(name="color_grading")
+        self.lut_path = lut_path
         if preset and preset in self.PRESETS:
             p = self.PRESETS[preset]
             self.brightness = p["brightness"]
@@ -152,8 +155,43 @@ class ColorGradingNode(VideoFilterNode):
             self.gamma = gamma
 
     def build(self) -> str:
+        if self.lut_path:
+            return f"lut3d=file='{self.lut_path}'"
+            
         return (f"eq=brightness={self.brightness}:contrast={self.contrast}"
                 f":saturation={self.saturation}:gamma={self.gamma}")
+
+
+class MotionBlurNode(VideoFilterNode):
+    """
+    Hızlı sahnelerde sinematik akıcılık sağlayan hareket bulanıklığı.
+    'tmix' filtresini kullanarak birbirini takip eden kareleri harmanlar.
+    """
+    def __init__(self, frames: int = 3):
+        super().__init__(name="motion_blur")
+        self.frames = frames
+
+    def build(self) -> str:
+        if self.frames <= 1:
+            return ""
+        # tmix: frameleri birbirine karistirarak motion blur hissi yaratir
+        return f"tmix=frames={self.frames}:weights=\"1\""
+
+
+class FrostedGlassNode(VideoFilterNode):
+    """
+    Videoyu arkaya alıp bulanıklaştıran ve üzerini karartan premium glassmorphism arka plan.
+    (Genelde split-screen veya padding işlemleri için complex filtergraph içinde kullanılır).
+    Bu node sadece videoyu blurlayıp karartır.
+    """
+    def __init__(self, blur_radius: int = 40, darken_amount: float = 0.6):
+        super().__init__(name="frosted_glass")
+        self.blur_radius = blur_radius
+        self.darken_amount = darken_amount
+
+    def build(self) -> str:
+        # boxblur veya gblur ile yuksek bulaniklik, eq ile karartma
+        return f"boxblur={self.blur_radius}:5,eq=brightness=-{self.darken_amount}"
 
 
 class VignetteNode(VideoFilterNode):

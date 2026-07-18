@@ -36,6 +36,7 @@ from services.ai_critic import ai_critic
 from services.critic_analytics import critic_analytics
 from services.audio_analyzer import audio_analyzer
 from services.kick_archive import TARGET_CHANNEL_URL, is_target_vod_url
+from shared.utils.video_processor import video_processor
 
 logger = logging.getLogger("master_pipeline")
 _scene_detect = SceneDetectionEngine()
@@ -197,9 +198,21 @@ class MasterPipeline:
         return youtube_downloader.get_strategies()
 
     async def _slice_video(self, input_video: str, start: float, end: float, index: int) -> str:
-        """Uzun yayindan belirtilen kesimi FFmpeg ile kopyalayip ayirir."""
+        """Uzun yayindan belirtilen kesimi Rust binary veya FFmpeg ile kopyalayip ayirir."""
         out_path = self.temp_dir / f"{Path(input_video).stem}_clip_{index}.mp4"
         dur = max(1.0, end - start)
+
+        if video_processor.available:
+            result = await video_processor.clip(
+                input_path=input_video,
+                output_path=str(out_path),
+                start=start,
+                duration=dur,
+            )
+            if result.get("success"):
+                return str(out_path)
+            logger.warning("Rust clip failed, falling back to FFmpeg: %s", result.get("error"))
+
         cmd = [
             "ffmpeg", "-y",
             "-ss", str(start),
@@ -215,7 +228,7 @@ class MasterPipeline:
         return str(out_path)
 
     async def _export_clip(self, input_path: str, fmt: str, custom_ffmpeg: Optional[str] = None) -> str:
-        """Klip'i belirtilen formata export et."""
+        """Klip'i belirtilen formata export et — Rust binary veya FFmpeg."""
         if fmt == "raw" or fmt not in EXPORT_FORMATS:
             return input_path
 
@@ -224,6 +237,24 @@ class MasterPipeline:
         max_dur = spec.get("max_duration")
 
         out_path = str(self.export_dir / f"{Path(input_path).stem}_{fmt}.mp4")
+
+        platform_map = {"social": "tiktok", "landscape": "youtube", "landscape_wide": "youtube"}
+        platform = platform_map.get(fmt)
+
+        if video_processor.available and platform and not custom_ffmpeg:
+            vf = f"scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2"
+            if max_dur:
+                vf += f",trim=duration={max_dur}"
+                vf += ",setpts=PTS-STARTPTS"
+            result = await video_processor.export(
+                input_path=input_path,
+                output_path=out_path,
+                platform=platform,
+                filter=vf,
+            )
+            if result.get("success"):
+                return out_path
+            logger.warning("Rust export failed, falling back to FFmpeg: %s", result.get("error"))
 
         if custom_ffmpeg:
             cmd_parts = ["ffmpeg", "-y", "-i", input_path] + custom_ffmpeg.split() + [out_path]

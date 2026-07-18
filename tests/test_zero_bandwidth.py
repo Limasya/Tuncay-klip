@@ -379,7 +379,8 @@ class TestCloudflareDetection:
         clipper._cf_alert_logged = False
         clipper._cf_last_discord_alert_time = 0
 
-        with patch("services.zero_bandwidth_clipper.ZeroBandwidthClipper._send_cf_alert") as mock_alert:
+        with patch("services.zero_bandwidth.alerting._send_cf_alert") as mock_alert:
+            mock_alert.return_value = 0
             # 5 hata, hepsi ayni anda
             for _ in range(5):
                 clipper._check_cloudflare_block(403, "blocked")
@@ -395,7 +396,8 @@ class TestCloudflareDetection:
         # Cooldown'i 16 dk once baslatmis gibi yap
         clipper._cf_last_discord_alert_time = _time.monotonic() - 1000
 
-        with patch("services.zero_bandwidth_clipper.ZeroBandwidthClipper._send_cf_alert") as mock_alert:
+        with patch("services.zero_bandwidth.alerting._send_cf_alert") as mock_alert:
+            mock_alert.return_value = _time.monotonic()
             clipper._check_cloudflare_block(403, "blocked")
             assert mock_alert.call_count == 1
 

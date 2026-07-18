@@ -7,7 +7,6 @@ accepts a channel slug or arbitrary source URL from an API caller.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
@@ -16,6 +15,7 @@ from urllib.parse import urlparse
 
 from config import get_settings
 from services.kick_api import kick_service
+from shared.utils.json_state import JsonStateStore
 
 if TYPE_CHECKING:
     from services.kick_api import KickAPIService
@@ -62,7 +62,10 @@ class KickArchiveService:
         settings = get_settings()
         self._kick_client = kick_client or kick_service
         self._pipeline = pipeline
-        self._state_path = Path(state_path or settings.kick_archive_state_file)
+        self._state_store = JsonStateStore(
+            state_path or settings.kick_archive_state_file,
+            default_factory=self._default_state,
+        )
         self._sync_lock = asyncio.Lock()
         self._active_task: asyncio.Task | None = None
         self._scheduler_task: asyncio.Task | None = None
@@ -86,35 +89,17 @@ class KickArchiveService:
             "vods": {},
         }
 
-    def _read_state_sync(self) -> dict[str, Any]:
-        if not self._state_path.exists():
-            return self._default_state()
-        try:
-            state = json.loads(self._state_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as exc:
-            logger.warning("Archive state could not be read: %s", exc)
-            return self._default_state()
+    async def _read_state(self) -> dict[str, Any]:
+        state = await self._state_store.load()
         if not isinstance(state, dict) or state.get("channel") != TARGET_CHANNEL_SLUG:
             return self._default_state()
         if not isinstance(state.get("vods"), dict):
             state["vods"] = {}
         return state
 
-    def _write_state_sync(self, state: dict[str, Any]) -> None:
-        self._state_path.parent.mkdir(parents=True, exist_ok=True)
-        state["updated_at"] = self._timestamp()
-        temp_path = self._state_path.with_suffix(f"{self._state_path.suffix}.tmp")
-        temp_path.write_text(
-            json.dumps(state, ensure_ascii=False, indent=2, default=str),
-            encoding="utf-8",
-        )
-        temp_path.replace(self._state_path)
-
-    async def _read_state(self) -> dict[str, Any]:
-        return await asyncio.to_thread(self._read_state_sync)
-
     async def _write_state(self, state: dict[str, Any]) -> None:
-        await asyncio.to_thread(self._write_state_sync, state)
+        state["updated_at"] = self._timestamp()
+        await self._state_store.save(state)
 
     async def list_public_vods(self, limit: int) -> list[dict[str, Any]]:
         """Fetch public VOD metadata and reject unexpected source URLs."""
@@ -439,7 +424,7 @@ class KickArchiveService:
             "channel_url": TARGET_CHANNEL_URL,
             "running": self._sync_lock.locked() or bool(self._active_task and not self._active_task.done()),
             "scheduler_running": bool(self._scheduler_task and not self._scheduler_task.done()),
-            "state_file": str(self._state_path),
+            "state_file": str(self._state_store.path),
             "vod_counts": counts,
             "last_report": self._last_report,
             "updated_at": state.get("updated_at"),

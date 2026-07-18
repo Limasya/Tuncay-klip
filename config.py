@@ -76,7 +76,7 @@ class Settings(BaseSettings):
     s3_bucket_name: str = "klip-storage"
 
     # Whisper
-    whisper_model_size: str = "base"
+    whisper_model_size: str = "small"
 
     # Emotion
     emotion_threshold: float = 0.7

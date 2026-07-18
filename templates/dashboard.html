@@ -1,133 +1,135 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Tuncay-Klip Dashboard</title>
-<style>
-  :root { --bg: #0f0f0f; --card: #1a1a2e; --accent: #e94560; --accent2: #0f3460; --text: #eee; --muted: #888; --green: #00e676; --yellow: #ffd600; --red: #ff1744; }
-  * { margin:0; padding:0; box-sizing:border-box; }
-  body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--bg); color: var(--text); min-height:100vh; }
-  .header { background: linear-gradient(135deg, var(--accent2), #16213e); padding: 16px 24px; display:flex; justify-content:space-between; align-items:center; border-bottom: 2px solid var(--accent); }
-  .header h1 { font-size: 20px; } .header h1 span { color: var(--accent); }
-  .status-badge { padding: 4px 12px; border-radius: 12px; font-size: 12px; font-weight: 600; }
-  .status-live { background: var(--green); color: #000; } .status-off { background: var(--red); color: #fff; }
-  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; padding: 20px; }
-  .card { background: var(--card); border-radius: 12px; padding: 20px; border: 1px solid #2a2a4a; }
-  .card h3 { font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; }
-  .card .value { font-size: 32px; font-weight: 700; }
-  .card .sub { font-size: 12px; color: var(--muted); margin-top: 4px; }
-  .card.accent .value { color: var(--accent); }
-  .card.green .value { color: var(--green); }
-  .card.yellow .value { color: var(--yellow); }
-  .section { padding: 0 20px 20px; }
-  .section h2 { font-size: 16px; margin-bottom: 12px; color: var(--accent); }
-  .table { width: 100%; border-collapse: collapse; background: var(--card); border-radius: 8px; overflow: hidden; }
-  .table th, .table td { padding: 10px 14px; text-align: left; border-bottom: 1px solid #2a2a4a; font-size: 13px; }
-  .table th { background: #16213e; color: var(--muted); font-weight: 600; text-transform: uppercase; font-size: 11px; letter-spacing: 1px; }
-  .table tr:hover { background: #1f1f3a; }
-  .badge { display:inline-block; padding:2px 8px; border-radius:8px; font-size:11px; font-weight:600; }
-  .badge-green { background:#00e67633; color:var(--green); } .badge-yellow { background:#ffd60033; color:var(--yellow); } .badge-red { background:#ff174433; color:var(--red); }
-  .log { max-height: 300px; overflow-y: auto; font-family: 'Cascadia Code', 'Fira Code', monospace; font-size: 12px; background: #0a0a1a; border-radius: 8px; padding: 12px; }
-  .log-entry { padding: 3px 0; border-bottom: 1px solid #1a1a2a; display: flex; gap: 8px; }
-  .log-time { color: var(--muted); min-width: 80px; } .log-event { color: var(--accent); min-width: 140px; } .log-msg { color: var(--text); }
-  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; padding: 0 20px 20px; }
-  @media (max-width: 768px) { .two-col { grid-template-columns: 1fr; } }
-  .sparkline { display: flex; align-items: flex-end; gap: 2px; height: 40px; margin-top: 8px; }
-  .spark-bar { flex: 1; background: var(--accent); border-radius: 2px; min-width: 4px; transition: height 0.3s; }
-  #ws-status { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 6px; }
-  .ws-connected { background: var(--green); } .ws-disconnected { background: var(--red); }
-</style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tuncay-Klip Intelligence Dashboard</title>
+    <!-- We load custom styles -->
+    <link rel="stylesheet" href="/static/style.css">
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
 </head>
 <body>
 
-<div class="header">
-  <h1><span>Tuncay-Klip</span> Dashboard</h1>
-  <div>
-    <span id="ws-status" class="ws-disconnected"></span>
-    <span class="status-badge" id="stream-status">OFFLINE</span>
-  </div>
-</div>
+<div class="app-container">
+    
+    <header class="glass-panel header">
+        <h1>
+            <i data-lucide="zap" class="icon-accent" style="color: var(--accent-primary)"></i>
+            <span>Tuncay-Klip</span> Intelligence
+        </h1>
+        <div style="display: flex; align-items: center; gap: 16px;">
+            <div style="display: flex; align-items: center; gap: 8px;">
+                <span id="ws-status" class="dot" style="background: var(--danger)"></span>
+                <span style="font-size: 13px; color: var(--text-secondary);">WS Status</span>
+            </div>
+            <div class="status-badge status-off" id="stream-status">
+                <span class="dot" id="stream-dot"></span> OFFLINE
+            </div>
+        </div>
+    </header>
 
-<div class="grid" id="metrics-grid">
-  <div class="card accent">
-    <h3>Clips Today</h3>
-    <div class="value" id="m-clips">0</div>
-    <div class="sub">auto-generated</div>
-  </div>
-  <div class="card green">
-    <h3>Active Connections</h3>
-    <div class="value" id="m-ws">0</div>
-    <div class="sub">WebSocket clients</div>
-  </div>
-  <div class="card">
-    <h3>API Requests</h3>
-    <div class="value" id="m-requests">0</div>
-    <div class="sub" id="m-rps">0 req/s</div>
-  </div>
-  <div class="card yellow">
-    <h3>AI Pipeline</h3>
-    <div class="value" id="m-pipeline">0</div>
-    <div class="sub">total runs</div>
-  </div>
-  <div class="card">
-    <h3>Event Bus</h3>
-    <div class="value" id="m-events">0</div>
-    <div class="sub">events dispatched</div>
-  </div>
-  <div class="card green">
-    <h3>LLM Engine</h3>
-    <div class="value" id="m-llm-providers">0</div>
-    <div class="sub">active providers</div>
-  </div>
-  <div class="card accent">
-    <h3>Vector Store</h3>
-    <div class="value" id="m-vector-clips">0</div>
-    <div class="sub">clips embedded</div>
-  </div>
-</div>
-
-<div class="two-col">
-  <div>
-    <div class="section">
-      <h2>Services</h2>
-      <table class="table" id="services-table">
-        <thead><tr><th>Service</th><th>Status</th><th>Uptime</th></tr></thead>
-        <tbody id="services-body"></tbody>
-      </table>
+    <div class="metrics-grid" id="metrics-grid">
+        <div class="glass-card accent">
+            <div class="card-title"><i data-lucide="video" size="16"></i> Clips Today</div>
+            <div class="card-value" id="m-clips">0</div>
+            <div class="card-sub">AI auto-generated</div>
+        </div>
+        <div class="glass-card green">
+            <div class="card-title"><i data-lucide="users" size="16"></i> Active Conns</div>
+            <div class="card-value" id="m-ws">0</div>
+            <div class="card-sub">WebSocket clients</div>
+        </div>
+        <div class="glass-card">
+            <div class="card-title"><i data-lucide="activity" size="16"></i> API Requests</div>
+            <div class="card-value" id="m-requests">0</div>
+            <div class="card-sub" id="m-rps">0 req/s</div>
+        </div>
+        <div class="glass-card yellow">
+            <div class="card-title"><i data-lucide="cpu" size="16"></i> AI Pipeline</div>
+            <div class="card-value" id="m-pipeline">0</div>
+            <div class="card-sub">total runs</div>
+        </div>
+        <div class="glass-card">
+            <div class="card-title"><i data-lucide="git-merge" size="16"></i> Event Bus</div>
+            <div class="card-value" id="m-events">0</div>
+            <div class="card-sub">events dispatched</div>
+        </div>
+        <div class="glass-card green">
+            <div class="card-title"><i data-lucide="brain" size="16"></i> LLM Engine</div>
+            <div class="card-value" id="m-llm-providers">0</div>
+            <div class="card-sub">active providers</div>
+        </div>
+        <div class="glass-card accent">
+            <div class="card-title"><i data-lucide="database" size="16"></i> Vector Store</div>
+            <div class="card-value" id="m-vector-clips">0</div>
+            <div class="card-sub">clips embedded</div>
+        </div>
     </div>
-  </div>
-  <div>
-    <div class="section">
-      <h2>Recent Events</h2>
-      <div class="log" id="event-log"></div>
+
+    <div class="glass-panel pipeline-section">
+        <h2 class="section-title">Otonom Ajans (Master Pipeline) 🚀</h2>
+        <p class="section-desc">
+            YouTube, Twitch veya Kick VOD linkini girin. Yapay Zeka videoyu anlasın, viral klipleri kessin, yüz takibi yapıp sansürlesin ve emojili altyazılarını çıkarıp kapak fotoğrafıyla size teslim etsin.
+        </p>
+        
+        <div class="input-group">
+            <input type="text" id="vod-streamer" placeholder="Yayıncı adı (ör: Tuncay)">
+            <input type="text" id="vod-game" placeholder="Oyun adı (ör: Valorant)">
+        </div>
+        
+        <div class="action-row">
+            <input type="text" id="vod-url" placeholder="https://youtube.com/watch?v=..." style="flex: 1;">
+            <button onclick="startMasterPipeline()" id="pipeline-btn" class="btn-primary">
+                <span style="display:flex;align-items:center;gap:8px;">
+                    <i data-lucide="play" size="18"></i> Otomatik Üret
+                </span>
+            </button>
+        </div>
+        
+        <div id="pipeline-status" style="margin-top: 16px; font-size: 14px; font-weight: 500; color: var(--success); display: flex; align-items: center; gap: 8px;"></div>
+        
+        <div id="pipeline-results" class="results-grid"></div>
     </div>
-  </div>
-</div>
 
-<div class="section" style="background: var(--card); border: 1px solid var(--accent); padding: 20px; border-radius: 12px; margin: 20px;">
-  <h2>Otonom Ajans (Master Pipeline) 🚀</h2>
-  <p style="font-size: 13px; color: var(--muted); margin-bottom: 15px;">
-    YouTube, Twitch veya Kick VOD linkini girin. Yapay Zeka videoyu anlasın, viral klipleri kessin, yüz takibi yapıp sansürlesin ve emojili altyazılarını çıkarıp kapak fotoğrafıyla size teslim etsin.
-  </p>
-  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px;">
-    <input type="text" id="vod-streamer" placeholder="Yayıncı adı (ör: Tuncay)" style="padding: 10px; border-radius: 8px; border: 1px solid #2a2a4a; background: #0a0a1a; color: white;">
-    <input type="text" id="vod-game" placeholder="Oyun adı (ör: Valorant)" style="padding: 10px; border-radius: 8px; border: 1px solid #2a2a4a; background: #0a0a1a; color: white;">
-  </div>
-  <div style="display: flex; gap: 10px;">
-    <input type="text" id="vod-url" placeholder="https://youtube.com/watch?v=..." style="flex: 1; padding: 10px; border-radius: 8px; border: 1px solid #2a2a4a; background: #0a0a1a; color: white;">
-    <button onclick="startMasterPipeline()" id="pipeline-btn" style="background: var(--accent); color: white; border: none; padding: 10px 20px; border-radius: 8px; cursor: pointer; font-weight: bold; white-space: nowrap;">Otomatik Üret 🎬</button>
-  </div>
-  <div id="pipeline-status" style="margin-top: 10px; font-size: 13px; color: var(--green);"></div>
-  <div id="pipeline-results" style="margin-top: 16px; display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px;"></div>
-</div>
+    <div class="content-grid">
+        <div class="glass-panel" style="padding: 24px;">
+            <h2 class="section-title" style="margin-bottom: 20px;"><i data-lucide="server" size="20" style="display:inline;vertical-align:middle;margin-right:8px;"></i>System Services</h2>
+            <div class="table-container">
+                <table class="table" id="services-table">
+                    <thead>
+                        <tr>
+                            <th>Service</th>
+                            <th>Status</th>
+                            <th>Uptime</th>
+                        </tr>
+                    </thead>
+                    <tbody id="services-body">
+                        <!-- Populated by JS -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        
+        <div class="glass-panel" style="padding: 24px;">
+            <h2 class="section-title" style="margin-bottom: 20px;"><i data-lucide="terminal" size="20" style="display:inline;vertical-align:middle;margin-right:8px;"></i>Live Events Log</h2>
+            <div class="log-container" id="event-log">
+                <!-- Populated by JS -->
+            </div>
+        </div>
+    </div>
 
-<div class="section">
-  <h2>Requests per Second (last 60)</h2>
-  <div class="sparkline" id="rps-chart"></div>
+    <div class="glass-panel chart-container">
+        <h2 class="section-title">Traffic Analysis (Requests/sec - last 60s)</h2>
+        <div class="sparkline" id="rps-chart"></div>
+    </div>
+
 </div>
 
 <script>
+// Initialize Icons
+lucide.createIcons();
+
 const WS_URL = `ws://${location.host}/ws/dashboard`;
 let ws = null;
 let rpsHistory = new Array(60).fill(0);
@@ -135,11 +137,15 @@ let rpsHistory = new Array(60).fill(0);
 function connect() {
   ws = new WebSocket(WS_URL);
   ws.onopen = () => {
-    document.getElementById('ws-status').className = 'ws-connected';
+    const status = document.getElementById('ws-status');
+    status.style.background = 'var(--success)';
+    status.classList.add('pulse');
     ws.send(JSON.stringify({ subscribe: ['*'] }));
   };
   ws.onclose = () => {
-    document.getElementById('ws-status').className = 'ws-disconnected';
+    const status = document.getElementById('ws-status');
+    status.style.background = 'var(--danger)';
+    status.classList.remove('pulse');
     setTimeout(connect, 3000);
   };
   ws.onmessage = (e) => {
@@ -181,8 +187,21 @@ function updateMetrics(m) {
   if (m.cache_hit_rate !== undefined) setText('m-cache', m.cache_hit_rate + '%');
   if (m.stream_active !== undefined) {
     const el = document.getElementById('stream-status');
-    el.textContent = m.stream_active ? 'LIVE' : 'OFFLINE';
-    el.className = m.stream_active ? 'status-badge status-live' : 'status-badge status-off';
+    const dot = document.getElementById('stream-dot');
+    
+    el.innerHTML = '';
+    el.appendChild(dot);
+    el.appendChild(document.createTextNode(m.stream_active ? ' LIVE' : ' OFFLINE'));
+    
+    if (m.stream_active) {
+        el.className = 'status-badge status-live';
+        dot.style.background = 'var(--success)';
+        dot.classList.add('pulse');
+    } else {
+        el.className = 'status-badge status-off';
+        dot.style.background = 'var(--danger)';
+        dot.classList.remove('pulse');
+    }
   }
   if (m.rps !== undefined) {
     rpsHistory.push(m.rps);
@@ -196,19 +215,19 @@ function updateServices(services) {
   const tbody = document.getElementById('services-body');
   tbody.innerHTML = services.map(s => `
     <tr>
-      <td>${s.name}</td>
+      <td style="font-weight: 500;">${s.name}</td>
       <td><span class="badge ${s.status === 'ok' ? 'badge-green' : s.status === 'degraded' ? 'badge-yellow' : 'badge-red'}">${s.status}</span></td>
-      <td>${s.uptime || '-'}</td>
+      <td style="color: var(--text-secondary); font-family: 'JetBrains Mono', monospace; font-size: 13px;">${s.uptime || '-'}</td>
     </tr>
   `).join('');
 }
 
 function addLogEntry(event, msg) {
   const log = document.getElementById('event-log');
-  const time = new Date().toLocaleTimeString();
+  const time = new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit', second:'2-digit'});
   const entry = document.createElement('div');
   entry.className = 'log-entry';
-  entry.innerHTML = `<span class="log-time">${time}</span><span class="log-event">${event}</span><span class="log-msg">${msg}</span>`;
+  entry.innerHTML = `<span class="log-time">[${time}]</span><span class="log-event">${event}</span><span class="log-msg">${msg}</span>`;
   log.insertBefore(entry, log.firstChild);
   if (log.children.length > 100) log.removeChild(log.lastChild);
 }
@@ -244,11 +263,11 @@ async function pollStatus() {
       const ebOk = dh.checks?.event_bus === 'ok';
       const pipeOk = dh.checks?.ai_pipeline === 'idle' || dh.checks?.ai_pipeline === 'ok';
       updateServices([
-        { name: 'API', status: dh.status === 'healthy' ? 'ok' : 'degraded', uptime: '-' },
+        { name: 'API Gateway', status: dh.status === 'healthy' ? 'ok' : 'degraded', uptime: '-' },
         { name: 'Event Bus', status: ebOk ? 'ok' : 'degraded', uptime: '-' },
         { name: 'AI Pipeline', status: pipeOk ? 'ok' : 'degraded', uptime: '-' },
-        { name: 'Database', status: dbOk ? 'ok' : 'degraded', uptime: '-' },
-        { name: 'Redis', status: redisOk ? 'ok' : 'degraded', uptime: '-' },
+        { name: 'PostgreSQL DB', status: dbOk ? 'ok' : 'degraded', uptime: '-' },
+        { name: 'Redis Cache', status: redisOk ? 'ok' : 'degraded', uptime: '-' },
       ]);
     }
 
@@ -275,15 +294,18 @@ async function startMasterPipeline() {
     const btn = document.getElementById('pipeline-btn');
     
     if (!urlInput) {
-        statusDiv.style.color = "var(--red)";
-        statusDiv.innerText = "Lütfen geçerli bir URL girin!";
+        statusDiv.style.color = "var(--danger)";
+        statusDiv.innerHTML = '<i data-lucide="alert-circle" size="18"></i> Lütfen geçerli bir URL girin!';
+        lucide.createIcons();
         return;
     }
     
     btn.disabled = true;
-    btn.innerText = "İşleniyor... ⏳";
-    statusDiv.style.color = "var(--yellow)";
-    statusDiv.innerText = "⚡ Otonom Ajans başlatıldı — arka planda çalışıyor. Süreci Event Log'dan takip edin.";
+    btn.innerHTML = '<span style="display:flex;align-items:center;gap:8px;"><i data-lucide="loader" class="pulse" size="18"></i> İşleniyor...</span>';
+    lucide.createIcons();
+    
+    statusDiv.style.color = "var(--warning)";
+    statusDiv.innerHTML = '<i data-lucide="zap" size="18"></i> Otonom Ajans başlatıldı — arka planda çalışıyor. Event Log\'dan takip edin.';
     document.getElementById('pipeline-results').innerHTML = '';
     
     try {
@@ -295,24 +317,24 @@ async function startMasterPipeline() {
         
         if (response.ok) {
             const data = await response.json();
-            statusDiv.style.color = "var(--green)";
-            statusDiv.innerText = `✅ Pipeline başlatıldı! Klipler hazırlanıyor...`;
+            statusDiv.style.color = "var(--success)";
+            statusDiv.innerHTML = '<i data-lucide="check-circle" size="18"></i> Pipeline başarıyla başlatıldı! Klipler hazırlanıyor...';
             addLogEntry("MASTER_PIPELINE", `▶ Başladı: ${urlInput} (${streamer} / ${game})`);
             
-            // Eger direkt sonuc donuyorsa goster
             if (data.generated_clips) renderClipResults(data.generated_clips);
             
             document.getElementById('vod-url').value = '';
         } else {
-            statusDiv.style.color = "var(--red)";
-            statusDiv.innerText = "❌ Hata oluştu. Sunucu loglarını kontrol edin.";
+            statusDiv.style.color = "var(--danger)";
+            statusDiv.innerHTML = '<i data-lucide="x-circle" size="18"></i> Hata oluştu. Sunucu loglarını kontrol edin.';
         }
     } catch (e) {
-        statusDiv.style.color = "var(--red)";
-        statusDiv.innerText = "❌ Sunucuya bağlanılamadı.";
+        statusDiv.style.color = "var(--danger)";
+        statusDiv.innerHTML = '<i data-lucide="wifi-off" size="18"></i> Sunucuya bağlanılamadı.';
     } finally {
         btn.disabled = false;
-        btn.innerText = "Otomatik Üret 🎬";
+        btn.innerHTML = '<span style="display:flex;align-items:center;gap:8px;"><i data-lucide="play" size="18"></i> Otomatik Üret</span>';
+        lucide.createIcons();
     }
 }
 
@@ -322,37 +344,46 @@ function renderClipResults(clips) {
         fear: "😨", disgust: "🤢", sad: "😢", neutral: "😐"
     };
     const grid = document.getElementById('pipeline-results');
+    
     grid.innerHTML = clips.map((c, i) => {
         const emoji = emotionEmoji[c.emotion] || "🎥";
         const scoreColor = c.viral_score > 20 ? 'badge-green' : c.viral_score > 8 ? 'badge-yellow' : 'badge-red';
+        
         return `
-        <div style="background:#0a0a1a;border:1px solid #2a2a4a;border-radius:10px;padding:14px;">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-                <span style="font-weight:700;color:var(--accent);">🎬 Klip #${c.rank || i+1}</span>
-                <span class="badge ${scoreColor}">Skor: ${(c.viral_score||0).toFixed(1)}</span>
+        <div class="clip-result-card">
+            <div class="clip-header">
+                <span class="clip-title">🎬 Klip #${c.rank || i+1}</span>
+                <span class="badge ${scoreColor}">Score: ${(c.viral_score||0).toFixed(1)}</span>
             </div>
-            <div style="font-size:11px;color:var(--muted);margin-bottom:6px;">
-                YOLOv8: ${(c.action_score||0).toFixed(2)} &nbsp;|
-                Sahneler: ${c.scene_count||0} &nbsp;|
-                ${emoji} Duygu: <strong style="color:var(--yellow)">${c.emotion||'neutral'}</strong>
-                ${c.emotion_bonus > 0 ? `<span style="color:#9c27b0">(+${(c.emotion_bonus*5).toFixed(0)} viral bonus)</span>` : ''}
+            
+            <div class="clip-meta">
+                <strong>Model:</strong> YOLOv8 (${(c.action_score||0).toFixed(2)})<br>
+                <strong>Scenes:</strong> ${c.scene_count||0} <br>
+                <strong>Emotion:</strong> ${emoji} <span style="color:var(--warning)">${c.emotion||'neutral'}</span>
+                ${c.emotion_bonus > 0 ? `<span style="color:var(--accent-secondary)">(+${(c.emotion_bonus*5).toFixed(0)} viral bonus)</span>` : ''}
             </div>
-            ${c.qc ? `<div style="font-size:11px;margin-bottom:8px;">QC: <span class="badge ${c.qc.passed?'badge-green':'badge-yellow'}">${c.qc.passed?'✓ Geçti':'⚠ Uyarı'}</span> ${c.qc.score}/100</div>` : ''}
-            ${c.social_kit && c.social_kit.hooks && c.social_kit.hooks[0] ? `<div style="font-size:12px;color:var(--yellow);margin-bottom:6px;border-left:3px solid var(--accent);padding-left:8px;">“${c.social_kit.hooks[0]}”</div>` : ''}
-            ${c.social_kit && c.social_kit.hashtags ? `<div style="font-size:11px;color:#9c27b0;margin-bottom:8px;">${(c.social_kit.hashtags||[]).slice(0,4).join(' ')}</div>` : ''}
-            <div style="display:flex;gap:10px;margin-top:10px;">
-                <a href="${c.output_path}" target="_blank" style="color:var(--green);font-size:12px;text-decoration:none;padding:4px 8px;border:1px solid var(--green);border-radius:6px;">📥 Video</a>
-                <a href="${c.thumbnail_path||''}" target="_blank" style="color:var(--accent);font-size:12px;text-decoration:none;padding:4px 8px;border:1px solid var(--accent);border-radius:6px;">🖼 Kapak</a>
-                <a href="${c.media_kit_path||''}" target="_blank" style="color:var(--muted);font-size:12px;text-decoration:none;padding:4px 8px;border:1px solid #444;border-radius:6px;">📄 Kit</a>
+            
+            ${c.qc ? `<div style="margin-bottom:12px; font-size:12px;">QC Check: <span class="badge ${c.qc.passed?'badge-green':'badge-yellow'}">${c.qc.passed?'✓ Passed':'⚠ Warning'}</span> <span style="margin-left:8px; color:var(--text-secondary);">Score: ${c.qc.score}/100</span></div>` : ''}
+            
+            ${c.social_kit && c.social_kit.hooks && c.social_kit.hooks[0] ? `<div class="clip-hook">“${c.social_kit.hooks[0]}”</div>` : ''}
+            
+            ${c.social_kit && c.social_kit.hashtags ? `<div class="clip-tags">${(c.social_kit.hashtags||[]).slice(0,5).join(' ')}</div>` : ''}
+            
+            <div class="clip-actions">
+                <a href="${c.output_path}" target="_blank" class="action-link link-success"><i data-lucide="download" size="14" style="vertical-align:-2px; margin-right:4px;"></i>Video</a>
+                <a href="${c.thumbnail_path||'#'}" target="_blank" class="action-link link-primary"><i data-lucide="image" size="14" style="vertical-align:-2px; margin-right:4px;"></i>Cover</a>
+                <a href="${c.media_kit_path||'#'}" target="_blank" class="action-link link-secondary"><i data-lucide="file-text" size="14" style="vertical-align:-2px; margin-right:4px;"></i>Kit</a>
             </div>
-            <div style="margin-top:8px;font-size:10px;color:#555;">
-                ${(c.features||[]).slice(0,5).join(' • ')}
-            </div>
+            
+            ${c.features && c.features.length > 0 ? `<div style="margin-top:16px;font-size:11px;color:var(--text-secondary); opacity: 0.8;">${c.features.slice(0,5).join(' • ')}</div>` : ''}
         </div>`;
     }).join('');
+    
+    // Re-initialize icons for the newly injected HTML
+    lucide.createIcons();
 }
 
-
+// Initial Calls
 connect();
 setInterval(pollStatus, 5000);
 pollStatus();

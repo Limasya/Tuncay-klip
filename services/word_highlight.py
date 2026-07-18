@@ -460,10 +460,10 @@ class WordHighlightEngine:
             # \t(t1,t2,...) transform etiketleri ile zamanlanmis tetikleme
             # 1. Kelimenin baslangicinda aniden renk degisir ve %115 buyur
             # 2. t_start'tan t_spring'e kadar yavasca %100'e ve default renge doner
-            tag = (
-                f"{{\\t({t_start},{t_start},\\c{c_high}\\fscx115\\fscy115)}"
-                f"\\t({t_start},{t_spring},\\c{c_default}\\fscx100\\fscy100)}}"
-            )
+            part1 = f"\\t({t_start},{t_start},\\c{c_high}\\fscx115\\fscy115)"
+            part2 = f"\\t({t_start},{t_spring},\\c{c_default}\\fscx100\\fscy100)"
+            tag = f"{{{part1}{part2}}}"
+            
             parts.append(f"{tag}{w.word}")
 
         return " ".join(parts)

@@ -14,7 +14,6 @@ Features:
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import os
 import time
@@ -26,6 +25,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
+from shared.utils.json_state import JsonStateStore
 
 logger = logging.getLogger("publisher")
 
@@ -148,7 +148,7 @@ class MultiPlatformPublisher:
         self._queue: deque = deque(maxlen=500)
         self._platform_configs = dict(PLATFORM_CONFIGS)
         self._upload_results: Dict[str, List[Dict]] = defaultdict(list)
-        self._state_path = Path(state_path or "data/publisher_state.json")
+        self._state = JsonStateStore(state_path or "data/publisher_state.json")
 
         # Metrics
         self._total_published = 0
@@ -410,7 +410,7 @@ class MultiPlatformPublisher:
     # ── Persistence ──
 
     async def save(self) -> None:
-        state = {
+        await self._state.save({
             "updated_at": datetime.now(timezone.utc).isoformat(),
             "jobs": [j.model_dump() for j in list(self._jobs.values())[-200:]],
             "upload_results": dict(self._upload_results),
@@ -419,32 +419,20 @@ class MultiPlatformPublisher:
                 "total_failed": self._total_failed,
                 "total_retries": self._total_retries,
             },
-        }
-        self._state_path.parent.mkdir(parents=True, exist_ok=True)
-        temp = self._state_path.with_suffix(".tmp")
-        await asyncio.to_thread(
-            temp.write_text,
-            json.dumps(state, ensure_ascii=False, indent=2, default=str),
-            "utf-8",
-        )
-        await asyncio.to_thread(temp.replace, self._state_path)
+        })
 
     async def load(self) -> None:
-        if not self._state_path.exists():
+        state = await self._state.load()
+        if not state:
             return
-        try:
-            data = await asyncio.to_thread(self._state_path.read_text, encoding="utf-8")
-            state = json.loads(data)
-            for jd in state.get("jobs", []):
-                job = PublishJob(**jd)
-                self._jobs[job.job_id] = job
-            self._upload_results = defaultdict(list, state.get("upload_results", {}))
-            metrics = state.get("metrics", {})
-            self._total_published = metrics.get("total_published", 0)
-            self._total_failed = metrics.get("total_failed", 0)
-            self._total_retries = metrics.get("total_retries", 0)
-        except Exception as e:
-            logger.warning("Publisher state load failed: %s", e)
+        for jd in state.get("jobs", []):
+            job = PublishJob(**jd)
+            self._jobs[job.job_id] = job
+        self._upload_results = defaultdict(list, state.get("upload_results", {}))
+        metrics = state.get("metrics", {})
+        self._total_published = metrics.get("total_published", 0)
+        self._total_failed = metrics.get("total_failed", 0)
+        self._total_retries = metrics.get("total_retries", 0)
 
 
 # Singleton
