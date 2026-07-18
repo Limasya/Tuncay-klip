@@ -25,9 +25,7 @@ Enhanced Features:
 """
 from __future__ import annotations
 
-import asyncio
-import hashlib
-import json
+from services.llm_model_defaults import get_gemini_model_default, resolve_gemini_model
 import logging
 import os
 import re
@@ -616,9 +614,9 @@ class LLMEngine:
         if gemini_key:
             self._providers.append(("gemini", GeminiProvider(
                 api_key=gemini_key,
-                model=os.environ.get("GEMINI_MODEL", "gemini-2.0-flash"),
+                model=resolve_gemini_model(),
             )))
-            logger.info("Gemini registered (model=%s)", os.environ.get("GEMINI_MODEL", "gemini-2.0-flash"))
+            logger.info("Gemini registered (model=%s)", resolve_gemini_model())
 
         # ── 4. Mistral AI ──
         mistral_key = os.environ.get("MISTRAL_API_KEY", "")

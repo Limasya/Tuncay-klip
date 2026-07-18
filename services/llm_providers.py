@@ -334,12 +334,13 @@ class GeminiProvider:
     """Google Gemini — free tier: 15 RPM, 1M tokens/day.
 
     Set GEMINI_API_KEY (get from https://aistudio.google.com/apikey).
-    Default model: gemini-2.0-flash (fast, free).
+    Default model: gemini-2.5-flash (litellm_config.yaml tek kaynak).
     """
 
-    def __init__(self, api_key: str, model: str = "gemini-2.0-flash"):
+    def __init__(self, api_key: str, model: str | None = None):
+        from services.llm_model_defaults import resolve_gemini_model
         self.api_key = api_key
-        self.model = model
+        self.model = model or resolve_gemini_model()
 
     async def __call__(
         self, prompt: str, max_tokens: int = 1024, temperature: float = 0.7,
