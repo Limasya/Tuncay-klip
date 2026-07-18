@@ -393,6 +393,47 @@ async def get_kick_archive_status(
     return await kick_archive.get_status()
 
 
+# ── Zero-Bandwidth periyodik tarama ───────────────────────────────────────
+
+@router.post("/zero-bandwidth/sync", status_code=202)
+async def start_zero_bandwidth_sync(
+    _principal: Principal = Depends(require_scope(Scope.STREAMS_MANAGE)),
+):
+    """Tek seferlik zero-bandwidth VOD analizi baslat (metadata + LLM, sifir indirme)."""
+    result = kick_archive.start_zero_bandwidth_sync()
+    return {
+        **result,
+        "message": (
+            "Zero-bandwidth VOD analizi baslatildi."
+            if result["status"] == "accepted"
+            else "Zero-bandwidth tarama zaten calisiyor."
+        ),
+    }
+
+
+@router.post("/zero-bandwidth/scheduler", status_code=200)
+async def start_zero_bandwidth_scheduler(
+    _principal: Principal = Depends(require_scope(Scope.STREAMS_MANAGE)),
+):
+    """Zero-bandwidth periyodik tarama scheduler'ini baslat (2 saat aralikla)."""
+    settings = get_settings()
+    if not settings.zero_bandwidth_scan_enabled:
+        return {"status": "disabled", "message": "zero_bandwidth_scan_enabled=False. Config'den acin."}
+    started = await kick_archive.start_zero_bandwidth_scheduler()
+    return {
+        "status": "started" if started else "already_running",
+        "interval_minutes": settings.zero_bandwidth_scan_interval_minutes,
+    }
+
+
+@router.get("/zero-bandwidth/status")
+async def get_zero_bandwidth_status(
+    _principal: Principal = Depends(require_scope(Scope.ANALYTICS_READ)),
+):
+    """Zero-bandwidth analiz durumu ve sonuclari."""
+    return await kick_archive.get_zero_bandwidth_status()
+
+
 # ── Kick Stream Monitor endpoints ──────────────────────────────────────────
 
 @router.post("/kick-monitor/start", status_code=200)

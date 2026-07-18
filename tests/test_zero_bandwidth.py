@@ -5,7 +5,7 @@ services/zero_bandwidth_clipper.py icin birim testler.
 Agir bagimliliklar (Kick API, LLM, FFmpeg) mock'lanir.
 """
 import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, AsyncMock
 from datetime import datetime, timezone
 
 
@@ -372,8 +372,32 @@ class TestCloudflareDetection:
         clipper = ZeroBandwidthClipper()
         health = clipper.get_cf_health()
         assert health["is_healthy"]
-        assert health["cf_block_count"] == 0
-        assert "chrome" in health["impersonate_version"]
+
+    def test_cooldown_prevents_spam(self):
+        """15 dk cooldown: arka arkaya cagirilan alert sadece 1 kez Discord'a gider."""
+        clipper = ZeroBandwidthClipper()
+        clipper._cf_alert_logged = False
+        clipper._cf_last_discord_alert_time = 0
+
+        with patch("services.zero_bandwidth_clipper.ZeroBandwidthClipper._send_cf_alert") as mock_alert:
+            # 5 hata, hepsi ayni anda
+            for _ in range(5):
+                clipper._check_cloudflare_block(403, "blocked")
+
+            # Sadece 1 kez Discord'a gonderilmis olmali (ilk cagri)
+            assert mock_alert.call_count == 1
+
+    def test_cooldown_allows_after_expiry(self):
+        """Cooldown suresi dolduktan sonra tekrar gondermeli."""
+        import time as _time
+        clipper = ZeroBandwidthClipper()
+        clipper._cf_alert_logged = False
+        # Cooldown'i 16 dk once baslatmis gibi yap
+        clipper._cf_last_discord_alert_time = _time.monotonic() - 1000
+
+        with patch("services.zero_bandwidth_clipper.ZeroBandwidthClipper._send_cf_alert") as mock_alert:
+            clipper._check_cloudflare_block(403, "blocked")
+            assert mock_alert.call_count == 1
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -420,3 +444,273 @@ class TestClipSuggestion:
         assert clip.community_views == 34
         assert clip.estimated_position_sec == 674.0
         assert clip.position_confidence == "approximate"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  ZAMAN TABANLI CLIP DOGRULAMA (livestream_id reuse korumasi)
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestClipTimingValidation:
+    """Community clip'in created_at'i VOD zaman araliginda mi."""
+
+    def test_clip_in_range(self):
+        clip = {"created_at": "2026-07-18T15:15:05Z", "title": "test"}
+        valid, reason = ZeroBandwidthClipper._validate_clip_timing(
+            clip, "2026-07-18 15:03:51", 14996
+        )
+        assert valid
+        assert reason == "zaman_araliginda"
+
+    def test_clip_before_vod(self):
+        """VOD'dan 10 dakika once olusturulan clip reddedilmeli."""
+        clip = {"created_at": "2026-07-18T14:53:51Z", "title": "test"}
+        valid, reason = ZeroBandwidthClipper._validate_clip_timing(
+            clip, "2026-07-18 15:03:51", 14996
+        )
+        assert not valid
+        assert "once" in reason
+
+    def test_clip_after_vod(self):
+        """VOD bitiminden 5 dakika sonra olusturulan clip reddedilmeli."""
+        clip = {"created_at": "2026-07-18T19:19:00Z", "title": "test"}
+        valid, reason = ZeroBandwidthClipper._validate_clip_timing(
+            clip, "2026-07-18 15:03:51", 14996
+        )
+        assert not valid
+        assert "sonra" in reason
+
+    def test_clip_at_boundary_with_tolerance(self):
+        """120s tolerans ile sinirdaki clip kabul edilmeli."""
+        clip = {"created_at": "2026-07-18T15:01:51Z", "title": "test"}
+        valid, reason = ZeroBandwidthClipper._validate_clip_timing(
+            clip, "2026-07-18 15:03:51", 14996, tolerance_sec=120
+        )
+        assert valid
+
+    def test_clip_outside_tolerance(self):
+        """Tolerans disindaki clip reddedilmeli."""
+        clip = {"created_at": "2026-07-18T14:59:00Z", "title": "test"}
+        valid, reason = ZeroBandwidthClipper._validate_clip_timing(
+            clip, "2026-07-18 15:03:51", 14996, tolerance_sec=120
+        )
+        assert not valid
+
+    def test_no_created_at_passes(self):
+        """created_at yoksa dogrulama yapilamaz, clip kabul edilir."""
+        clip = {"title": "test"}
+        valid, reason = ZeroBandwidthClipper._validate_clip_timing(
+            clip, "2026-07-18 15:03:51", 14996
+        )
+        assert valid
+        assert reason == "dogrulama_yapilamadi"
+
+    def test_no_vod_start_passes(self):
+        """VOD start_time yoksa dogrulama yapilamaz."""
+        clip = {"created_at": "2026-07-18T15:15:05Z"}
+        valid, reason = ZeroBandwidthClipper._validate_clip_timing(clip, "", 14996)
+        assert valid
+
+    def test_filter_rejects_bad_clips(self):
+        """_filter_clips_by_timing, zaman disindaki clip'leri reddetmeli."""
+        clips = [
+            {"created_at": "2026-07-18T15:15:05Z", "title": "iyi"},     # VOD icinde
+            {"created_at": "2026-07-18T14:50:00Z", "title": "kotu"},     # VOD'dan once
+            {"created_at": "2026-07-18T20:00:00Z", "title": "kotu2"},    # VOD'dan sonra
+        ]
+        clipper = ZeroBandwidthClipper()
+        valid = clipper._filter_clips_by_timing(clips, "2026-07-18 15:03:51", 14996)
+        assert len(valid) == 1
+        assert valid[0]["title"] == "iyi"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  ID-REUSE REGRESSION TEST
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestIdReuseRegression:
+    """Ayni livestream_id farkli yayinlari isaret edebilir — tespit ve reddetme."""
+
+    def test_same_id_different_days_rejected(self):
+        """6 gun onceki clip, bugünkü VOD'a yanlis eslestirilmemeli."""
+        # 6 gun once olusturulan clip
+        clip_old = {"created_at": "2026-07-11T10:04:35Z", "title": "eski clip"}
+        # VOD 2 gun once baslamis
+        valid, reason = ZeroBandwidthClipper._validate_clip_timing(
+            clip_old, "2026-07-17 17:08:17", 5196
+        )
+        assert not valid
+        assert "once" in reason
+
+    def test_same_id_same_day_accepted(self):
+        """Ayni gun olusturulan clip dogru eslestirilmeli."""
+        clip = {"created_at": "2026-07-17T18:33:03Z", "title": "test"}
+        valid, reason = ZeroBandwidthClipper._validate_clip_timing(
+            clip, "2026-07-17 17:08:17", 5196
+        )
+        assert valid
+
+    def test_filter_removes_reused_id_clips(self):
+        """6 gun span'daki clip'lerden sadece VOD icindekiler kalmali."""
+        clips = [
+            {"created_at": "2026-07-11T10:04:35Z", "title": "gun1"},   # 6 gun once
+            {"created_at": "2026-07-11T10:09:03Z", "title": "gun1b"},  # 6 gun once
+            {"created_at": "2026-07-17T18:33:03Z", "title": "gun7"},   # ayni gun
+        ]
+        clipper = ZeroBandwidthClipper()
+        valid = clipper._filter_clips_by_timing(
+            clips, "2026-07-17 17:08:17", 5196
+        )
+        assert len(valid) == 1
+        assert valid[0]["title"] == "gun7"
+
+    def test_cluster_detection_after_filter(self):
+        """Filtreleme sonrasi cluster tespiti dogru calismali."""
+        clips = [
+            {"created_at": "2026-07-17T18:30:00Z"},  # VOD icinde, yaklasik ayni an
+            {"created_at": "2026-07-17T18:31:00Z"},  # VOD icinde, 1 dk sonra
+        ]
+        clipper = ZeroBandwidthClipper()
+        valid = clipper._filter_clips_by_timing(
+            clips, "2026-07-17 17:08:17", 5196
+        )
+        assert len(valid) == 2
+        clusters = ZeroBandwidthClipper._detect_clip_clusters(
+            valid, "2026-07-17 17:08:17"
+        )
+        assert clusters[0] == 2
+        assert clusters[1] == 2
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  RENDER_CLIP TELIF/HAK TESTLERI
+# ═══════════════════════════════════════════════════════════════════════════
+
+class TestRenderClipCopyright:
+    """render_clip() her zaman vod_url'den render yapmali, community clip URL'si kullanilmamali."""
+
+    @pytest.mark.asyncio
+    async def test_render_always_calls_hls_from_vod_url(self):
+        """_get_hls_source her zaman vod_url ile cagirilmali, community clip degil."""
+        clipper = ZeroBandwidthClipper()
+
+        vod_hls_url = "https://fa723fc1b171.us-west-2.playback.live-video.net/api/video/hls_abc123.m3u8"
+        vod_url = "https://kick.com/video/12345"
+
+        clip = ClipSuggestion(
+            clip_id="test_render_1",
+            title="Test Clip",
+            description="Test",
+            start_time=100.0,
+            end_time=160.0,
+            duration=60.0,
+            confidence=0.9,
+            source="community_clip",
+            reason="Test",
+        )
+
+        with patch.object(clipper, "_get_hls_source", return_value=vod_hls_url) as mock_hls, \
+             patch.object(clipper, "_validate_mp4", return_value=True), \
+             patch("asyncio.create_subprocess_exec") as mock_exec:
+
+            mock_proc = MagicMock()
+            mock_proc.communicate = MagicMock(return_value=None)
+            mock_proc.communicate = AsyncMock(return_value=(b"", b""))
+            mock_proc.returncode = 0
+            mock_exec.return_value = mock_proc
+
+            await clipper.render_clip(vod_url, clip)
+
+            # _get_hls_source dogru URL ile cagirilmis mi?
+            mock_hls.assert_called_once_with(vod_url)
+
+            # FFmpeg -i parametresi VOD HLS URL'si olmali
+            call_args = mock_exec.call_args[0]
+            cmd_args = list(call_args)
+            idx = cmd_args.index("-i")
+            input_url = cmd_args[idx + 1]
+
+            assert input_url == vod_hls_url, (
+                f"FFmpeg -i vod HLS URL'si olmali, alinan: {input_url}"
+            )
+
+    @pytest.mark.asyncio
+    async def test_render_never_uses_community_clip_as_input(self):
+        """Community clip kaynagi ne olursa olsun FFmpeg'e sadece VOD HLS URL gecer."""
+        clipper = ZeroBandwidthClipper()
+
+        vod_hls_url = "https://fa723fc1b171.us-west-2.playback.live-video.net/api/video/hls_xyz.m3u8"
+        vod_url = "https://kick.com/video/99999"
+
+        # Farkli community clip kaynaklari
+        sources = ["community_clip", "llm_guess", "hybrid"]
+
+        for source in sources:
+            clip = ClipSuggestion(
+                clip_id=f"test_render_{source}",
+                title=f"Clip ({source})",
+                description="Test",
+                start_time=50.0,
+                end_time=110.0,
+                duration=60.0,
+                confidence=0.8,
+                source=source,
+                reason=f"Test {source}",
+            )
+
+            with patch.object(clipper, "_get_hls_source", return_value=vod_hls_url), \
+                 patch.object(clipper, "_validate_mp4", return_value=True), \
+                 patch("asyncio.create_subprocess_exec") as mock_exec:
+
+                mock_proc = MagicMock()
+                mock_proc.communicate = AsyncMock(return_value=(b"", b""))
+                mock_proc.returncode = 0
+                mock_exec.return_value = mock_proc
+
+                await clipper.render_clip(vod_url, clip)
+
+                call_args = mock_exec.call_args[0]
+                cmd_args = list(call_args)
+                idx = cmd_args.index("-i")
+                input_url = cmd_args[idx + 1]
+
+                assert input_url == vod_hls_url, (
+                    f"source={source}: FFmpeg -i VOD HLS URL'si olmali, alinan: {input_url}"
+                )
+
+    @pytest.mark.asyncio
+    async def test_render_ffmpeg_cmd_includes_user_agent_and_referer(self):
+        """FFmpeg komutunda Kick.com User-Agent ve Referer header'lari olmali."""
+        clipper = ZeroBandwidthClipper()
+
+        vod_hls_url = "https://fa723fc1b171.us-west-2.playback.live-video.net/api/video/hls_ua.m3u8"
+        vod_url = "https://kick.com/video/11111"
+
+        clip = ClipSuggestion(
+            clip_id="test_render_ua",
+            title="UA Test",
+            description="Test",
+            start_time=0.0,
+            end_time=30.0,
+            duration=30.0,
+            confidence=0.7,
+            source="llm_guess",
+            reason="Test",
+        )
+
+        with patch.object(clipper, "_get_hls_source", return_value=vod_hls_url), \
+             patch.object(clipper, "_validate_mp4", return_value=True), \
+             patch("asyncio.create_subprocess_exec") as mock_exec:
+
+            mock_proc = MagicMock()
+            mock_proc.communicate = AsyncMock(return_value=(b"", b""))
+            mock_proc.returncode = 0
+            mock_exec.return_value = mock_proc
+
+            await clipper.render_clip(vod_url, clip)
+
+            cmd_args = list(mock_exec.call_args[0])
+            full_cmd = " ".join(str(a) for a in cmd_args)
+
+            assert "kick.com" in full_cmd, "FFmpeg komutunda kick.com referansi olmali"

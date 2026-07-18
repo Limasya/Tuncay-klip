@@ -435,20 +435,38 @@ class WordHighlightEngine:
     ) -> str:
         """
         Tek satir kelime icin karaoke ASS text'i uretir.
-
-        \\kf formatinda:
-        - Her kelime icin sure (centiseconds) belirtilir
-        - Renk o sure icinde highlighted rengine kayar
-        - Sonra default renge doner
+        Modern TikTok stili: aktif kelime aninda buyur ve rengi parlar, sonra eski haline spring ile kuculur.
+        \\t(start, end, ...) ile kelime bazli zamanlanmis animasyonlar.
         """
         parts = []
+        if not words:
+            return ""
+            
+        line_start = words[0].start
+        
         for w in words:
-            duration_cs = max(1, int((w.end - w.start) * 100))
+            # Saniyeyi milisaniyeye (ms) cevir
+            t_start = int((w.start - line_start) * 1000)
+            t_end = int((w.end - line_start) * 1000)
+            
+            # Animasyon suresi
+            spring_duration = min(150, max(50, t_end - t_start))
+            t_spring = t_start + spring_duration
+            
+            # Orijinal renk
+            c_default = colors['default']
+            c_high = colors['highlighted']
+            
+            # \t(t1,t2,...) transform etiketleri ile zamanlanmis tetikleme
+            # 1. Kelimenin baslangicinda aniden renk degisir ve %115 buyur
+            # 2. t_start'tan t_spring'e kadar yavasca %100'e ve default renge doner
+            tag = (
+                f"{{\\t({t_start},{t_start},\\c{c_high}\\fscx115\\fscy115)}"
+                f"\\t({t_start},{t_spring},\\c{c_default}\\fscx100\\fscy100)}}"
+            )
+            parts.append(f"{tag}{w.word}")
 
-            # Karaoke timing: kelime suresince highlighted renk
-            parts.append(f"{{\\kf{duration_cs}}}{w.word} ")
-
-        return "".join(parts).strip()
+        return " ".join(parts)
 
     def _split_words_to_lines(
         self,

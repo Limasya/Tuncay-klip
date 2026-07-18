@@ -41,7 +41,7 @@ import json
 import logging
 import time
 from dataclasses import dataclass, field, asdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
 from urllib.parse import urlparse
@@ -119,11 +119,17 @@ class ZeroBandwidthClipper:
         self._cf_block_count: int = 0
         self._cf_last_block_time: float = 0
         self._cf_alert_logged: bool = False
+        self._cf_last_discord_alert_time: float = 0  # spam cooldown icin
 
     # Cloudflare sabitleri — yeni tarayici surumleri guncellenecek
     # curl_cffi docs: https://github.com/lexiforest/curl_cffi
     # Yeni Chrome surumu ciktikca burasi guncellenmeli
     _CF_IMPERSONATE = "chrome124"
+
+    # FFmpeg icin Kick.com header'lari — curl_cffi'nin impersonate'i gibi
+    # zamanla Kick sunuculari bu User-Agent'i reddedebilir, guncel gerekebilir.
+    _FFMPEG_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+    _FFMPEG_REFERER = "https://kick.com/"
 
     def _check_cloudflare_block(self, status_code: int, response_text: str) -> bool:
         """Cloudflare tarafindan engellenip engellenmedigini kontrol et.
@@ -148,6 +154,12 @@ class ZeroBandwidthClipper:
                     response_text[:200],
                 )
                 self._cf_alert_logged = True
+                self._send_cf_alert(
+                    "Cloudflare Engelleme",
+                    f"{self._cf_block_count} kez engellendi. "
+                    f"Impersonate: {self._CF_IMPERSONATE}. "
+                    f"Yeni Chrome surumuna gecilmesi gerekebilir.",
+                )
             return True
 
         # Challenge sayfasi kontrolu (CF bazen 200 dondurur ama challenge icerir)
@@ -167,9 +179,66 @@ class ZeroBandwidthClipper:
                     "Impersonate: %s | Toplam engelleme: %d",
                     self._CF_IMPERSONATE, self._cf_block_count,
                 )
+                self._send_cf_alert(
+                    "Cloudflare Challenge Sayfasi",
+                    f"200 dondu ama challenge sayfasi algilandi. "
+                    f"Impersonate: {self._CF_IMPERSONATE} | Toplam: {self._cf_block_count}",
+                )
                 return True
 
         return False
+
+    def _send_cf_alert(self, title: str, message: str) -> None:
+        """Cloudflare alarmi Discord webhook uzerinden gonder.
+
+        Spam onleme: ayni hata tipi icin 15 dakikada sadece 1 mesaj gider.
+        Bu sure dolmadan yapilan cagirilar atlanir.
+        """
+        import time as _time
+        now = _time.monotonic()
+        COOLDOWN_SEC = 900  # 15 dakika
+
+        if (now - self._cf_last_discord_alert_time) < COOLDOWN_SEC:
+            logger.debug(
+                "Cloudflare Discord cooldown aktif (%.0f saniye kaldi), mesaj atlandi",
+                COOLDOWN_SEC - (now - self._cf_last_discord_alert_time),
+            )
+            return
+
+        try:
+            from config import get_settings
+            settings = get_settings()
+            webhook_url = settings.discord_webhook_url
+
+            if not webhook_url:
+                logger.debug("Discord webhook URL tanimli degil, Cloudflare alarmi atlandi")
+                return
+
+            import httpx
+            payload = {
+                "embeds": [{
+                    "title": f"!! CLOUDFLARE ALARMI: {title}",
+                    "description": message,
+                    "color": 0xFF0000,
+                    "fields": [
+                        {"name": "Impersonate", "value": self._CF_IMPERSONATE, "inline": True},
+                        {"name": "Toplam Engelleme", "value": str(self._cf_block_count), "inline": True},
+                    ],
+                    "footer": {"text": "Zero-Bandwidth Clipper"},
+                }],
+            }
+
+            # Senkron HTTP — kritik alarm, block olmali
+            with httpx.Client(timeout=5) as client:
+                resp = client.post(webhook_url, json=payload)
+                if resp.status_code < 300:
+                    logger.info("Cloudflare alarmi Discord'a gonderildi")
+                    self._cf_last_discord_alert_time = now
+                else:
+                    logger.warning("Discord webhook hatasi: %d", resp.status_code)
+
+        except Exception as e:
+            logger.warning("Cloudflare alarmi gonderilemedi: %s", e)
 
     def get_cf_health(self) -> dict[str, Any]:
         """Cloudflare saglik durumu."""
@@ -282,6 +351,89 @@ class ZeroBandwidthClipper:
         except Exception:
             pass
         return None
+
+    # ─── Zaman Tabanlı Clip Doğrulama ──────────────────────────────────────
+
+    @staticmethod
+    def _validate_clip_timing(
+        clip: dict[str, Any], vod_start_time: str, vod_duration: float,
+        tolerance_sec: float = 120,
+    ) -> tuple[bool, str]:
+        """Bir community clip'in created_at'i VOD zaman aralığı içinde mi kontrol et.
+
+        Neden: livestream_id reuse olabilir — aynı ID farklı yayınları işaret edebilir.
+        Zaman doğrulaması: clip.created_at ∈ [vod_start - tolerance, vod_start + duration + tolerance]
+
+        Returns: (is_valid, reason)
+        """
+        clip_created = clip.get("created_at", "")
+        if not clip_created or not vod_start_time or vod_duration <= 0:
+            return (True, "dogrulama_yapilamadi")
+
+        def _parse_dt(s: str):
+            if not s:
+                return None
+            try:
+                dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                return dt
+            except Exception:
+                pass
+            for fmt in ["%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M:%S.%f"]:
+                try:
+                    return datetime.strptime(s, fmt).replace(tzinfo=timezone.utc)
+                except Exception:
+                    pass
+            return None
+
+        clip_dt = _parse_dt(clip_created)
+        vod_dt = _parse_dt(vod_start_time)
+
+        if not clip_dt or not vod_dt:
+            return (True, "parse_edilemedi")
+
+        tolerance = timedelta(seconds=tolerance_sec)
+        vod_end = vod_dt + timedelta(seconds=vod_duration)
+
+        if (vod_dt - tolerance) <= clip_dt <= (vod_end + tolerance):
+            return (True, "zaman_araliginda")
+        else:
+            diff = (clip_dt - vod_dt).total_seconds()
+            diff_min = diff / 60
+            if diff < 0:
+                reason = f"VOD'dan {abs(diff_min):.1f} dk once"
+            else:
+                reason = f"VOD bitiminden {diff_min - vod_duration/60:.1f} dk sonra"
+            return (False, reason)
+
+    def _filter_clips_by_timing(
+        self, clips: list[dict[str, Any]], vod_start_time: str, vod_duration: float
+    ) -> list[dict[str, Any]]:
+        """Clip listesinden zaman aralığı dışındakileri reddet."""
+        if not clips or not vod_start_time or vod_duration <= 0:
+            return clips
+
+        valid = []
+        rejected = 0
+        for c in clips:
+            is_valid, reason = self._validate_clip_timing(c, vod_start_time, vod_duration)
+            if is_valid:
+                valid.append(c)
+            else:
+                rejected += 1
+                logger.warning(
+                    "Clip reddedildi (zaman dogrulamasi): '%s' (created: %s) — %s",
+                    c.get("title", ""), c.get("created_at", ""), reason,
+                )
+
+        if rejected > 0:
+            logger.info(
+                "Zaman dogrulamasi: %d clip gecerli, %d reddedildi (tolerans: ±120s)",
+                len(valid), rejected,
+            )
+
+        return valid
 
     # ─── Adım 1b: Community Clip'leri Çek (sadece birkaç KB) ───────────────
 
@@ -969,6 +1121,19 @@ Yanıtı şu JSON formatında ver:
         logger.info("Adim 1b: Community clip'ler cekiliyor (VOD numeric_id=%s)...", numeric_vod_id)
         community_clips = await self._fetch_community_clips(numeric_vod_id)
 
+        # Adım 1c: Zaman tabanlı doğrulama — livestream_id reuse kontrolü
+        if community_clips and vod_start and duration_sec > 0:
+            before_count = len(community_clips)
+            community_clips = self._filter_clips_by_timing(
+                community_clips, vod_start, duration_sec
+            )
+            after_count = len(community_clips)
+            if before_count != after_count:
+                logger.warning(
+                    "Zaman dogrulamasi: %d -> %d clip (%d reddedildi, VOD: %s)",
+                    before_count, after_count, before_count - after_count, vod_start,
+                )
+
         # Ses-only fallback: community clip yoksa ve enabled ise
         transcription_text = None
         if not community_clips and self.audio_only_fallback_enabled:
@@ -1026,7 +1191,7 @@ Yanıtı şu JSON formatında ver:
 
         cmd = [
             "ffmpeg", "-y",
-            "-headers", "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36\r\nReferer: https://kick.com/\r\n",
+            "-headers", f"User-Agent: {self._FFMPEG_UA}\r\nReferer: {self._FFMPEG_REFERER}\r\n",
             "-ss", str(clip.start_time),
             "-i", hls_url,
             "-t", str(clip.duration),
@@ -1047,6 +1212,25 @@ Yanıtı şu JSON formatında ver:
         if proc.returncode != 0:
             error_msg = stderr.decode(errors="replace")[-500:] if stderr else "FFmpeg failed"
             logger.error("Clip render başarısız: %s", error_msg[:200])
+
+            # FFmpeg'in Kick'ten 403/410 almasi da Cloudflare engeli olarak sayilmali
+            error_lower = error_msg.lower()
+            if any(code in error_lower for code in ["403", "410", "forbidden", "http error"]):
+                self._cf_block_count += 1
+                self._cf_last_block_time = time.monotonic()
+                if not self._cf_alert_logged or self._cf_block_count % 10 == 0:
+                    logger.critical(
+                        "FFmpeg Kick HTTP hatasi (potansiyel Cloudflare): %s | "
+                        "Impersonate: %s | Toplam: %d",
+                        error_msg[:200], self._CF_IMPERSONATE, self._cf_block_count,
+                    )
+                    self._cf_alert_logged = True
+                    self._send_cf_alert(
+                        "FFmpeg Kick Engelleme",
+                        f"FFmpeg Kick sunucusundan hata aldi: {error_msg[:200]}. "
+                        f"Impersonate: {self._CF_IMPERSONATE} | Toplam: {self._cf_block_count}",
+                    )
+
             return {"success": False, "error": error_msg[:500]}
 
         if not output_path.exists() or output_path.stat().st_size < 1024:

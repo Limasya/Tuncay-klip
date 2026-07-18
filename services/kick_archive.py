@@ -258,6 +258,143 @@ class KickArchiveService:
             "channel_url": TARGET_CHANNEL_URL,
         }
 
+    # ─── Zero-Bandwidth Periyodik Tarama ───────────────────────────────────
+
+    async def _run_zero_bandwidth_scan(self) -> None:
+        """Periyodik zero-bandwidth tarama: sadece metadata + LLM tahmini."""
+        settings = get_settings()
+        state = await self._read_state()
+        zw_state = state.get("zero_bandwidth_analyses", {})
+
+        try:
+            from services.zero_bandwidth_clipper import ZeroBandwidthClipper
+            clipper = ZeroBandwidthClipper()
+
+            vods = await self.list_public_vods(settings.kick_archive_vod_limit)
+            new_count = 0
+            skipped_count = 0
+
+            for vod in vods:
+                vod_id = str(vod.get("vod_id", ""))
+                vod_url = str(vod.get("url", ""))
+
+                if not vod_id or not vod_url:
+                    continue
+
+                # Daha once analiz edilmis mi?
+                existing = zw_state.get(vod_id, {})
+                if existing.get("status") == "completed":
+                    skipped_count += 1
+                    continue
+
+                # Analiz et (sadece KB, sifir indirme)
+                try:
+                    analysis = await clipper.analyze_vod(vod_url)
+
+                    # Sonuclari state'e yaz (kalici depolama)
+                    zw_state[vod_id] = {
+                        "status": "completed",
+                        "vod_id": vod_id,
+                        "vod_url": vod_url,
+                        "title": analysis.title,
+                        "duration": analysis.duration,
+                        "category": analysis.category,
+                        "total_clips": len(analysis.clips),
+                        "clips": [
+                            {
+                                "clip_id": c.clip_id,
+                                "title": c.title,
+                                "start_time": c.start_time,
+                                "end_time": c.end_time,
+                                "duration": c.duration,
+                                "confidence": c.confidence,
+                                "source": c.source,
+                                "reason": c.reason,
+                            }
+                            for c in analysis.clips
+                        ],
+                        "bandwidth_used_kb": analysis.bandwidth_used_kb,
+                        "analysis_time_sec": analysis.analysis_time_sec,
+                        "analyzed_at": self._timestamp(),
+                    }
+                    new_count += 1
+                    logger.info(
+                        "Zero-bandwidth analiz: %s — %d clip (%.1f KB, %.1fs)",
+                        analysis.title[:30], len(analysis.clips),
+                        analysis.bandwidth_used_kb, analysis.analysis_time_sec,
+                    )
+
+                except Exception as exc:
+                    zw_state[vod_id] = {
+                        "status": "failed",
+                        "vod_id": vod_id,
+                        "error": str(exc),
+                        "failed_at": self._timestamp(),
+                    }
+                    logger.warning("Zero-bandwidth analiz basarisiz %s: %s", vod_id, exc)
+
+            # State'i kaydet
+            state["zero_bandwidth_analyses"] = zw_state
+            await self._write_state(state)
+
+            logger.info(
+                "Zero-bandwidth tarama tamamlandi: %d yeni, %d atlandi",
+                new_count, skipped_count,
+            )
+
+        except Exception as exc:
+            logger.exception("Zero-bandwidth tarama hatasi")
+
+    async def _zero_bandwidth_scheduler_loop(self) -> None:
+        """Zero-bandwidth icin ayri scheduler dongusu."""
+        settings = get_settings()
+        interval_seconds = max(120, int(settings.zero_bandwidth_scan_interval_minutes) * 60)
+        logger.info(
+            "Zero-bandwidth scheduler baslatildi: %d dakika aralikla",
+            settings.zero_bandwidth_scan_interval_minutes,
+        )
+        while True:
+            await self._run_zero_bandwidth_scan()
+            await asyncio.sleep(interval_seconds)
+
+    async def start_zero_bandwidth_scheduler(self) -> bool:
+        """Zero-bandwidth periyodik taramasini baslat."""
+        if self._scheduler_task and not self._scheduler_task.done():
+            return False
+        self._scheduler_task = asyncio.create_task(
+            self._zero_bandwidth_scheduler_loop(),
+            name="zero-bandwidth-scheduler",
+        )
+        return True
+
+    def start_zero_bandwidth_sync(self) -> dict[str, Any]:
+        """Tek seferlik zero-bandwidth analiz baslat."""
+        if self._sync_lock.locked() or (self._active_task and not self._active_task.done()):
+            return {"status": "already_running"}
+        self._active_task = asyncio.create_task(
+            self._run_zero_bandwidth_scan(),
+            name="zero-bandwidth-one-shot",
+        )
+        return {"status": "accepted"}
+
+    async def get_zero_bandwidth_status(self) -> dict[str, Any]:
+        """Zero-bandwidth analiz durumunu dondur."""
+        state = await self._read_state()
+        zw = state.get("zero_bandwidth_analyses", {})
+        counts = {"completed": 0, "failed": 0}
+        total_clips = 0
+        for item in zw.values():
+            s = item.get("status")
+            if s in counts:
+                counts[s] += 1
+            total_clips += int(item.get("total_clips", 0))
+        return {
+            "analyses": counts,
+            "total_clips": total_clips,
+            "total_vods": len(zw),
+            "scheduler_running": bool(self._scheduler_task and not self._scheduler_task.done()),
+        }
+
     async def _scheduler_loop(self) -> None:
         settings = get_settings()
         interval_seconds = max(60, int(settings.kick_archive_interval_minutes) * 60)

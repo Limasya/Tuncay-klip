@@ -43,6 +43,14 @@ class Settings(BaseSettings):
     kick_archive_max_clips_per_vod: int = 5
     kick_archive_interval_minutes: int = 360
     kick_archive_state_file: str = "data/kick_archive_state.json"
+
+    # Zero-Bandwidth periyodik tarama
+    # VOD rotasyon hizi: haftada ~3-4 stream -> son 3 VOD ~2-3 gun API'de kalir.
+    # 2 saatlik tarama = VOD basina ~24-36 firsat (3 gun / 2 saat = 36).
+    # Tam pipeline'dan farkli: sadece metadata + community clips + LLM tahmini cekilir.
+    zero_bandwidth_scan_interval_minutes: int = 120  # 2 saat
+    zero_bandwidth_scan_enabled: bool = False
+    zero_bandwidth_state_file: str = "data/zero_bandwidth_state.json"
     kick_ytdlp_cookies_file: str = ""
 
     # Content Intelligence Graph

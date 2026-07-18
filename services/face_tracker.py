@@ -82,14 +82,18 @@ class FaceTracker:
                         center_x = bbox.xmin + bbox.width / 2
                         center_y = bbox.ymin + bbox.height / 2
                         
+                        # Face size relative to frame
+                        face_size = max(bbox.width, bbox.height)
+                        
                         # Sinirlar disina cikmasini onle
                         center_x = max(0.0, min(1.0, center_x))
                         center_y = max(0.0, min(1.0, center_y))
 
                         face_positions.append({
                             "time": round(timestamp_sec, 2),
-                            "x": round(center_x, 3),
-                            "y": round(center_y, 3)
+                            "x": center_x,
+                            "y": center_y,
+                            "size": face_size
                         })
 
                 current_frame += 1
@@ -105,24 +109,41 @@ class FaceTracker:
             "samples": len(smoothed)
         }
 
-    def _smooth_trajectory(self, positions: List[Dict], window_size: int = 5) -> List[Dict]:
-        """Kamera hareketini yumuşatmak için Hareketli Ortalama (Moving Average) uygular."""
-        if len(positions) < window_size:
-            return positions
+    def _smooth_trajectory(self, positions: List[Dict], alpha: float = 0.15) -> List[Dict]:
+        """
+        Kamera hareketini yumuşatmak için Exponential Smoothing uygular.
+        Ayrica yuz boyutuna (size) gore dinamik 'zoom' degeri hesaplar.
+        alpha degeri dusuk oldukca kamera hareketi daha yavas (smooth) olur.
+        """
+        if not positions:
+            return []
 
         smoothed = []
-        for i in range(len(positions)):
-            start_idx = max(0, i - window_size // 2)
-            end_idx = min(len(positions), i + window_size // 2 + 1)
+        
+        # Initial states
+        curr_x = positions[0]["x"]
+        curr_y = positions[0]["y"]
+        curr_size = positions[0].get("size", 0.3)
+        
+        TARGET_FACE_SIZE = 0.35 # Yuzun ekranda kaplamasini istedigimiz oran
+        
+        for p in positions:
+            # Exponential smoothing: S(t) = alpha * X(t) + (1-alpha) * S(t-1)
+            curr_x = alpha * p["x"] + (1 - alpha) * curr_x
+            curr_y = alpha * p["y"] + (1 - alpha) * curr_y
+            curr_size = alpha * p.get("size", 0.3) + (1 - alpha) * curr_size
             
-            window = positions[start_idx:end_idx]
-            avg_x = sum(p["x"] for p in window) / len(window)
-            avg_y = sum(p["y"] for p in window) / len(window)
+            # Dinamik Zoom Hesaplama:
+            # Yuz uzaksa (size kucukse) zoom in, yakinsa zoom out.
+            # Min 1.0 (zoom out yok), Max 2.5 (cok pixel atlamasin)
+            ideal_zoom = TARGET_FACE_SIZE / max(0.05, curr_size)
+            zoom_factor = max(1.0, min(2.5, ideal_zoom))
             
             smoothed.append({
-                "time": positions[i]["time"],
-                "x": round(avg_x, 3),
-                "y": round(avg_y, 3)
+                "time": p["time"],
+                "x": round(curr_x, 3),
+                "y": round(curr_y, 3),
+                "zoom": round(zoom_factor, 2)
             })
             
         return smoothed

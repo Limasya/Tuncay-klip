@@ -229,6 +229,14 @@ async def auto_boot() -> dict:
                                 _gs().kick_archive_interval_minutes)
                 else:
                     logger.info("Kick Archive Scheduler zaten calisiyordu.")
+
+                # ── Step 9c: Zero-Bandwidth Scheduler — sadece metadata tarama ──
+                if _gs().zero_bandwidth_scan_enabled:
+                    zw_started = await kick_archive.start_zero_bandwidth_scheduler()
+                    report["zero_bandwidth_scheduler"] = zw_started
+                    if zw_started:
+                        logger.info("Zero-Bandwidth Scheduler basladi — her %d dakikada tarama",
+                                    _gs().zero_bandwidth_scan_interval_minutes)
             else:
                 logger.info("Kick Clips Collector/Archive devre disi (KICK_ARCHIVE_AUTOSTART=false)")
                 report["kick_clips_collector"] = False

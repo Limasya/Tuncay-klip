@@ -1,10 +1,11 @@
 """
-Görsel Aksiyon Algılama Servisi (YOLOv8)
+Görsel Aksiyon Algılama Servisi (Torchvision - Faster R-CNN)
 ──────────────────────────────────────
 Videoyu analiz edip ekrandaki nesneleri (insan, araç, vs.) tespit eder.
 Ekranda çok fazla nesne veya hareket varsa videonun aksiyon
 skorunu yükseltir. En heyecanlı sahnelerin (örn: 1v4 clutch) 
 bulunmasını sağlar.
+Zero-cost ve permissive (BSD) lisanslı yapıya (Seçenek C) geçilmiştir.
 """
 import asyncio
 import logging
@@ -13,26 +14,34 @@ from typing import Dict, Any, List
 import cv2
 import numpy as np
 
-# Ultralytics (YOLO) yüklü değilse hata fırlatmasını önleyelim
+# Torchvision yuklu degilse hata firlatmasini onleyelim
 try:
-    from ultralytics import YOLO
+    import torch
+    import torchvision
+    from torchvision.models.detection import fasterrcnn_mobilenet_v3_large_320_fpn, FasterRCNN_MobileNet_V3_Large_320_FPN_Weights
+    import torchvision.transforms.functional as F
+    TORCHVISION_AVAILABLE = True
 except ImportError:
-    YOLO = None
+    TORCHVISION_AVAILABLE = False
 
 logger = logging.getLogger("action_recognizer")
 
 class ActionRecognizer:
-    def __init__(self, model_name: str = "yolov8n.pt"):
-        self.model_name = model_name
+    def __init__(self):
         self.model = None
+        self.device = None
 
     def _load_model(self):
-        if not YOLO:
+        if not TORCHVISION_AVAILABLE:
             return False
         if self.model is None:
-            # YOLOv8 nano modelini indirip yukler (hafif ve hizlidir)
-            logger.info("Loading YOLOv8 model: %s", self.model_name)
-            self.model = YOLO(self.model_name)
+            logger.info("Loading Torchvision Faster R-CNN model (MobileNet v3)...")
+            # GPU varsa GPU'yu kullan, yoksa CPU
+            self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+            weights = FasterRCNN_MobileNet_V3_Large_320_FPN_Weights.DEFAULT
+            self.model = fasterrcnn_mobilenet_v3_large_320_fpn(weights=weights, box_score_thresh=0.5)
+            self.model.to(self.device)
+            self.model.eval()
         return True
 
     async def calculate_action_score(self, video_path: str, sample_fps: float = 1.0) -> Dict[str, Any]:
@@ -41,8 +50,8 @@ class ActionRecognizer:
         Ekranda tespit edilen nesne sayısına göre bir aksiyon grafiği döndürür.
         """
         if not self._load_model():
-            logger.warning("YOLO/Ultralytics is missing. Action recognition disabled.")
-            return {"error": "yolo_missing"}
+            logger.warning("Torchvision is missing. Action recognition disabled.")
+            return {"error": "torchvision_missing"}
 
         logger.info("Starting visual action recognition for %s", video_path)
         
@@ -71,17 +80,21 @@ class ActionRecognizer:
                 break
 
             if current_frame % frame_interval == 0:
-                # Modeli calistir (sadece guvenilir tahminleri al, conf=0.5)
-                # verbose=False yaparak log kirliligini onluyoruz
-                results = self.model(frame, conf=0.5, verbose=False)
+                # Görüntüyü RGB'ye cevir ve tensor yap
+                img_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                img_tensor = F.to_tensor(img_rgb).to(self.device)
+                
                 timestamp_sec = current_frame / video_fps
                 
                 object_count = 0
-                if results and len(results) > 0:
-                    # boxes.cls -> tespit edilen siniflar (0: person, 2: car vb)
-                    boxes = results[0].boxes
-                    if boxes is not None:
-                        object_count = len(boxes.cls)
+                with torch.no_grad():
+                    # model([tensor]) -> dict listesi dondurur
+                    predictions = self.model([img_tensor])
+                    if predictions and len(predictions) > 0:
+                        # box_score_thresh=0.5 yaptigimiz icin sadece guvenilirler doner
+                        labels = predictions[0]['labels']
+                        object_count = len(labels)
+
                 
                 total_objects_detected += object_count
                 action_timeline.append({
