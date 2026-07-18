@@ -340,6 +340,29 @@ async def get_clip_suggestions(
     }
 
 
+@router.post("/audio-fallback", status_code=200)
+async def toggle_audio_fallback(
+    enabled: bool = True,
+    _principal: Principal = Depends(require_scope(Scope.ANALYTICS_READ)),
+):
+    """Ses-only fallback modunu ac/kapa.
+
+    Community clip'i olmayan VOD'lar icin ses-only transkripsiyon yapar.
+    AAC 64kbps = ~28.8 MB/saat bant genisligi kullanir.
+    Varsayilan: kapali.
+    """
+    from services.zero_bandwidth_clipper import zero_bandwidth_clipper
+    zero_bandwidth_clipper.audio_only_fallback_enabled = enabled
+    return {
+        "audio_only_fallback_enabled": enabled,
+        "message": (
+            "Ses-only fallback AKTIF. Community clip'i olmayan VOD'lar icin ses transkripsiyonu yapilacak."
+            if enabled
+            else "Ses-only fallback KAPATILDI. Sadece metadata + community clip kullanilacak."
+        ),
+    }
+
+
 @router.post("/kick-archive/sync", status_code=202)
 async def start_kick_archive_sync(
     request: KickArchiveSyncRequest,
