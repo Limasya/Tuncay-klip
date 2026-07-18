@@ -253,7 +253,8 @@ async def init_event_bus():
         from config import get_settings
         settings = get_settings()
         backend = settings.event_bus_backend
-    except Exception:
+    except Exception as e:
+        logger.debug("Event bus config unavailable, falling back to memory: %s", e)
         backend = "memory"
 
     if backend == "redis":

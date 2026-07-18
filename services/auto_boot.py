@@ -117,16 +117,18 @@ async def auto_boot() -> dict:
     with _maybe_span("boot.health_monitor"):
         try:
             from services.health_monitor import health_monitor
-            from services.llm_engine import llm_engine
+            from services import llm_client
 
             # Register LLM engine health check
             async def _check_llm():
-                status = await llm_engine.health_check()
+                status = await llm_client.llm_health_check()
                 if not status.get("healthy"):
                     raise RuntimeError(f"LLM unhealthy: {status}")
 
             async def _restart_llm():
-                llm_engine.clear_cache()
+                llm_client.clear_cache()
+                # Providers yeniden başlatılır (flag-off: llm_engine üzerinden)
+                from services.llm_engine import llm_engine
                 llm_engine._init_providers()
 
             health_monitor.register("llm_engine", check_fn=_check_llm, restart_fn=_restart_llm)
@@ -197,19 +199,40 @@ async def auto_boot() -> dict:
 # ── Step 8: Kick Stream Monitor — canli yayini izle, hafizada klip cikar ──
     with _maybe_span("boot.kick_stream_monitor"):
         try:
-            from services.kick_stream_monitor import kick_stream_monitor
-            report["kick_stream_monitor"] = await kick_stream_monitor.start()
-            logger.info("Kick Stream Monitor basladi — canli yayin bekleniyor")
+            from config import get_settings as _gs
+            if _gs().kick_archive_autostart:
+                from services.kick_stream_monitor import kick_stream_monitor
+                report["kick_stream_monitor"] = await kick_stream_monitor.start()
+                logger.info("Kick Stream Monitor basladi — canli yayin bekleniyor")
+            else:
+                logger.info("Kick Stream Monitor devre disi (KICK_ARCHIVE_AUTOSTART=false)")
+                report["kick_stream_monitor"] = False
         except Exception as e:
             report["errors"].append(f"kick_stream_monitor: {e}")
             logger.warning("Kick Stream Monitor baslatilamadi: %s", e)
 
-    # ── Step 9: Kick Clips Collector —公众clip'leri topla ──
+    # ── Step 9: Kick Clips Collector — public clip'leri topla ──
     with _maybe_span("boot.kick_clips_collector"):
         try:
-            from services.kick_clips_collector import kick_clips_collector
-            report["kick_clips_collector"] = await kick_clips_collector.start()
-            logger.info("Kick Clips Collector basladi —公众clip'ler toplaniyor")
+            from config import get_settings as _gs
+            if _gs().kick_archive_autostart:
+                from services.kick_clips_collector import kick_clips_collector
+                report["kick_clips_collector"] = await kick_clips_collector.start()
+                logger.info("Kick Clips Collector basladi — public clip'ler toplaniyor")
+
+                # ── Step 9b: Kick Archive Scheduler — VOD'lari periyodik isle ──
+                from services.kick_archive import kick_archive
+                started = await kick_archive.start_scheduler()
+                report["kick_archive_scheduler"] = started
+                if started:
+                    logger.info("Kick Archive Scheduler basladi — her %d dakikada VOD tarama",
+                                _gs().kick_archive_interval_minutes)
+                else:
+                    logger.info("Kick Archive Scheduler zaten calisiyordu.")
+            else:
+                logger.info("Kick Clips Collector/Archive devre disi (KICK_ARCHIVE_AUTOSTART=false)")
+                report["kick_clips_collector"] = False
+                report["kick_archive_scheduler"] = False
         except Exception as e:
             report["errors"].append(f"kick_clips_collector: {e}")
             logger.warning("Kick Clips Collector baslatilamadi: %s", e)

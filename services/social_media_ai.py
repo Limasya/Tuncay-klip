@@ -14,7 +14,7 @@ import json
 import logging
 from typing import Any, Optional
 
-from services.smart_llm_router import smart_router
+from services.llm_client import generate_json
 
 logger = logging.getLogger("social_media_ai")
 
@@ -65,14 +65,20 @@ class SocialMediaAI:
         )
 
         try:
-            # Akıllı router üzerinden LLM çağrısı yap (JSON moduna uygun bir model seçecektir)
-            result_text, provider_used = await smart_router.route(
-                prompt=prompt,
-                strategy=strategy,
-                max_tokens=300,
-                temperature=0.8,
-                system_prompt=self.system_prompt,
+            # prompt_template ve context kullanarak llm_client ile çağrı yap
+            ctx = {
+                "game": game,
+                "streamer": streamer,
+                "emotion": emotion,
+                "transcript": short_transcript
+            }
+            # Varsayılan "viral_package" adında bir prompt template varsayalım ya da generic prompt
+            result_text = await generate_json(
+                "viral_package",
+                context=ctx,
+                language="tr"
             )
+            provider_used = "litellm"
 
             # JSON temizleme
             result_text = result_text.strip()

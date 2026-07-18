@@ -274,8 +274,8 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             )
 
             try:
-                from services.llm_engine import llm_engine
-                response = await llm_engine.generate(prompt, max_tokens=500)
+                from services import llm_client
+                response = await llm_client.generate(prompt, max_tokens=500)
                 if response:
                     lines = response.strip().split("\n")
                     # Numaraları temizle

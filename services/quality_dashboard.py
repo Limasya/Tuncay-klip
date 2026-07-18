@@ -264,7 +264,8 @@ class QualityDashboard:
         """ISO timestamp'ı parse et."""
         try:
             return datetime.fromisoformat(ts.replace("Z", "+00:00"))
-        except Exception:
+        except Exception as e:
+            logger.debug("Timestamp parse failed: %s — %s", ts, e)
             return None
 
     # ── Weekly Report ──

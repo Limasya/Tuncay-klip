@@ -1,8 +1,22 @@
 """
-Ana orkestratör servisi.
+Ana orkestratör servisi (DEPRECATED).
 Tüm alt servisleri birleştirerek otomatik klip yakalama
 ve analiz sistemini yönetir.
+
+.. deprecated::
+    Bu modül artık kullanılmıyor. Yerine ``microservices.orchestrator``
+    (PipelineOrchestrator) kullanılmalı. Yeni API endpoint'leri
+    ``api/routers/pipeline.py`` üzerinden erişilebilir.
+
+    Bu dosya geriye dönük uyumluluk için korunuyor ve ileride
+    tamamen kaldırılacaktır.
 """
+import warnings
+warnings.warn(
+    "services.orchestrator is deprecated; use microservices.orchestrator (PipelineOrchestrator)",
+    DeprecationWarning,
+    stacklevel=1,
+)
 import asyncio
 import logging
 import time

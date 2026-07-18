@@ -118,6 +118,121 @@ class FasterWhisperService:
 
     # ─── Transkripsiyon Metodları ────────────────────────────────────────────
 
+    async def _transcribe_groq_from_bytes(
+        self,
+        audio_bytes: bytes,
+        language: str,
+        filename: str = "audio.wav",
+    ) -> dict:
+        """Groq Whisper'a byte[]'ten transkripsiyon (disk yok, memory only).
+
+        Groq limiti 25MB. Büyük dosyaları parçalara bölüp her birini ayrı ayrı gönderir.
+        """
+        try:
+            import aiohttp
+            import io
+            import json
+
+            api_key = os.environ.get("GROQ_API_KEY", "")
+            if not api_key:
+                raise RuntimeError("GROQ_API_KEY yok")
+
+            url = "https://api.groq.com/openai/v1/audio/transcriptions"
+            GROQ_MAX_BYTES = 24 * 1024 * 1024  # 24MB safe limit (Groq limiti 25MB)
+
+            all_words = []
+            all_segments = []
+            all_text_parts = []
+
+            if len(audio_bytes) <= GROQ_MAX_BYTES:
+                chunks = [(audio_bytes, filename, 0)]
+            else:
+                # WAV chunk: header 44 bytes, chunk boyutu 24MB'a yuvarla
+                # 16kHz mono 16-bit = 32KB/sn → 24MB ≈ 768 saniye ≈ 12.8 dk
+                chunk_duration_sec = int(GROQ_MAX_BYTES / 32000)
+                chunk_samples = chunk_duration_sec * 16000
+                chunk_bytes = chunk_samples * 2  # 16-bit = 2 bytes
+                # WAV header 44 bytes
+                header = audio_bytes[:44]
+                pcm_data = audio_bytes[44:]
+
+                chunks = []
+                offset = 0
+                chunk_idx = 0
+                while offset < len(pcm_data):
+                    chunk_pcm = pcm_data[offset:offset + chunk_bytes]
+                    # Yeni WAV header oluştur
+                    chunk_size = len(chunk_pcm) + 36
+                    chunk_header = bytearray(header)
+                    # dosya boyutunu güncelle
+                    import struct
+                    struct.pack_into('<I', chunk_header, 4, chunk_size)
+                    struct.pack_into('<I', chunk_header, 40, len(chunk_pcm))
+                    chunks.append((bytes(chunk_header) + chunk_pcm, f"chunk_{chunk_idx}.wav", offset / 32000))
+                    offset += chunk_bytes
+                    chunk_idx += 1
+
+                logger.info("Ses %d parçaya bölündü (toplam %.1f MB, her parça ~%.0f dk)",
+                            len(chunks), len(audio_bytes) / 1024 / 1024, chunk_duration_sec / 60)
+
+            for chunk_idx, (chunk_data, chunk_name, time_offset) in enumerate(chunks):
+                logger.info("Groq Whisper'a parca %d/%d gonderiliyor (%.1f MB, baslangic: %.0fs)...",
+                            chunk_idx + 1, len(chunks), len(chunk_data) / 1024 / 1024, time_offset)
+
+                async with aiohttp.ClientSession() as session:
+                    form = aiohttp.FormData()
+                    form.add_field("file", chunk_data, filename=chunk_name)
+                    form.add_field("model", "whisper-large-v3-turbo")
+                    if language and language != "auto":
+                        form.add_field("language", language)
+                    form.add_field("response_format", "verbose_json")
+                    form.add_field("timestamp_granularities[]", "word")
+                    form.add_field("timestamp_granularities[]", "segment")
+
+                    headers = {"Authorization": f"Bearer {api_key}"}
+                    async with session.post(url, data=form, headers=headers, timeout=180) as resp:
+                        if resp.status != 200:
+                            text = await resp.text()
+                            logger.warning("Groq parca %d basarisiz (HTTP %d): %s", chunk_idx + 1, resp.status, text[:200])
+                            continue
+                        data = await resp.json()
+
+                chunk_words = data.get("words", [])
+                chunk_segments = data.get("segments", [])
+                chunk_text = data.get("text", "")
+
+                # Zaman damgalalarını offset'le
+                for w in chunk_words:
+                    w["start"] = round(w.get("start", 0) + time_offset, 3)
+                    w["end"] = round(w.get("end", 0) + time_offset, 3)
+                for s in chunk_segments:
+                    s["start"] = round(s.get("start", 0) + time_offset, 3)
+                    s["end"] = round(s.get("end", 0) + time_offset, 3)
+
+                all_words.extend(chunk_words)
+                all_segments.extend(chunk_segments)
+                all_text_parts.append(chunk_text)
+                logger.info("Groq parca %d tamamlandi: %d kelime, %d segment",
+                            chunk_idx + 1, len(chunk_words), len(chunk_segments))
+
+            if not all_words and not all_text_parts:
+                raise RuntimeError("Tum Groq parcalari basarisiz")
+
+            full_text = " ".join(all_text_parts)
+            return {
+                "text": full_text,
+                "language": data.get("language", language) if data else language,
+                "segments": all_segments,
+                "words": all_words,
+                "srt": self._segments_to_srt(all_segments),
+                "backend": "groq_whisper",
+                "model": "whisper-large-v3-turbo",
+                "chunks": len(chunks),
+            }
+        except Exception as e:
+            logger.warning("Groq Whisper (bytes) failed: %s", e)
+            raise
+
     async def _transcribe_groq(
         self,
         audio_path: str,
@@ -253,6 +368,7 @@ class FasterWhisperService:
         video_or_audio_path: str,
         language: str = "auto",
         extract_audio: bool = True,
+        word_timestamps: bool = False,
     ) -> dict:
         """
         Video/ses dosyasını transkribe et.

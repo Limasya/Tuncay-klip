@@ -554,7 +554,8 @@ class IntelligenceGraphDB:
         cls = cls_map.get(etype, GraphNode)
         try:
             return cls(**d)
-        except Exception:
+        except Exception as e:
+            logger.debug("Graph node deserialization failed for type=%s: %s", etype, e)
             return None
 
 

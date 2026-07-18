@@ -198,7 +198,8 @@ class CostTracker:
                 day_key = rec_time.strftime("%Y-%m-%d")
                 daily[day_key]["total"] += record.amount_usd
                 daily[day_key]["categories"][record.category] += record.amount_usd
-            except Exception:
+            except Exception as e:
+                logger.debug("Cost record parse failed: %s", e)
                 continue
 
         return [

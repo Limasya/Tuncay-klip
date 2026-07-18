@@ -1,0 +1,67 @@
+# docker-compose.postiz.yml — Opsiyonel Postiz self-hosted kurulumu
+# Zero-cost: AGPL-3.0, OAuth bedava.
+#
+# Kullanım:
+#   docker compose -f docker-compose.postiz.yml up -d
+#   docker compose -f docker-compose.postiz.yml down
+#
+# NOT: Postiz tek başına çalışır, ana compose dosyasından bağımsızdır.
+# Ana uygulama POSTIZ_URL ile bağlanır.
+#
+# Güvenlik: Tüm secret'lar .env dosyasından referans ile alınır.
+# .env'de tanımlı olmayan değişkenler compose'u başlatmaz (? syntax).
+
+version: "3.9"
+
+services:
+  postiz:
+    image: ghcr.io/gitroomhq/postiz-app:latest
+    container_name: tuncay-klip-postiz
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    environment:
+      - DATABASE_URL=postgresql://${POSTIZ_DB_USER}:${POSTIZ_DB_PASSWORD}@postiz-db:5432/${POSTIZ_DB_NAME}
+      - REDIS_URL=redis://postiz-redis:6379
+      - URL=http://localhost:5000
+      - JWT_SECRET=${POSTIZ_JWT_SECRET:?Set POSTIZ_JWT_SECRET in .env}
+      - STORAGE_PROVIDER=local
+      - NEXT_PUBLIC_UPLOAD_DIRECTORY=uploads
+    volumes:
+      - postiz_uploads:/app/uploads
+    depends_on:
+      postiz-db:
+        condition: service_healthy
+      postiz-redis:
+        condition: service_healthy
+
+  postiz-db:
+    image: postgres:16-alpine
+    container_name: tuncay-klip-postiz-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTIZ_DB_NAME:?Set POSTIZ_DB_NAME in .env}
+      POSTGRES_USER: ${POSTIZ_DB_USER:?Set POSTIZ_DB_USER in .env}
+      POSTGRES_PASSWORD: ${POSTIZ_DB_PASSWORD:?Set POSTIZ_DB_PASSWORD in .env}
+    volumes:
+      - postiz_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTIZ_DB_USER:-postiz}"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  postiz-redis:
+    image: redis:7-alpine
+    container_name: tuncay-klip-postiz-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --maxmemory 128mb --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  postiz_uploads:
+  postiz_db_data:

@@ -46,3 +46,7 @@ coverage.xml
 
 # Pytest
 .pytest_cache/
+
+models_store/
+.models/
+

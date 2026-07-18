@@ -108,38 +108,10 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:8000,http://127.0.0.1:8000"
     cors_allow_credentials: bool = False
 
-    # LLM Providers
-    openai_api_key: str = ""
-    openai_model: str = "gpt-4o-mini"
-    anthropic_api_key: str = ""
-    claude_model: str = "claude-3-haiku-20240307"
-    gemini_api_key: str = ""
-    gemini_model: str = "gemini-2.0-flash"
-    mistral_api_key: str = ""
-    mistral_model: str = "mistral-small-latest"
-    groq_api_key: str = ""
-    groq_model: str = "llama-3.1-70b-versatile"
-    cohere_api_key: str = ""
-    cohere_model: str = "command-r"
-    together_api_key: str = ""
-    together_model: str = "meta-llama/Llama-3.1-70B-Instruct-Turbo"
-    cerebras_api_key: str = ""
-    cerebras_model: str = "llama3.1-70b"
-    openrouter_api_key: str = ""
-    openrouter_model: str = "meta-llama/llama-3.1-8b-instruct:free"
-    ollama_host: str = ""
-    ollama_model: str = "llama3.1:8b"
-    vllm_host: str = ""
-    vllm_model: str = "meta-llama/Llama-3-8B-Instruct"
-    lm_studio_host: str = ""
-    lm_studio_model: str = "default"
-    localai_host: str = ""
-    localai_model: str = "gpt-3.5-turbo"
-    textgen_host: str = ""
-    textgen_model: str = "default"
-    huggingface_api_token: str = ""
-    huggingface_model: str = "HuggingFaceH4/zephyr-7b-beta"
-    nvidia_api_key: str = ""
+    # LLM Providers — yapılandırma artık litellm_config.yaml üzerinden yönetiliyor.
+    # Provider API key'leri .env dosyasında (OPENAI_API_KEY, GROQ_API_KEY vb.) tanımlı.
+    # Routing zincirleri ve model seçimleri litellm_config.yaml'da tanımlı.
+    # Bakınız: services/llm_client.py (LiteLLM SDK facade) ve litellm_config.yaml.
 
     @property
     def cors_origins_list(self) -> list[str]:

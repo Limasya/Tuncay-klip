@@ -207,7 +207,7 @@ def _get_legacy_engine() -> LLMEngine:
 
 def is_router_active() -> bool:
     """Facade'in LiteLLM Router'ı kullanıp kullanmadığını söyler."""
-    if not is_enabled("llm_litellm_router", default=False):
+    if not is_enabled("llm_litellm_router", default=True):
         return False
     return _get_router() is not None
 
@@ -290,12 +290,41 @@ def _extract_json(raw: str) -> dict[str, Any]:
 # Prompt rendering (LLMEngine.generate ile aynı)
 # ---------------------------------------------------------------------------
 def _render_prompt(template_key: str, context: dict[str, Any], language: str) -> str:
+    """
+    PROMPT_TEMPLATES key'ini context ile doldurur.
+
+    str.format KeyError'lerini önlemek için template'te geçen tüm
+    placeholder'lara default "" verilir (LLMEngine ile aynı yaklaşım).
+    """
     if template_key in PROMPT_TEMPLATES:
         template = PROMPT_TEMPLATES[template_key]
         ctx = dict(context or {})
         ctx.setdefault("language", "Turkish" if language == "tr" else "English")
-        return template.format(**{k: ctx.get(k, "") for k in ctx})
+        # Template'teki tüm placeholder'ları doldur; eksik olanlar ""
+        fields = _template_placeholders(template)
+        return template.format(**{k: ctx.get(k, "") for k in fields})
     return template_key
+
+
+def _template_placeholders(template: str) -> set[str]:
+    """str.format için kullanılan {name} placeholder'larını bulur ({{ }} kaçışını atlar)."""
+    placeholders: set[str] = set()
+    # {{ veya }} kaçışlarını geçici işaret koy
+    cleaned = template.replace("{{", "\x00").replace("}}", "\x01")
+    idx = 0
+    while idx < len(cleaned):
+        brace = cleaned.find("{", idx)
+        if brace == -1:
+            break
+        close = cleaned.find("}", brace + 1)
+        if close == -1:
+            break
+        token = cleaned[brace + 1:close].strip()
+        # yalnızca geçerli Python identifier'lar
+        if token and token.replace("_", "").isalnum():
+            placeholders.add(token)
+        idx = close + 1
+    return placeholders
 
 
 # ---------------------------------------------------------------------------
@@ -322,7 +351,7 @@ async def generate(
     ctx = context or {}
 
     # Path 1: flag kapalı → legacy
-    if not is_enabled("llm_litellm_router", default=False):
+    if not is_enabled("llm_litellm_router", default=True):
         engine = _get_legacy_engine()
         return await engine.generate(
             prompt_template,
@@ -356,18 +385,30 @@ async def generate(
         messages.append({"role": "system", "content": system_prompt})
     messages.append({"role": "user", "content": prompt})
 
-    try:
-        response = await router.acompletion(
-            messages=messages,
-            max_tokens=max_tokens,
-            temperature=temperature,
-        )
-        content = response.choices[0].message.content or ""
-        if len(content.strip()) > 5:
-            return content
-        logger.warning("LiteLLM boş yanıt → template fallback")
-    except Exception as e:
-        logger.warning("LiteLLM Router hatası: %s → template fallback", e)
+    config = _load_config()
+    providers = config.get("tuncay_klip", {}).get("providers", {})
+    model_names = [n for n, v in providers.items() if v.get("enabled")]
+    tried = 0
+    for model_name in model_names:
+        try:
+            response = await router.acompletion(
+                model=model_name,
+                messages=messages,
+                max_tokens=max_tokens,
+                temperature=temperature,
+            )
+            content = response.choices[0].message.content or ""
+            if len(content.strip()) > 5:
+                logger.info("LLM yanıt (%s): %d karakter", model_name, len(content))
+                return content
+            logger.warning("LiteLLM boş yanıt (%s)", model_name)
+        except Exception as e:
+            logger.warning("LiteLLM %s hatası: %s", model_name, e)
+        tried += 1
+    if tried == 0:
+        logger.warning("LiteLLM: etkin provider yok → template fallback")
+    else:
+        logger.warning("LiteLLM: %d provider denendi, tümü başarısız → template fallback", tried)
 
     # Terminal fallback: template
     return _emergency_fallback(prompt_template, ctx)
@@ -393,9 +434,11 @@ async def health_check() -> dict[str, Any]:
     """
     Facade sağlık kontrolü. Hangi path'in aktif olduğunu söyler.
     """
-    flag_on = is_enabled("llm_litellm_router", default=False)
+    flag_on = is_enabled("llm_litellm_router", default=True)
     router = _get_router() if flag_on else None
+    healthy = router is not None or not flag_on
     return {
+        "healthy": healthy,
         "flag_enabled": flag_on,
         "litellm_available": _LITELLM_AVAILABLE,
         "router_active": router is not None,
@@ -411,8 +454,385 @@ def get_router_status() -> dict[str, Any]:
     return {
         "config_path": str(DEFAULT_CONFIG_PATH),
         "litellm_available": _LITELLM_AVAILABLE,
-        "flag_enabled": is_enabled("llm_litellm_router", default=False),
+        "flag_enabled": is_enabled("llm_litellm_router", default=True),
         "router_initialized": _router is not None,
         "enabled_providers": enabled,
         "chains": list(config.get("tuncay_klip", {}).get("chains", {}).keys()),
     }
+
+
+# ---------------------------------------------------------------------------
+# LLMEngine yüksek-seviye method proxy'leri
+# ─────────────────────────────────────────
+# Bu method'lar flag durumuna göre ya LLMEngine.generate() ya da
+# llm_client.generate() üzerinden çalışır. Çağrı noktalarının import
+# değişikliğinden başka bir şey yapması gerekmez.
+# ---------------------------------------------------------------------------
+
+async def generate_titles(
+    streamer_name: str,
+    category: str,
+    emotion: str,
+    platform: str = "youtube",
+    game_name: str = "",
+    viewer_count: int = 0,
+    tags: list[str] | None = None,
+    count: int = 5,
+    language: str = "tr",
+) -> list[str]:
+    ctx = {
+        "streamer_name": streamer_name,
+        "category": category,
+        "emotion": emotion,
+        "platform": platform,
+        "game_name": game_name or "Various",
+        "viewer_count": f"{viewer_count:,}" if viewer_count else "N/A",
+        "tags": ", ".join(tags or []),
+        "duration": "30",
+        "count": count,
+    }
+    result = await generate_json("title_generation", ctx, language)
+    titles = result if isinstance(result, list) else result.get("titles", [])
+    return [str(t) for t in titles[:count]]
+
+
+async def generate_description(
+    title: str,
+    streamer_name: str,
+    category: str,
+    emotion: str,
+    platform: str = "youtube",
+    game_name: str = "",
+    key_moments: str = "",
+    language: str = "tr",
+) -> str:
+    ctx = {
+        "title": title,
+        "streamer_name": streamer_name,
+        "category": category,
+        "emotion": emotion,
+        "platform": platform,
+        "game_name": game_name or "Various",
+        "key_moments": key_moments or "Highlight moment",
+        "duration": "30",
+    }
+    return await generate("description_generation", language, ctx)
+
+
+async def generate_hashtags(
+    category: str,
+    game_name: str,
+    streamer_name: str,
+    emotion: str,
+    platform: str = "youtube",
+    count: int = 15,
+    language: str = "tr",
+) -> list[str]:
+    ctx = {
+        "category": category,
+        "game_name": game_name or "Various",
+        "streamer_name": streamer_name,
+        "emotion": emotion,
+        "platform": platform,
+        "count": count,
+    }
+    result = await generate_json("hashtag_generation", ctx, language)
+    tags = result if isinstance(result, list) else result.get("hashtags", [])
+    return [str(t).replace("#", "").strip() for t in tags[:count]]
+
+
+async def analyze_clip(
+    streamer_name: str,
+    category: str,
+    emotion_scores: dict[str, float],
+    audio_spikes: list[dict],
+    chat_highlights: list[str],
+    key_moments: str,
+    duration: int = 30,
+    language: str = "tr",
+) -> dict[str, Any]:
+    import json as _json
+    ctx = {
+        "streamer_name": streamer_name,
+        "category": category,
+        "duration": str(duration),
+        "emotion_scores": _json.dumps(emotion_scores, ensure_ascii=False),
+        "audio_spikes": _json.dumps(audio_spikes[:5], ensure_ascii=False),
+        "chat_highlights": _json.dumps(chat_highlights[:5], ensure_ascii=False),
+        "key_moments": key_moments or "Highlight moment",
+    }
+    return await generate_json("clip_analysis", ctx, language)
+
+
+async def suggest_thumbnail(
+    title: str,
+    streamer_name: str,
+    category: str,
+    emotion: str,
+    platform: str = "youtube",
+    key_frame_desc: str = "",
+) -> dict[str, Any]:
+    ctx = {
+        "title": title,
+        "streamer_name": streamer_name,
+        "category": category,
+        "emotion": emotion,
+        "platform": platform,
+        "key_frame_desc": key_frame_desc or "Streamer face visible, gaming moment",
+    }
+    return await generate_json("thumbnail_suggestion", ctx)
+
+
+async def generate_ab_test_variants(
+    title: str,
+    streamer_name: str,
+    category: str,
+    emotion: str,
+    platform: str = "youtube",
+    game_name: str = "",
+    count: int = 3,
+    language: str = "tr",
+) -> list[dict[str, str]]:
+    ctx = {
+        "title": title,
+        "streamer_name": streamer_name,
+        "category": category,
+        "emotion": emotion,
+        "platform": platform,
+        "game_name": game_name or "Various",
+        "count": count,
+    }
+    result = await generate_json("ab_test_variants", ctx, language)
+    if isinstance(result, list):
+        return result[:count]
+    return []
+
+
+async def generate_viral_hooks(
+    title: str,
+    streamer_name: str,
+    category: str,
+    emotion: str,
+    duration: float = 30.0,
+    platform: str = "youtube",
+    count: int = 5,
+    language: str = "tr",
+) -> list[str]:
+    ctx = {
+        "title": title,
+        "streamer_name": streamer_name,
+        "category": category,
+        "emotion": emotion,
+        "duration": str(int(duration)),
+        "platform": platform,
+        "count": count,
+    }
+    result = await generate_json("viral_hook", ctx, language)
+    hooks = result if isinstance(result, list) else []
+    return [str(h) for h in hooks[:count]]
+
+
+async def optimize_for_platform(
+    title: str,
+    streamer_name: str,
+    category: str,
+    emotion: str,
+    platform: str = "youtube",
+    language: str = "tr",
+) -> list[str]:
+    ctx = {
+        "title": title,
+        "streamer_name": streamer_name,
+        "category": category,
+        "emotion": emotion,
+        "platform": platform,
+    }
+    result = await generate_json("platform_optimized_title", ctx, language)
+    titles = result if isinstance(result, list) else []
+    return [str(t) for t in titles[:3]]
+
+
+async def generate_content_strategy(
+    title: str,
+    streamer_name: str,
+    category: str,
+    emotion: str,
+    duration: float = 30.0,
+    virality_score: float = 7.0,
+    game_name: str = "",
+    language: str = "tr",
+) -> dict[str, Any]:
+    ctx = {
+        "title": title,
+        "streamer_name": streamer_name,
+        "category": category,
+        "emotion": emotion,
+        "duration": str(int(duration)),
+        "virality_score": str(virality_score),
+        "game_name": game_name or "Various",
+    }
+    return await generate_json("content_strategy", ctx, language)
+
+
+async def suggest_repurpose(
+    title: str,
+    streamer_name: str,
+    category: str,
+    emotion: str,
+    duration: float = 30.0,
+    game_name: str = "",
+    language: str = "tr",
+) -> list[dict[str, Any]]:
+    ctx = {
+        "title": title,
+        "streamer_name": streamer_name,
+        "category": category,
+        "emotion": emotion,
+        "duration": str(int(duration)),
+        "game_name": game_name or "Various",
+    }
+    result = await generate_json("clip_repurpose", ctx, language)
+    return result if isinstance(result, list) else []
+
+
+async def generate_trend_titles(
+    streamer_name: str,
+    category: str,
+    emotion: str,
+    game_name: str = "",
+    platform: str = "youtube",
+    count: int = 5,
+    language: str = "tr",
+) -> list[str]:
+    ctx = {
+        "streamer_name": streamer_name,
+        "category": category,
+        "emotion": emotion,
+        "game_name": game_name or "Various",
+        "platform": platform,
+    }
+    result = await generate_json("trend_aware_title", ctx, language)
+    titles = result if isinstance(result, list) else []
+    return [str(t) for t in titles[:count]]
+
+
+async def adapt_multilang(
+    title: str,
+    streamer_name: str,
+    category: str,
+    emotion: str,
+    source_language: str = "en",
+    language: str = "tr",
+) -> dict[str, str]:
+    ctx = {
+        "title": title,
+        "source_language": source_language,
+        "streamer_name": streamer_name,
+        "category": category,
+        "emotion": emotion,
+    }
+    result = await generate_json("multilang_adaptation", ctx, language)
+    if isinstance(result, dict):
+        return result
+    return {}
+
+
+def score_content(
+    title: str,
+    description: str,
+    hashtags: list[str],
+    platform: str = "youtube",
+) -> dict[str, Any]:
+    """Score generated content quality using rules (no LLM call)."""
+    return _get_legacy_engine().score_content(title, description, hashtags, platform)
+
+
+def score_title(title: str, platform: str = "youtube") -> dict:
+    """Score a single title."""
+    return _get_legacy_engine().score_title(title, platform)
+
+
+async def generate_full_package(
+    streamer_name: str,
+    category: str,
+    emotion: str,
+    platform: str = "youtube",
+    game_name: str = "",
+    viewer_count: int = 0,
+    tags: list[str] | None = None,
+    duration: float = 30.0,
+    language: str = "tr",
+) -> dict[str, Any]:
+    """Multi-step prompt chain: generate titles → description → hashtags → thumbnail → quality."""
+    titles = await generate_titles(
+        streamer_name=streamer_name,
+        category=category,
+        emotion=emotion,
+        platform=platform,
+        game_name=game_name,
+        viewer_count=viewer_count,
+        tags=tags,
+        count=5,
+        language=language,
+    )
+    best_title = titles[0] if titles else f"{streamer_name} - {emotion} moment"
+    best_score = 0.0
+    for t in titles:
+        r = score_title(t, platform)
+        if r.get("score", 0) > best_score:
+            best_score = r["score"]
+            best_title = t
+    description = await generate_description(
+        title=best_title,
+        streamer_name=streamer_name,
+        category=category,
+        emotion=emotion,
+        platform=platform,
+        game_name=game_name,
+        language=language,
+    )
+    hashtags = await generate_hashtags(
+        category=category,
+        game_name=game_name,
+        streamer_name=streamer_name,
+        emotion=emotion,
+        platform=platform,
+        count=15 if platform == "youtube" else 5,
+        language=language,
+    )
+    thumbnail = await suggest_thumbnail(
+        title=best_title,
+        streamer_name=streamer_name,
+        category=category,
+        emotion=emotion,
+        platform=platform,
+    )
+    quality = score_content(best_title, description, hashtags, platform)
+    return {
+        "titles": titles,
+        "selected_title": best_title,
+        "title_score": best_score,
+        "description": description,
+        "hashtags": hashtags,
+        "thumbnail": thumbnail,
+        "quality": quality,
+        "platform": platform,
+        "streamer": streamer_name,
+        "category": category,
+        "emotion": emotion,
+        "generated_at": time.time(),
+    }
+
+
+def get_stats() -> dict[str, Any]:
+    """LLM stats — delegasyon legacy engine."""
+    return _get_legacy_engine().get_stats()
+
+
+def clear_cache():
+    _get_legacy_engine().clear_cache()
+
+
+async def llm_health_check() -> dict[str, Any]:
+    """LLM health probe."""
+    return await _get_legacy_engine().health_check()

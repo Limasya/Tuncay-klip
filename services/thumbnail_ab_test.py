@@ -143,7 +143,7 @@ class ThumbnailABTest:
     ) -> List[str]:
         """LLM ile başlık varyantları üret."""
         try:
-            from services.llm_engine import llm_engine
+            from services import llm_client
             prompt = (
                 f"Bir {game} yayınından viral bir klip için {count} farklı başlık öner.\n"
                 f"Yayıncı: {streamer}\n"
@@ -151,7 +151,7 @@ class ThumbnailABTest:
                 f"Her başlık 100 karakterden kısa olsun.\n"
                 f"Format: her satırda bir başlık, numara yok."
             )
-            result = await llm_engine.generate(prompt, max_tokens=300)
+            result = await llm_client.generate(prompt, max_tokens=300)
             if result:
                 lines = [l.strip() for l in result.strip().split("\n") if l.strip()]
                 # Numaraları temizle

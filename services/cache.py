@@ -24,7 +24,7 @@ async def _get_redis():
     try:
         import redis.asyncio as aioredis
         url = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
-        _redis = aioredis.from_url(url, decode_responses=True, socket_connect_timeout=3)
+        _redis = aioredis.from_url(url, decode_responses=True, socket_connect_timeout=3, protocol=2)
         await asyncio.wait_for(_redis.ping(), timeout=3)
         _connected = True
         logger.info("Redis cache connected")
@@ -45,7 +45,8 @@ async def cache_get(key: str) -> Optional[Any]:
         if raw is None:
             return None
         return json.loads(raw)
-    except Exception:
+    except Exception as e:
+        logger.debug("Cache get failed for key=%s: %s", key, e)
         return None
 
 
@@ -57,7 +58,8 @@ async def cache_set(key: str, value: Any, ttl: int = 300) -> bool:
         serialized = json.dumps(value, default=str)
         await r.setex(key, ttl, serialized)
         return True
-    except Exception:
+    except Exception as e:
+        logger.debug("Cache set failed for key=%s: %s", key, e)
         return False
 
 
@@ -72,7 +74,8 @@ async def cache_delete(pattern: str) -> int:
         if keys:
             return await r.delete(*keys)
         return 0
-    except Exception:
+    except Exception as e:
+        logger.debug("Cache delete failed for pattern=%s: %s", pattern, e)
         return 0
 
 

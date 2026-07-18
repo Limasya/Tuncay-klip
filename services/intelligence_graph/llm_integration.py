@@ -103,8 +103,9 @@ def graph_context_to_prompt(
         if reason:
             sections.append(f"\n## Why This Moment Matters: {reason}")
 
-    # Task-specific instructions
-    sections.append("\n## Task:")
+    # Task-specific instructions — context_only durumunda task başlığı eklenmez.
+    if task != "context_only":
+        sections.append("\n## Task:")
 
     if task == "analyze":
         if language == "tr":
@@ -159,7 +160,7 @@ def graph_context_to_prompt(
             )
 
     elif task == "context_only":
-        # Sadece context, task talimatı yok
+        # Sadece context — task talimatı yok, zaten yukarıda atlandı.
         pass
 
     return "\n".join(sections)

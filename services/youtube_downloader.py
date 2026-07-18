@@ -105,6 +105,37 @@ class CurlCffiFfmpegStrategy(DownloadStrategy):
             logger.debug("curl_cffi API fetch failed: %s", exc)
             return None
 
+    def _validate_mp4(self, file_path: str) -> dict:
+        """ffprobe ile MP4 dosyasini dogrula."""
+        ffmpeg_bin = _FFMPEG_PATH or "ffmpeg"
+        ffprobe_bin = ffmpeg_bin.replace("ffmpeg", "ffprobe") if "ffmpeg" in ffmpeg_bin else "ffprobe"
+        try:
+            cmd = [
+                ffprobe_bin, "-v", "quiet",
+                "-show_entries", "format=duration,size:stream=codec_type,codec_name",
+                "-of", "json", file_path,
+            ]
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            if result.returncode != 0:
+                return {"valid": False, "error": f"ffprobe failed: {result.stderr[:200]}"}
+            import json
+            probe = json.loads(result.stdout)
+            streams = probe.get("streams", [])
+            fmt = probe.get("format", {})
+            duration = float(fmt.get("duration", 0))
+            size = int(fmt.get("size", 0))
+            has_video = any(s.get("codec_type") == "video" for s in streams)
+            has_audio = any(s.get("codec_type") == "audio" for s in streams)
+            if duration <= 0:
+                return {"valid": False, "error": "zero duration"}
+            if not has_video:
+                return {"valid": False, "error": "no video stream"}
+            if size < 1024 * 1024:
+                return {"valid": False, "error": f"file too small ({size} bytes)"}
+            return {"valid": True, "duration": duration, "size": size, "has_audio": has_audio}
+        except Exception as e:
+            return {"valid": False, "error": str(e)}
+
     def _download_ffmpeg(self, source_url: str, output_path: str) -> bool:
         ffmpeg_bin = _FFMPEG_PATH or "ffmpeg"
         try:
@@ -120,10 +151,23 @@ class CurlCffiFfmpegStrategy(DownloadStrategy):
                 cmd, capture_output=True, text=True, timeout=3600,
             )
             if result.returncode != 0:
-                logger.debug("ffmpeg stderr: %s", result.stderr[-500:] if result.stderr else "")
-            return result.returncode == 0 and Path(output_path).exists()
+                logger.warning("ffmpeg download failed (code %d): %s", result.returncode, result.stderr[-500:] if result.stderr else "")
+                if Path(output_path).exists():
+                    Path(output_path).unlink(missing_ok=True)
+                return False
+            if not Path(output_path).exists():
+                return False
+            validation = self._validate_mp4(output_path)
+            if not validation.get("valid"):
+                logger.warning("Downloaded MP4 invalid: %s — deleting", validation.get("error"))
+                Path(output_path).unlink(missing_ok=True)
+                return False
+            logger.info("MP4 validated: duration=%.1fs, has_audio=%s", validation.get("duration", 0), validation.get("has_audio"))
+            return True
         except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
-            logger.debug("ffmpeg download failed: %s", exc)
+            logger.warning("ffmpeg download failed: %s", exc)
+            if Path(output_path).exists():
+                Path(output_path).unlink(missing_ok=True)
             return False
 
     async def download(self, url: str, output_name: Optional[str] = None) -> Dict[str, Any]:
@@ -188,11 +232,18 @@ class YtDlpStrategy(DownloadStrategy):
                     possible_paths = list(self.download_dir.glob(f"{path_obj.stem}.*"))
                     if possible_paths:
                         file_path = str(possible_paths[0])
+                if not Path(file_path).exists():
+                    return {"error": "yt-dlp: dosya olusturulamadi"}
+                validator = CurlCffiFfmpegStrategy(self.download_dir)
+                validation = validator._validate_mp4(file_path)
+                if not validation.get("valid"):
+                    Path(file_path).unlink(missing_ok=True)
+                    return {"error": f"yt-dlp: MP4 gecersiz — {validation.get('error')}"}
                 return {
                     "success": True,
                     "title": info_dict.get("title", "Unknown"),
                     "file_path": file_path,
-                    "duration": info_dict.get("duration", 0),
+                    "duration": validation.get("duration", info_dict.get("duration", 0)),
                 }
         except Exception as e:
             return {"error": f"yt-dlp: {e}"}
@@ -219,8 +270,20 @@ class DirectUrlStrategy(DownloadStrategy):
                 output_path,
             ]
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=3600)
-            return result.returncode == 0 and Path(output_path).exists()
+            if result.returncode != 0 or not Path(output_path).exists():
+                if Path(output_path).exists():
+                    Path(output_path).unlink(missing_ok=True)
+                return False
+            validator = CurlCffiFfmpegStrategy(self.download_dir)
+            validation = validator._validate_mp4(output_path)
+            if not validation.get("valid"):
+                logger.warning("Direct download MP4 invalid: %s", validation.get("error"))
+                Path(output_path).unlink(missing_ok=True)
+                return False
+            return True
         except (subprocess.TimeoutExpired, FileNotFoundError):
+            if Path(output_path).exists():
+                Path(output_path).unlink(missing_ok=True)
             return False
 
     async def download(self, url: str, output_name: Optional[str] = None) -> Dict[str, Any]:
@@ -290,6 +353,7 @@ class YouTubeDownloader:
         """Sirayla strateji deneyerek videoyu indir.
 
         Bir strateji basarisiz olursa siradakine gecer.
+        Her basarili indirmeyi ffprobe ile dogrular.
         """
         if not self._strategies:
             return {"error": "Hicbir indirme stratejisi mevcut degil"}
@@ -301,7 +365,20 @@ class YouTubeDownloader:
             logger.info("Trying download strategy: %s for %s", strategy.name, url)
             result = await strategy.download(url, output_name)
             if result.get("success"):
-                logger.info("Download success with %s: %s", strategy.name, result.get("file_path"))
+                file_path = result.get("file_path", "")
+                if file_path and Path(file_path).exists():
+                    if hasattr(strategy, '_validate_mp4'):
+                        validation = strategy._validate_mp4(file_path)
+                    else:
+                        validator = CurlCffiFfmpegStrategy(self.download_dir)
+                        validation = validator._validate_mp4(file_path)
+                    if not validation.get("valid"):
+                        logger.warning("Downloaded file invalid after %s: %s — cleaning up", strategy.name, validation.get("error"))
+                        Path(file_path).unlink(missing_ok=True)
+                        last_error = f"validation failed: {validation.get('error')}"
+                        continue
+                    result["duration"] = validation.get("duration", result.get("duration", 0))
+                logger.info("Download success with %s: %s", strategy.name, file_path)
                 return result
             last_error = result.get("error", "unknown")
             logger.warning("Strategy %s failed: %s", strategy.name, last_error)

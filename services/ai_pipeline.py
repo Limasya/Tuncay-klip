@@ -92,12 +92,12 @@ class AIPipelineHub:
 
         # LLM Engine (always available via template fallback)
         try:
-            from services.llm_engine import llm_engine
-            self._services["llm_engine"] = llm_engine
-            logger.info("LLM Engine connected (%d providers)", llm_engine._provider_count)
+            from services import llm_client
+            self._services["llm_client"] = llm_client
+            logger.info("LLM Client connected")
         except Exception as e:
-            logger.warning("LLM Engine unavailable: %s", e)
-            self._services["llm_engine"] = None
+            logger.warning("LLM Client unavailable: %s", e)
+            self._services["llm_client"] = None
 
         # Social Media AI
         try:
@@ -213,7 +213,7 @@ class AIPipelineHub:
         """Generate full AI metadata for a clip."""
         self._metrics["clips_analyzed"] += 1
 
-        llm = self._services.get("llm_engine")
+        llm = self._services.get("llm_client")
         if llm is None:
             return {"error": "llm_engine_unavailable"}
 
@@ -276,7 +276,7 @@ class AIPipelineHub:
         tasks = []
 
         # Task 1: LLM metadata generation
-        llm = self._services.get("llm_engine")
+        llm = self._services.get("llm_client")
         metadata_task = None
         if llm is not None:
             metadata_task = asyncio.create_task(self.generate_clip_metadata(

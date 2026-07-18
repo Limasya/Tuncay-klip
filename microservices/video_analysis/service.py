@@ -408,10 +408,13 @@ class VideoAnalysisService:
         )
 
     async def _on_frame_event(self, event: SystemEvent):
-        """Handle FRAME_EXTRACTED event — look up frame in capture buffer."""
-        # In full deployment, frame data comes via shared memory or gRPC
-        # For local mode, we process directly from capture service
-        pass
+        """Handle FRAME_EXTRACTED event — no-op in current architecture.
+
+        The orchestrator calls ``analyze_frame()`` directly for each new frame.
+        This event handler exists for future shared-memory / gRPC deployments
+        where frames arrive via the event bus instead of direct method calls.
+        """
+        pass  # Intentional no-op; see docstring.
 
     async def analyze_frame(self, frame_image: np.ndarray, frame_id: str = "") -> FrameAnalysisResult:
         """

@@ -299,66 +299,77 @@ class KickAPIService:
             f"https://kick.com/{settings.kick_channel_slug}", limit, cookie_args=[]
         )
 
-    # --- Yayin Durumu (auth-free) ---
+    # --- Yayin Durumu (auth-free, curl_cffi Cloudflare bypass) ---
     async def get_livestream_info(self) -> Dict[str, Any]:
         """
         Yayincinin canli yayin bilgisini ceker.
-        Web API: GET /api/v2/channels/{slug}/livestream
-        Auth gerektirmez.
+        Once curl_cffi (Cloudflare bypass), sonra httpx dener.
         """
-        client = await self._get_client()
         slug = settings.kick_channel_slug
-
         url = f"{settings.kick_api_base}/channels/{slug}/livestream"
-        try:
-            response = await client.get(url)
-            response.raise_for_status()
-            data = response.json()
+        data = None
 
-            # livestream None ise yayin yok
-            livestream = data.get("livestream")
-            if livestream is None or livestream is False or livestream == {}:
+        # Strateji 1: curl_cffi ile Cloudflare bypass
+        if _CURL_CFFI_AVAILABLE:
+            try:
+                def _fetch():
+                    session = CurlSession(impersonate="chrome124")
+                    resp = session.get(url, timeout=15)
+                    resp.raise_for_status()
+                    return resp.json()
+                data = await asyncio.to_thread(_fetch)
+            except Exception as e:
+                logger.debug("curl_cffi livestream failed: %s", e)
+
+        # Strateji 2: httpx fallback
+        if data is None:
+            try:
+                client = await self._get_client()
+                response = await client.get(url)
+                response.raise_for_status()
+                data = response.json()
+            except Exception as e:
+                logger.debug("httpx livestream failed: %s", e)
                 return {"is_live": False, "title": "", "slug": slug}
 
-            # is_live kontrolu
-            is_live = data.get("is_live", False)
-            if not is_live and livestream:
-                # livestream objesi varsa yayin var demektir
-                is_live = True
-
-            title = ""
-            category = ""
-            viewer_count = 0
-            thumbnail_url = ""
-            started_at = None
-            playback_url = None
-
-            if isinstance(livestream, dict):
-                title = livestream.get("title", "")
-                category = livestream.get("categories", [{}])
-                if isinstance(category, list) and category:
-                    category = category[0].get("name", "") if isinstance(category[0], dict) else str(category[0])
-                elif not isinstance(category, str):
-                    category = ""
-                viewer_count = livestream.get("viewer_count", 0)
-                thumbnail_url = livestream.get("thumbnail", {}).get("url", "") if isinstance(livestream.get("thumbnail"), dict) else livestream.get("thumbnail_url", "")
-                started_at = livestream.get("created_at") or livestream.get("started_at")
-                playback_url = livestream.get("playback_url", "")
-
-            return {
-                "is_live": is_live,
-                "title": title,
-                "category": category,
-                "viewer_count": viewer_count,
-                "thumbnail_url": thumbnail_url,
-                "started_at": started_at,
-                "playback_url": playback_url,
-                "slug": slug,
-            }
-
-        except httpx.HTTPError as e:
-            logger.error("Yayin durumu alinamadi: %s", e)
+        # Yaniti isle
+        livestream = data.get("livestream")
+        if livestream is None or livestream is False or livestream == {}:
             return {"is_live": False, "title": "", "slug": slug}
+
+        is_live = data.get("is_live", False)
+        if not is_live and livestream:
+            is_live = True
+
+        title = ""
+        category = ""
+        viewer_count = 0
+        thumbnail_url = ""
+        started_at = None
+        playback_url = None
+
+        if isinstance(livestream, dict):
+            title = livestream.get("title", "")
+            category = livestream.get("categories", [{}])
+            if isinstance(category, list) and category:
+                category = category[0].get("name", "") if isinstance(category[0], dict) else str(category[0])
+            elif not isinstance(category, str):
+                category = ""
+            viewer_count = livestream.get("viewer_count", 0)
+            thumbnail_url = livestream.get("thumbnail", {}).get("url", "") if isinstance(livestream.get("thumbnail"), dict) else livestream.get("thumbnail_url", "")
+            started_at = livestream.get("created_at") or livestream.get("started_at")
+            playback_url = livestream.get("playback_url", "")
+
+        return {
+            "is_live": is_live,
+            "title": title,
+            "category": category,
+            "viewer_count": viewer_count,
+            "thumbnail_url": thumbnail_url,
+            "started_at": started_at,
+            "playback_url": playback_url,
+            "slug": slug,
+        }
 
     async def is_live(self) -> bool:
         """Yayinci su an canli mi?"""
@@ -401,27 +412,47 @@ class KickAPIService:
             logger.error("Stream URL alinamadi: %s", e)
             return None
 
-    # --- Public Clips (auth-free web API) ---
+    # --- Public Clips (curl_cffi Cloudflare bypass) ---
     async def list_channel_clips(
         self,
         limit: int = 25,
         sort: str = "newest",
     ) -> list[dict[str, Any]]:
-        """Kanal公众clip'lerini listele (auth-free).
-
-        Endpoint: GET /api/v2/channels/{slug}/clips
-        """
-        client = await self._get_client()
+        """Kanal public clip'lerini listele. Once curl_cffi, sonra httpx dener."""
         slug = settings.kick_channel_slug
-
         url = f"{settings.kick_api_base}/channels/{slug}/clips"
         params = {"limit": limit, "sort": sort}
 
+        # Strateji 1: curl_cffi ile Cloudflare bypass
+        if _CURL_CFFI_AVAILABLE:
+            try:
+                def _fetch():
+                    session = CurlSession(impersonate="chrome124")
+                    resp = session.get(url, params=params, timeout=15)
+                    resp.raise_for_status()
+                    return resp.json()
+                data = await asyncio.to_thread(_fetch)
+                clips = []
+                items = data if isinstance(data, list) else data.get("data", data.get("clips", []))
+                if isinstance(items, list):
+                    for item in items:
+                        if not isinstance(item, dict):
+                            continue
+                        clip = self._normalize_clip(item)
+                        if clip:
+                            clips.append(clip)
+                if clips:
+                    logger.info("curl_cffi discovered %d clips for %s", len(clips), slug)
+                    return clips[:limit]
+            except Exception as e:
+                logger.debug("curl_cffi clips failed: %s", e)
+
+        # Strateji 2: httpx fallback
         try:
+            client = await self._get_client()
             response = await client.get(url, params=params)
             response.raise_for_status()
             data = response.json()
-
             clips = []
             items = data if isinstance(data, list) else data.get("data", data.get("clips", []))
             if isinstance(items, list):
@@ -431,12 +462,10 @@ class KickAPIService:
                     clip = self._normalize_clip(item)
                     if clip:
                         clips.append(clip)
-
             logger.info("Discovered %d public clips for %s", len(clips), slug)
             return clips[:limit]
-
-        except httpx.HTTPError as e:
-            logger.error("Clips listesi alinamadi: %s", e)
+        except Exception as e:
+            logger.debug("Clips listesi alinamadi: %s", e)
             return []
 
     async def list_clips(

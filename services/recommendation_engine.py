@@ -348,9 +348,8 @@ class ClipRanker:
             freshness = max(0, 1.0 - age_hours / 168)  # decay over 1 week
             score += freshness * 0.1
 
-            # 7. Diversity bonus (10%) - computed per batch
-            # (simple: give boost to less common categories)
-            score += 0.0  # placeholder, computed below
+            # 7. Diversity (10%) — batch-based, applied as penalty after scoring loop.
+            # Cannot compute per-clip because it requires full batch category counts.
 
             # 8. Trending boost (5%)
             score += self._trending_boost.get(cid, 0.0)

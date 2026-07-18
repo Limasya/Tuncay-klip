@@ -21,7 +21,7 @@ import logging
 from datetime import datetime
 from typing import Optional
 
-from services.llm_engine import llm_engine
+from services import llm_client
 from shared.event_bus import EventBus, get_event_bus
 from shared.event_schemas import EventType, SystemEvent
 
@@ -105,7 +105,7 @@ class AIGeneratorMicroservice:
             mapped_emotion = emotion_map.get(category, emotion or "excitement")
 
             # Generate titles (multiple variants for A/B testing)
-            titles = await llm_engine.generate_titles(
+            titles = await llm_client.generate_titles(
                 streamer_name=self.streamer_name,
                 category=category,
                 emotion=mapped_emotion,
@@ -119,7 +119,7 @@ class AIGeneratorMicroservice:
             self._titles_generated += len(titles)
 
             # Generate description
-            description = await llm_engine.generate_description(
+            description = await llm_client.generate_description(
                 title=titles[0] if titles else f"{self.streamer_name} highlight",
                 streamer_name=self.streamer_name,
                 category=category,
@@ -130,7 +130,7 @@ class AIGeneratorMicroservice:
             )
 
             # Generate hashtags
-            hashtags = await llm_engine.generate_hashtags(
+            hashtags = await llm_client.generate_hashtags(
                 category=category,
                 game_name=game_name,
                 streamer_name=self.streamer_name,
@@ -141,7 +141,7 @@ class AIGeneratorMicroservice:
             )
 
             # Generate thumbnail suggestion
-            thumbnail = await llm_engine.suggest_thumbnail(
+            thumbnail = await llm_client.suggest_thumbnail(
                 title=titles[0] if titles else "",
                 streamer_name=self.streamer_name,
                 category=category,
@@ -153,7 +153,7 @@ class AIGeneratorMicroservice:
             platform_metadata = {}
             for platform in self.default_platforms:
                 try:
-                    platform_tags = await llm_engine.generate_hashtags(
+                    platform_tags = await llm_client.generate_hashtags(
                         category=category,
                         game_name=game_name,
                         streamer_name=self.streamer_name,
@@ -175,7 +175,7 @@ class AIGeneratorMicroservice:
                 }
 
             self._generated += 1
-            if llm_engine.get_stats().get("fallback_count", 0) == 0:
+            if llm_client.get_stats().get("fallback_count", 0) == 0:
                 self._llm_used_count += 1
             else:
                 self._fallback_used_count += 1
@@ -248,7 +248,7 @@ class AIGeneratorMicroservice:
                 )
 
     def get_status(self) -> dict:
-        llm_stats = llm_engine.get_stats()
+        llm_stats = llm_client.get_stats()
         return {
             "generated": self._generated,
             "failed": self._failed,

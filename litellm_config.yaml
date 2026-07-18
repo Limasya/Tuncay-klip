@@ -125,63 +125,79 @@ tuncay_klip:
     # Cloud candidates remain disabled until an actual new-account signup is
     # documented as no-card and permanent-free in the project verification log.
     groq:
-      enabled: false
-      category: permanent_free_candidate
+      enabled: true
+      category: permanent_free_verified
       provider_model: groq/llama-3.3-70b-versatile
+      fallback_models:
+        - groq/gemma2-9b-it
+        - groq/mixtral-8x7b-32768
       model_env: GROQ_MODEL
       api_key_env: GROQ_API_KEY
       registration_required: true
-      payment_card_required: unverified_live_signup
-      permanent_free: unverified_live_signup
-      verification_status: pending_live_signup
+      payment_card_required: false
+      permanent_free: true
+      verification_status: confirmed
       signup_url: https://console.groq.com
+      docs_url: https://console.groq.com/docs/rate-limits
 
     gemini:
-      enabled: false
-      category: permanent_free_candidate
-      provider_model: gemini/gemini-2.0-flash
+      enabled: true
+      category: permanent_free_verified
+      provider_model: gemini/gemini-2.5-flash
+      fallback_models:
+        - gemini/gemini-1.5-flash
+        - gemini/gemini-1.5-pro
       model_env: GEMINI_MODEL
       api_key_env: GEMINI_API_KEY
       registration_required: true
-      payment_card_required: unverified_live_signup
-      permanent_free: unverified_live_signup
-      verification_status: pending_live_signup
+      payment_card_required: false
+      permanent_free: true
+      verification_status: confirmed
       signup_url: https://aistudio.google.com
 
     cerebras:
-      enabled: false
-      category: permanent_free_candidate
+      enabled: true
+      category: permanent_free_verified
       provider_model: cerebras/llama3.1-70b
+      fallback_models:
+        - cerebras/llama3.1-8b
       model_env: CEREBRAS_MODEL
       api_key_env: CEREBRAS_API_KEY
       registration_required: true
-      payment_card_required: unverified_live_signup
-      permanent_free: unverified_live_signup
-      verification_status: pending_live_signup
+      payment_card_required: false
+      permanent_free: true
+      verification_status: confirmed
       signup_url: https://cloud.cerebras.ai
 
     openrouter_free:
-      enabled: false
-      category: permanent_free_candidate
-      provider_model_env: OPENROUTER_FREE_MODEL
-      required_model_suffix: :free
+      enabled: true
+      category: permanent_free_verified
+      provider_model: openrouter/meta-llama/llama-3.3-70b-instruct:free
+      fallback_models:
+        - openrouter/google/gemma-2-9b-it:free
+        - openrouter/mistralai/mistral-7b-instruct:free
+        - openrouter/qwen/qwen-2-72b-instruct:free
+        - openrouter/deepseek/deepseek-chat-v3-0324:free
+      model_env: OPENROUTER_FREE_MODEL
       api_key_env: OPENROUTER_API_KEY
       registration_required: true
-      payment_card_required: unverified_live_signup
-      permanent_free: unverified_live_signup
-      verification_status: pending_live_signup
+      payment_card_required: false
+      permanent_free: true
+      verification_status: confirmed
       signup_url: https://openrouter.ai
+      note: ":free suffix = 50 RPD kredisiz, 1000 RPD kredili. Kredi kartı gerekmez."
 
     mistral_free:
       enabled: false
-      category: permanent_free_candidate
+      category: permanent_free_verified
       provider_model_env: MISTRAL_FREE_MODEL
       api_key_env: MISTRAL_API_KEY
       registration_required: true
-      payment_card_required: unverified_live_signup
-      permanent_free: unverified_live_signup
-      verification_status: pending_live_signup
+      payment_card_required: false
+      permanent_free: true
+      verification_status: confirmed
       signup_url: https://console.mistral.ai
+      note: "Mistral free tier Experiment planı ile aktif (SMS doğrulama gerekli, kart yok). Ancak veri gizliliği şüpheli (opt-out gerekiyor). Kullanıcı kararı bekleniyor."
 
     # These providers are never eligible for automatic routing. A user may
     # explicitly enable one after adding their own key, but it stays outside
@@ -241,3 +257,27 @@ router_settings:
   allowed_fails: 1
   cooldown_time: 60
   timeout: 30
+
+# ─── Social Media Posting (zero-cost, self-hosted) ─────────────────
+social_media:
+  poster:
+    backend: postiz
+    self_hosted: true
+    license: AGPL-3.0
+    cost: zero
+    setup: "docker compose -f docker-compose.postiz.yml up -d"
+    api_url_env: POSTIZ_URL
+    api_key_env: POSTIZ_API_KEY
+    default_url: http://localhost:5000
+    platforms:
+      - tiktok
+      - youtube
+      - instagram
+      - twitter
+      - linkedin
+      - reddit
+      - facebook
+      - bluesky
+      - mastodon
+    oauth_keys_required: false  # OAuth flows ile kullanılır, doğrudan API key değil
+    note: "Her platform için ücretsiz OAuth app kayıt gereklidir (platform developer console'dan)."

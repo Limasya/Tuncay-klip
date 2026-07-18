@@ -295,7 +295,7 @@ class PipelineOrchestrator:
             logger.error("Audio analysis error (non-fatal): %s", e)
 
     async def _on_clip_created(self, event: SystemEvent):
-        """Handle clip creation events — log, save to DB, and enrich with AI."""
+        """Handle clip creation events — run AI Critic, save to DB, enrich with AI."""
         clip_data = event.payload
         logger.info(
             f"CLIP CREATED! "
@@ -303,6 +303,21 @@ class PipelineOrchestrator:
             f"Category: {clip_data.get('category', 'unknown')} "
             f"Path: {clip_data.get('file_path', 'unknown')}"
         )
+
+        # Run AI Critic on the rendered clip so critic_score persists to DB.
+        file_path = clip_data.get("file_path", "")
+        if file_path:
+            try:
+                from services.ai_critic import ai_critic
+                report = await ai_critic.critique(video_path=file_path)
+                clip_data["critique"] = report.to_dict()
+                logger.info(
+                    "AI Critic: score=%.2f passed=%s for %s",
+                    report.score, report.passed, file_path,
+                )
+            except Exception as e:
+                logger.warning("AI Critic failed for %s (non-critical): %s", file_path, e)
+
         # Save to database
         try:
             from api.routers.pipeline import save_pipeline_clip_to_db

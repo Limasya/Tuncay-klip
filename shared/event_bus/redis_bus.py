@@ -95,6 +95,7 @@ class RedisEventBus:
         self._redis = aioredis.from_url(
             self._redis_url,
             decode_responses=True,
+            protocol=2,
         )
 
         # Test connection

@@ -20,8 +20,19 @@ from fastapi import Depends, HTTPException, Request, status
 logger = logging.getLogger(__name__)
 
 _AUTH_DISABLED = os.environ.get("AUTH_DISABLED", "false").lower() in ("true", "1", "yes")
+_DEPLOYMENT_ENV = os.environ.get("DEPLOYMENT_ENVIRONMENT", "development").lower()
 _AUTH_AVAILABLE = False
 _dev_principal = None
+
+# İkincil production guard: config.py model_validator'ı bypass edilse bile
+# production'da auth_disabled etkinleştirilemez.
+if _AUTH_DISABLED and _DEPLOYMENT_ENV == "production":
+    logger.critical(
+        "CRITICAL SECURITY: AUTH_DISABLED=1 is set in PRODUCTION environment. "
+        "This is a security violation — auth bypass is NOT permitted in production. "
+        "Falling back to auth enforcement. Set DEPLOYMENT_ENVIRONMENT=development to allow."
+    )
+    _AUTH_DISABLED = False  # Force-enable auth in production regardless of env var
 
 _real_get_current_principal: Any = None
 _real_require_scope: Any = None

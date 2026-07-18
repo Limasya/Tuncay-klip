@@ -176,7 +176,8 @@ class WordHighlightEngine:
             transcription = await subtitle_service.transcribe_audio(
                 audio_path, language=language
             )
-        except Exception:
+        except Exception as e:
+            logger.debug("Transcription failed for word highlighting: %s", e)
             return []
 
         words = []

@@ -153,7 +153,8 @@ class WSManager:
         try:
             await client.send(data)
             return True
-        except Exception:
+        except Exception as e:
+            logger.debug("WebSocket send failed to %s: %s", client.client_id, e)
             return False
 
     async def _heartbeat_loop(self):

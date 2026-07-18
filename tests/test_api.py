@@ -80,8 +80,9 @@ async def test_clip_not_found(client):
 @pytest.mark.asyncio
 async def test_system_start_stop(client):
     # Start without Kick credentials should still respond
+    # 409 = channel not live, 503 = orchestrator unavailable, 500 = other error
     resp = await client.post("/api/system/start")
-    assert resp.status_code in (200, 500, 503)
+    assert resp.status_code in (200, 409, 500, 503)
 
     resp = await client.post("/api/system/stop")
     assert resp.status_code in (200, 400)

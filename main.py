@@ -99,12 +99,6 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("Auto-shutdown hatası: %s", e)
     try:
-        from services.orchestrator import orchestrator as svc_orch
-        if svc_orch.is_monitoring:
-            await svc_orch.stop()
-    except Exception as e:
-        logger.warning("services orchestrator kapatılırken hata: %s", e)
-    try:
         from microservices.orchestrator import orchestrator as pipe_orch
         if pipe_orch._is_running:
             await pipe_orch.stop()
@@ -256,6 +250,10 @@ async def websocket_dashboard(websocket: WebSocket):
     client = await ws_manager.connect(websocket, client_id)
 
     try:
+        # Send initial status on connect
+        status = await _build_dashboard_status()
+        await client.send({"type": "status_update", "payload": status})
+
         while True:
             data = await websocket.receive_json()
 
@@ -263,6 +261,9 @@ async def websocket_dashboard(websocket: WebSocket):
             if data.get("subscribe"):
                 client.subscriptions = set(data["subscribe"])
                 await client.send({"type": "subscribed", "events": list(client.subscriptions)})
+                # Send status after subscribe
+                status = await _build_dashboard_status()
+                await client.send({"type": "status_update", "payload": status})
 
             # Handle pong
             if data.get("type") == "pong":
@@ -283,15 +284,24 @@ async def _build_dashboard_status() -> dict:
     """Build status payload for dashboard."""
     try:
         from microservices.orchestrator import orchestrator
+        from services import llm_client
         status = orchestrator.get_full_status()
+        facade = llm_client.get_router_status()
         return {
             "clips": status.get("pipeline", {}).get("clips_today", 0),
             "stream_active": status.get("pipeline", {}).get("is_running", False),
             "events_dispatched": status.get("event_bus", {}).get("events_dispatched", 0),
             "pipeline_runs": status.get("ai_pipeline", {}).get("total_pipeline_runs", 0),
-            "ws_clients": 0,
+            "ws_clients": len(status.get("ws_manager", {}).get("active_connections", [])) if isinstance(status.get("ws_manager"), dict) else 0,
+            "llm_providers": len(facade.get("enabled_providers", [])),
+            "services": [
+                {"name": "API", "status": "ok", "uptime": "-"},
+                {"name": "Event Bus", "status": "ok", "uptime": "-"},
+                {"name": "AI Pipeline", "status": "ok", "uptime": "-"},
+            ],
         }
-    except Exception:
+    except Exception as e:
+        logger.debug("Dashboard status build failed: %s", e)
         return {"clips": 0, "stream_active": False}
 
 

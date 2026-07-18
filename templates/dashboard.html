@@ -177,6 +177,7 @@ function updateMetrics(m) {
   if (m.requests !== undefined) setText('m-requests', m.requests);
   if (m.pipeline_runs !== undefined) setText('m-pipeline', m.pipeline_runs);
   if (m.events_dispatched !== undefined) setText('m-events', m.events_dispatched);
+  if (m.llm_providers !== undefined) setText('m-llm-providers', m.llm_providers);
   if (m.cache_hit_rate !== undefined) setText('m-cache', m.cache_hit_rate + '%');
   if (m.stream_active !== undefined) {
     const el = document.getElementById('stream-status');
@@ -188,6 +189,7 @@ function updateMetrics(m) {
     if (rpsHistory.length > 60) rpsHistory.shift();
     renderSparkline();
   }
+  if (m.services) updateServices(m.services);
 }
 
 function updateServices(services) {
@@ -229,34 +231,40 @@ async function pollStatus() {
     if (r.ok) {
       const d = await r.json();
       updateMetrics({
-        clips: d.pipeline?.clips_today || 0,
-        ws_clients: d.ws?.active_connections || 0,
-        requests: d.metrics?.total_requests || 0,
-        pipeline_runs: d.ai_pipeline?.total_pipeline_runs || 0,
-        events_dispatched: d.event_bus?.events_dispatched || 0,
-        stream_active: d.pipeline?.is_running || false,
+        clips: d.clips_today || 0,
+        stream_active: d.stream_active || false,
       });
+    }
+
+    const dhr = await fetch('/api/admin/health/deep');
+    if (dhr.ok) {
+      const dh = await dhr.json();
+      const dbOk = dh.checks?.database === 'ok';
+      const redisOk = dh.checks?.redis === 'ok';
+      const ebOk = dh.checks?.event_bus === 'ok';
+      const pipeOk = dh.checks?.ai_pipeline === 'idle' || dh.checks?.ai_pipeline === 'ok';
       updateServices([
-        { name: 'API', status: 'ok', uptime: '-' },
-        { name: 'Event Bus', status: d.event_bus?.events_published > 0 ? 'ok' : 'degraded', uptime: '-' },
-        { name: 'AI Pipeline', status: d.ai_pipeline ? 'ok' : 'degraded', uptime: '-' },
+        { name: 'API', status: dh.status === 'healthy' ? 'ok' : 'degraded', uptime: '-' },
+        { name: 'Event Bus', status: ebOk ? 'ok' : 'degraded', uptime: '-' },
+        { name: 'AI Pipeline', status: pipeOk ? 'ok' : 'degraded', uptime: '-' },
+        { name: 'Database', status: dbOk ? 'ok' : 'degraded', uptime: '-' },
+        { name: 'Redis', status: redisOk ? 'ok' : 'degraded', uptime: '-' },
       ]);
     }
-    
-    // LLM Status fetch
+
     const llmReq = await fetch('/api/llm/status');
     if (llmReq.ok) {
         const llmData = await llmReq.json();
-        setText('m-llm-providers', llmData.engine?.total_providers || 0);
+        const providers = llmData.facade?.enabled_providers || [];
+        setText('m-llm-providers', providers.length);
     }
 
-    // Vector Status fetch
     const vectorReq = await fetch('/api/llm/vector/stats');
     if (vectorReq.ok) {
         const vectorData = await vectorReq.json();
-        setText('m-vector-clips', vectorData.total_clips || 0);
+        setText('m-vector-clips', vectorData.total_clips || vectorData.count || 0);
     }
-  } catch {}
+  } catch(e) { console.error('pollStatus error:', e); }
 }
 
 async function startMasterPipeline() {

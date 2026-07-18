@@ -24,9 +24,9 @@
     "enabled_targets": ["staff-1", "staff-2"]
   },
   "llm_litellm_router": {
-    "enabled": false,
+    "enabled": true,
     "type": "release",
     "rollout_percentage": 100,
-    "comment": "LiteLLM SDK facade (services/llm_client.py) kapalıyken çağrılar mevcut llm_engine'e düşer."
+    "comment": "LiteLLM SDK facade (services/llm_client.py) aktif. Legacy llm_engine devreden çıkarıldı."
   }
 }

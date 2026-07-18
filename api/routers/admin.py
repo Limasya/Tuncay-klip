@@ -30,7 +30,8 @@ async def deep_health(
     try:
         from services.database import async_session
         async with async_session() as session:
-            await session.execute("SELECT 1")
+            from sqlalchemy import text
+            await session.execute(text("SELECT 1"))
         checks["database"] = "ok"
     except Exception as e:
         checks["database"] = f"error: {e}"
@@ -38,7 +39,7 @@ async def deep_health(
     # Redis
     try:
         import redis.asyncio as aioredis
-        r = aioredis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
+        r = aioredis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6380/0"), protocol=2)
         await r.ping()
         await r.aclose()
         checks["redis"] = "ok"
@@ -154,10 +155,11 @@ async def llm_providers(
     _principal: Principal = Depends(require_scope(Scope.ANALYTICS_READ)),
 ):
     """List all registered LLM providers and their configuration."""
-    from services.llm_engine import llm_engine
+    from services import llm_client
     return {
-        "providers": llm_engine.get_provider_status(),
-        "stats": llm_engine.get_stats(),
+        "providers": [{"name": "facade", "type": "llm_client", "enabled": llm_client.is_router_active()}],
+        "facade_status": llm_client.get_router_status(),
+        "stats": llm_client.get_stats(),
     }
 
 
@@ -166,8 +168,8 @@ async def llm_health(
     _principal: Principal = Depends(require_scope(Scope.ANALYTICS_READ)),
 ):
     """Quick LLM health check — probes the first available provider."""
-    from services.llm_engine import llm_engine
-    return await llm_engine.health_check()
+    from services import llm_client
+    return await llm_client.health_check()
 
 
 @router.get("/discovery")
@@ -240,8 +242,8 @@ async def clear_cache(
     _principal: Principal = Depends(require_scope(Scope.CLIPS_WRITE)),
 ):
     """Clear all caches (LLM response cache)."""
-    from services.llm_engine import llm_engine
-    llm_engine.clear_cache()
+    from services import llm_client
+    llm_client.clear_cache()
     return {"status": "cache_cleared"}
 
 
@@ -272,7 +274,9 @@ def _format_uptime(seconds: float) -> str:
 
 def _get_llm_stats() -> dict:
     try:
-        from services.llm_engine import llm_engine
-        return llm_engine.get_stats()
-    except Exception:
+        from services import llm_client
+        return llm_client.get_stats()
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).debug("LLM stats unavailable: %s", e)
         return {}

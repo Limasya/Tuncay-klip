@@ -1,7 +1,13 @@
 """
 Sistem kontrol API router'ı.
 Başlat/durdur, durum, ayarlar.
+
+.. note::
+    /start, /stop, /status endpoint'leri artık ``microservices.orchestrator``
+    (PipelineOrchestrator) kullanıyor. Legacy ``services.orchestrator``
+    deprecated edildi.
 """
+import asyncio
 import logging
 from fastapi import APIRouter, Depends, HTTPException
 from models.schemas import SystemStatus
@@ -13,19 +19,39 @@ settings = get_settings()
 logger = logging.getLogger(__name__)
 
 
+def _get_pipeline_orch():
+    """Lazy import of the canonical microservices orchestrator."""
+    try:
+        from microservices.orchestrator import orchestrator
+        return orchestrator
+    except Exception as e:
+        logger.warning("Pipeline orchestrator unavailable: %s", e)
+        return None
+
+
 @router.post("/start")
 async def start_monitoring(
     _principal: Principal = Depends(require_scope(Scope.STREAMS_MANAGE)),
 ):
-    """Yayın izlemeyi ve otomatik klip yakalamayı başlatır."""
-    from services.orchestrator import orchestrator
+    """Yayın izlemeyi ve otomatik klip yakalamayı başlatır (pipeline orchestrator üzerinden)."""
     from services.kick_api import kick_service
 
-    if orchestrator.is_monitoring:
+    orch = _get_pipeline_orch()
+    if orch is None:
+        raise HTTPException(503, "Pipeline orchestrator unavailable (Redis required)")
+
+    if orch._is_running:
         raise HTTPException(400, "Sistem zaten çalışıyor")
 
-    import asyncio
-    asyncio.create_task(orchestrator.start())
+    try:
+        stream_url = await kick_service.get_stream_url()
+    except Exception as exc:
+        raise HTTPException(503, f"Kick stream URL alınamadı: {exc}")
+
+    if not stream_url:
+        raise HTTPException(409, "Hedef kanal şu an canlı değil")
+
+    asyncio.create_task(orch.start_stream(stream_url=stream_url))
 
     return {"message": "Sistem başlatılıyor...", "channel": settings.kick_channel_slug}
 
@@ -34,13 +60,15 @@ async def start_monitoring(
 async def stop_monitoring(
     _principal: Principal = Depends(require_scope(Scope.STREAMS_MANAGE)),
 ):
-    """Sistemi durdurur."""
-    from services.orchestrator import orchestrator
+    """Sistemi durdurur (pipeline orchestrator üzerinden)."""
+    orch = _get_pipeline_orch()
+    if orch is None:
+        raise HTTPException(503, "Pipeline orchestrator unavailable")
 
-    if not orchestrator.is_monitoring:
+    if not orch._is_running:
         raise HTTPException(400, "Sistem zaten durmuş")
 
-    await orchestrator.stop()
+    await orch.stop()
     return {"message": "Sistem durduruldu."}
 
 
@@ -48,7 +76,7 @@ async def stop_monitoring(
 async def get_status(
     _principal: Principal = Depends(get_current_principal),
 ):
-    """Anlık sistem durumunu döndürür."""
+    """Anlık sistem durumunu döndürür (pipeline orchestrator üzerinden)."""
     import psutil
 
     try:
@@ -57,15 +85,29 @@ async def get_status(
     except ImportError:
         gpu_available = False
 
-    from services.orchestrator import orchestrator
-    status = orchestrator.get_status()
+    orch = _get_pipeline_orch()
+    if orch is None:
+        return SystemStatus(
+            is_monitoring=False,
+            target_channel=settings.kick_channel_slug,
+            stream_active=False,
+            clips_today=0,
+            buffer_usage_mb=0,
+            analysis_fps=settings.analysis_fps,
+            cpu_usage=psutil.cpu_percent(),
+            memory_usage=psutil.virtual_memory().percent,
+            gpu_available=gpu_available,
+        )
+
+    status = orch.get_full_status()
+    pipeline = status.get("pipeline", {})
 
     return SystemStatus(
-        is_monitoring=status.get("is_monitoring", False),
+        is_monitoring=pipeline.get("is_running", False),
         target_channel=settings.kick_channel_slug,
-        stream_active=status.get("stream_active", False),
-        clips_today=status.get("clips_today", 0),
-        buffer_usage_mb=status.get("buffer_frames", 0) * 1280 * 720 * 3 / (1024 * 1024),
+        stream_active=pipeline.get("is_running", False),
+        clips_today=pipeline.get("clips_today", 0),
+        buffer_usage_mb=0,
         analysis_fps=settings.analysis_fps,
         cpu_usage=psutil.cpu_percent(),
         memory_usage=psutil.virtual_memory().percent,

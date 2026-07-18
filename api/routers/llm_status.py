@@ -4,15 +4,12 @@ LLM Status API Router
 LLM provider durumu, sağlık metrikleri ve yönlendirme API'si.
 
 Endpoint'ler:
-  GET  /api/llm/status          — Tüm provider'ların durumu
-  GET  /api/llm/providers       — Ücretsiz provider önerileri
-  GET  /api/llm/health          — Hızlı sağlık kontrolü
-  POST /api/llm/test            — Belirli provider'ı test et
-  POST /api/llm/route           — Akıllı yönlendirme ile generate
-  GET  /api/llm/stats           — İstatistikler
-  POST /api/llm/reset-cooldowns — Cooldown'ları sıfırla
-  GET  /api/llm/vector/stats    — Vektör DB istatistikleri
-  POST /api/llm/vector/search   — Semantik klip araması
+    GET  /api/llm/status          — Tüm provider'ların durumu
+    GET  /api/llm/health          — Hızlı sağlık kontrolü
+    POST /api/llm/test            — Belirli provider'ı test et
+    GET  /api/llm/stats           — İstatistikler
+    GET  /api/llm/vector/stats    — Vektör DB istatistikleri
+    POST /api/llm/vector/search   — Semantik klip araması
 """
 from __future__ import annotations
 
@@ -29,13 +26,6 @@ router = APIRouter(prefix="/api/llm", tags=["LLM"])
 
 
 # ─── Schemas ─────────────────────────────────────────────────────────────────
-
-class RouteRequest(BaseModel):
-    prompt: str
-    strategy: str = "cost_optimized"  # cost_optimized / speed_first / quality_first / balanced
-    max_tokens: int = 512
-    temperature: float = 0.7
-    system_prompt: Optional[str] = None
 
 
 class TestProviderRequest(BaseModel):
@@ -64,30 +54,15 @@ async def get_llm_status():
     Smart router'daki tier sistemi ve cooldown durumunu da içerir.
     """
     try:
-        from services.llm_engine import llm_engine
-        from services.smart_llm_router import smart_router, PROVIDER_TIERS, PROVIDER_SPEED_TPS
+        from services import llm_client
 
-        # Engine'deki provider listesi
-        engine_providers = [
-            {
-                "name": name,
-                "tier": PROVIDER_TIERS.get(name, 99),
-                "speed_tps": PROVIDER_SPEED_TPS.get(name, 30.0),
-            }
-            for name, _ in llm_engine._providers
-        ]
-
-        # Router istatistikleri
-        router_status = smart_router.get_status()
+        # Facade durumu
+        facade_status = llm_client.get_router_status()
+        facade_health = await llm_client.health_check()
 
         return {
-            "engine": {
-                "total_providers": llm_engine._provider_count,
-                "providers": engine_providers,
-                "stats": llm_engine._stats,
-                "cache_size": len(llm_engine._cache),
-            },
-            "router": router_status,
+            "facade": facade_status,
+            "health": facade_health,
             "timestamp": time.time(),
         }
     except Exception as e:
@@ -95,33 +70,13 @@ async def get_llm_status():
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/providers", summary="Ücretsiz LLM provider önerileri")
-async def get_free_providers():
-    """
-    Ücretsiz LLM provider'larının listesini, kayıt linkleri ve özelliklerini döndürür.
-    """
-    try:
-        from services.smart_llm_router import smart_router
-        return {
-            "free_providers": smart_router.get_recommended_free_providers(),
-            "note": "Bu provider'ların tümü ücretsiz tier veya ücretsiz başlangıç kredisi sunar.",
-            "setup_guide": {
-                "step1": "provider'ı seç ve kayıt ol",
-                "step2": "API key al",
-                "step3": ".env dosyasına ekle (örn: GROQ_API_KEY=gsk_...)",
-                "step4": "sunucuyu yeniden başlat",
-            },
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
 
 @router.get("/health", summary="LLM sağlık kontrolü")
 async def llm_health():
     """Hızlı LLM sağlık kontrolü — tüm provider'ların erişilebilirlik durumu."""
     try:
-        from services.llm_engine import llm_engine
-        health = await llm_engine.health_check()
+        from services import llm_client
+        health = await llm_client.health_check()
         return health
     except Exception as e:
         return {"healthy": False, "error": str(e)}
@@ -130,85 +85,41 @@ async def llm_health():
 @router.post("/test", summary="Provider test et")
 async def test_provider(req: TestProviderRequest):
     """Belirli bir provider'ı test prompt ile dene ve yanıt süresini ölç."""
-    from services.llm_engine import llm_engine
+    from services import llm_client
     import asyncio
 
-    provider_fn = None
-    for name, fn in llm_engine._providers:
-        if name == req.provider:
-            provider_fn = fn
-            break
-
-    if provider_fn is None:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Provider '{req.provider}' bulunamadı. Mevcut: {[n for n, _ in llm_engine._providers]}",
-        )
-
+    # Provider testi facade üzerinden (flag-off: llm_engine providers, flag-on: router)
+    provider_name = req.provider
     start = time.time()
     try:
-        result = await asyncio.wait_for(
-            provider_fn(req.prompt, max_tokens=req.max_tokens, temperature=0.5),
-            timeout=30.0,
+        result = await llm_client.generate(
+            req.prompt,
+            language="tr",
+            max_tokens=req.max_tokens,
+            temperature=0.5,
         )
         elapsed_ms = round((time.time() - start) * 1000, 1)
         return {
-            "provider": req.provider,
+            "provider": provider_name,
             "success": True,
             "response": result,
             "latency_ms": elapsed_ms,
             "chars": len(result),
         }
     except asyncio.TimeoutError:
-        raise HTTPException(status_code=504, detail=f"Provider '{req.provider}' 30s'de yanıt vermedi")
+        raise HTTPException(status_code=504, detail=f"Provider '{provider_name}' 30s'de yanıt vermedi")
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Provider hata: {str(e)}")
 
-
-@router.post("/route", summary="Akıllı yönlendirme ile generate")
-async def smart_route_generate(req: RouteRequest):
-    """
-    Smart router kullanarak LLM çağrısı yap.
-
-    Stratejiler:
-    - **cost_optimized**: Önce ücretsiz tier (Groq → Cohere → ...)
-    - **speed_first**: En hızlı provider (Groq/Cerebras önce)
-    - **quality_first**: En kaliteli model
-    - **balanced**: Hız + kalite dengesi
-    """
-    from services.smart_llm_router import smart_router, sync_router_with_engine
-
-    # Router'ı engine ile senkronize et
-    sync_router_with_engine()
-
-    start = time.time()
-    try:
-        result, provider_used = await smart_router.route(
-            prompt=req.prompt,
-            strategy=req.strategy,
-            max_tokens=req.max_tokens,
-            temperature=req.temperature,
-            system_prompt=req.system_prompt,
-        )
-        elapsed_ms = round((time.time() - start) * 1000, 1)
-        return {
-            "result": result,
-            "provider_used": provider_used,
-            "strategy": req.strategy,
-            "latency_ms": elapsed_ms,
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/stats", summary="Detaylı istatistikler")
 async def get_stats():
     """LLM engine ve router istatistiklerini döndürür."""
     try:
-        from services.llm_engine import llm_engine
-        from services.smart_llm_router import smart_router
+        from services import llm_client
 
-        engine_stats = llm_engine._stats.copy()
+        engine_stats = llm_client.get_stats()
         # Cache hit rate hesapla
         total = engine_stats.get("total_requests", 0)
         hits = engine_stats.get("cache_hits", 0)
@@ -216,25 +127,12 @@ async def get_stats():
 
         return {
             "engine_stats": engine_stats,
-            "router_stats": {
-                name: stats.to_dict()
-                for name, stats in smart_router._stats.items()
-            },
+            "facade": llm_client.get_router_status(),
             "timestamp": time.time(),
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-
-@router.post("/reset-cooldowns", summary="Cooldown'ları sıfırla")
-async def reset_cooldowns():
-    """Tüm provider cooldown'larını sıfırla (hata sonrası kurtarma için)."""
-    try:
-        from services.smart_llm_router import smart_router
-        smart_router.reset_cooldowns()
-        return {"success": True, "message": "Tüm cooldown'lar sıfırlandı"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ─── Vektör Store Endpoint'leri ───────────────────────────────────────────────
