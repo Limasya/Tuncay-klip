@@ -13,6 +13,20 @@ build/
 venv/
 env/
 
+# Node.js
+node_modules/
+.npm
+
+# Next.js
+.next/
+out/
+
+# Rust
+tools/video-processor/target/
+
+# TypeScript
+*.tsbuildinfo
+
 # IDE
 .idea/
 .vscode/
