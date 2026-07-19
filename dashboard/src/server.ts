@@ -2,15 +2,19 @@ import express from "express";
 import cors from "cors";
 import { WebSocketServer } from "ws";
 import http from "http";
+import path from "path";
+import { fileURLToPath } from "url";
 import { HealthMonitor } from "./health.js";
 import { PipelineAPI } from "./api.js";
 
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = parseInt(process.env.DASHBOARD_PORT || "3100", 10);
 const API_URL = process.env.API_URL || "http://localhost:8000";
 
 const app = express();
 app.use(cors());
 app.use(express.json());
+app.use(express.static(path.join(__dirname, "..", "public")));
 
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server, path: "/ws" });

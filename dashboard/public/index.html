@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tuncay-Klip Dashboard</title>
+    <style>
+        :root {
+            --bg: #0f0f1a;
+            --card: #1a1a2e;
+            --accent: #6366f1;
+            --accent-2: #ec4899;
+            --green: #10b981;
+            --red: #ef4444;
+            --yellow: #f59e0b;
+            --text: #e2e8f0;
+            --muted: #64748b;
+            --border: #2d2d44;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+        }
+        .header {
+            background: linear-gradient(135deg, var(--card), var(--border));
+            padding: 20px 32px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .header h1 {
+            font-size: 22px;
+            font-weight: 600;
+            background: linear-gradient(135deg, var(--accent), var(--accent-2));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .header .status-badge {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 16px;
+            border-radius: 20px;
+            font-size: 13px;
+            font-weight: 500;
+        }
+        .status-healthy { background: rgba(16,185,129,0.15); color: var(--green); }
+        .status-degraded { background: rgba(245,158,11,0.15); color: var(--yellow); }
+        .status-down { background: rgba(239,68,68,0.15); color: var(--red); }
+        .status-dot {
+            width: 8px; height: 8px; border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.4; }
+        }
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 24px;
+        }
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+        .card {
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 20px;
+            transition: transform 0.2s;
+        }
+        .card:hover { transform: translateY(-2px); }
+        .card-title {
+            font-size: 13px;
+            color: var(--muted);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 12px;
+        }
+        .card-value {
+            font-size: 28px;
+            font-weight: 700;
+        }
+        .card-sub {
+            font-size: 12px;
+            color: var(--muted);
+            margin-top: 4px;
+        }
+        .services-list { display: flex; flex-direction: column; gap: 8px; }
+        .service-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px 12px;
+            background: rgba(255,255,255,0.03);
+            border-radius: 8px;
+            font-size: 14px;
+        }
+        .service-up { color: var(--green); }
+        .service-down { color: var(--red); }
+        .service-slow { color: var(--yellow); }
+        .latency { font-size: 12px; color: var(--muted); }
+        .clips-table { width: 100%; border-collapse: collapse; }
+        .clips-table th, .clips-table td {
+            padding: 10px 12px;
+            text-align: left;
+            border-bottom: 1px solid var(--border);
+            font-size: 14px;
+        }
+        .clips-table th { color: var(--muted); font-weight: 500; font-size: 12px; text-transform: uppercase; }
+        .section-title {
+            font-size: 16px;
+            font-weight: 600;
+            margin-bottom: 16px;
+        }
+        .chart {
+            display: flex;
+            align-items: end;
+            gap: 4px;
+            height: 100px;
+            padding-top: 16px;
+        }
+        .chart-bar {
+            flex: 1;
+            background: linear-gradient(to top, var(--accent), var(--accent-2));
+            border-radius: 4px 4px 0 0;
+            min-height: 2px;
+            transition: height 0.5s;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>Tuncay-Klip Pipeline Dashboard</h1>
+        <div id="status-badge" class="status-badge status-healthy">
+            <span class="status-dot" style="background: var(--green)"></span>
+            <span id="status-text">Connecting...</span>
+        </div>
+    </div>
+
+    <div class="container">
+        <div class="grid">
+            <div class="card">
+                <div class="card-title">Uptime</div>
+                <div class="card-value" id="uptime">—</div>
+                <div class="card-sub">Dashboard server</div>
+            </div>
+            <div class="card">
+                <div class="card-title">Memory RSS</div>
+                <div class="card-value" id="mem-rss">— MB</div>
+                <div class="card-sub">Process memory</div>
+            </div>
+            <div class="card">
+                <div class="card-title">Heap Used</div>
+                <div class="card-value" id="heap-used">— MB</div>
+                <div class="card-sub" id="heap-total">of — MB</div>
+            </div>
+            <div class="card">
+                <div class="card-title">Latency History</div>
+                <div class="chart" id="latency-chart">
+                    <div class="chart-bar" style="height: 10%"></div>
+                    <div class="chart-bar" style="height: 20%"></div>
+                    <div class="chart-bar" style="height: 30%"></div>
+                    <div class="chart-bar" style="height: 40%"></div>
+                    <div class="chart-bar" style="height: 50%"></div>
+                    <div class="chart-bar" style="height: 60%"></div>
+                    <div class="chart-bar" style="height: 70%"></div>
+                    <div class="chart-bar" style="height: 80%"></div>
+                    <div class="chart-bar" style="height: 90%"></div>
+                    <div class="chart-bar" style="height: 100%"></div>
+                </div>
+            </div>
+        </div>
+
+        <div class="grid">
+            <div class="card" style="grid-column: span 2">
+                <div class="card-title">Services</div>
+                <div class="services-list" id="services-list">
+                    <div class="service-item">
+                        <span>Checking...</span>
+                    </div>
+                </div>
+            </div>
+            <div class="card">
+                <div class="card-title">System Status</div>
+                <div id="system-info" style="font-size: 14px; line-height: 1.8">
+                    Loading...
+                </div>
+            </div>
+            <div class="card">
+                <div class="card-title">Quick Actions</div>
+                <div style="display: flex; flex-direction: column; gap: 8px">
+                    <button onclick="triggerSync()" style="padding: 10px 16px; background: var(--accent); color: white; border: none; border-radius: 8px; cursor: pointer; font-size: 14px">Trigger Zero-BW Sync</button>
+                    <button onclick="refreshClips()" style="padding: 10px 16px; background: var(--card); color: var(--text); border: 1px solid var(--border); border-radius: 8px; cursor: pointer; font-size: 14px">Refresh Clips</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="section-title" style="margin-top: 32px">Recent Clips</div>
+        <div class="card" style="overflow-x: auto">
+            <table class="clips-table">
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Title</th>
+                        <th>Duration</th>
+                        <th>Score</th>
+                        <th>Platform</th>
+                        <th>Created</th>
+                    </tr>
+                </thead>
+                <tbody id="clips-body">
+                    <tr><td colspan="6" style="text-align: center; color: var(--muted)">No clips loaded</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <script>
+        const ws = new WebSocket(`ws://${location.host}/ws`);
+        const latencies = [];
+
+        ws.onmessage = (event) => {
+            const data = JSON.parse(event.data);
+            updateUI(data);
+        };
+
+        ws.onopen = () => {
+            document.getElementById('status-text').textContent = 'Connected';
+        };
+
+        ws.onclose = () => {
+            document.getElementById('status-text').textContent = 'Disconnected';
+            document.getElementById('status-badge').className = 'status-badge status-down';
+        };
+
+        function updateUI(data) {
+            const badge = document.getElementById('status-badge');
+            const dot = badge.querySelector('.status-dot');
+            const text = document.getElementById('status-text');
+
+            if (data.status === 'healthy') {
+                badge.className = 'status-badge status-healthy';
+                dot.style.background = 'var(--green)';
+            } else if (data.status === 'degraded') {
+                badge.className = 'status-badge status-degraded';
+                dot.style.background = 'var(--yellow)';
+            } else {
+                badge.className = 'status-badge status-down';
+                dot.style.background = 'var(--red)';
+            }
+            text.textContent = data.status.toUpperCase();
+
+            const h = Math.floor(data.uptime_sec / 3600);
+            const m = Math.floor((data.uptime_sec % 3600) / 60);
+            document.getElementById('uptime').textContent = `${h}h ${m}m`;
+            document.getElementById('mem-rss').textContent = `${data.memory.rss_mb} MB`;
+            document.getElementById('heap-used').textContent = `${data.memory.heap_used_mb} MB`;
+            document.getElementById('heap-total').textContent = `of ${data.memory.heap_total_mb} MB`;
+
+            const servicesList = document.getElementById('services-list');
+            servicesList.innerHTML = '';
+            for (const [name, svc] of Object.entries(data.services)) {
+                const cls = svc.status === 'up' ? 'service-up' : svc.status === 'slow' ? 'service-slow' : 'service-down';
+                servicesList.innerHTML += `
+                    <div class="service-item">
+                        <span>${name}</span>
+                        <span style="display: flex; align-items: center; gap: 12px">
+                            <span class="${cls}">${svc.status.toUpperCase()}</span>
+                            <span class="latency">${svc.latency_ms}ms</span>
+                        </span>
+                    </div>`;
+                latencies.push(svc.latency_ms);
+            }
+
+            if (latencies.length > 20) latencies.shift();
+            updateChart();
+        }
+
+        function updateChart() {
+            const bars = document.querySelectorAll('.chart-bar');
+            const max = Math.max(...latencies, 100);
+            bars.forEach((bar, i) => {
+                const val = latencies[latencies.length - bars.length + i] || 0;
+                bar.style.height = `${(val / max) * 100}%`;
+            });
+        }
+
+        async function triggerSync() {
+            try {
+                const resp = await fetch('/api/health');
+                alert('Sync triggered. Check console.');
+                console.log(await resp.json());
+            } catch (e) {
+                alert('Error: ' + e.message);
+            }
+        }
+
+        async function refreshClips() {
+            try {
+                const resp = await fetch('/api/clips');
+                const clips = await resp.json();
+                const body = document.getElementById('clips-body');
+                if (Array.isArray(clips) && clips.length > 0) {
+                    body.innerHTML = clips.map(c => `
+                        <tr>
+                            <td>${(c.clip_id || c.id || '—').toString().slice(0, 8)}</td>
+                            <td>${(c.title || '—').slice(0, 40)}</td>
+                            <td>${c.duration || '—'}s</td>
+                            <td>${c.score || c.quality_score || '—'}</td>
+                            <td>${c.platform || '—'}</td>
+                            <td>${(c.created_at || c.timestamp || '—').slice(0, 19)}</td>
+                        </tr>
+                    `).join('');
+                } else {
+                    body.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--muted)">No clips found</td></tr>';
+                }
+            } catch (e) {
+                document.getElementById('clips-body').innerHTML = `<tr><td colspan="6" style="text-align:center;color:var(--red)">Error: ${e.message}</td></tr>`;
+            }
+        }
+
+        refreshClips();
+    </script>
+</body>
+</html>

@@ -12,8 +12,6 @@ Features:
 """
 from __future__ import annotations
 
-import asyncio
-import json
 import logging
 import time
 import uuid
@@ -25,6 +23,7 @@ from typing import Any, Dict, List, Optional
 from enum import Enum
 
 from pydantic import BaseModel, Field
+from shared.utils.json_state import JsonStateStore
 
 logger = logging.getLogger("user_feedback")
 
@@ -86,7 +85,7 @@ class UserFeedback:
     def __init__(self, state_path: str | Path | None = None):
         self._feedback: List[FeedbackEntry] = []
         self._calibration_adjustments: List[CalibrationAdjustment] = []
-        self._state_path = Path(state_path or "data/user_feedback_state.json")
+        self._state = JsonStateStore(state_path or "data/user_feedback_state.json")
 
     # ── Feedback Recording ──
 
@@ -320,32 +319,20 @@ class UserFeedback:
     # ── Persistence ──
 
     async def save(self) -> None:
-        state = {
+        await self._state.save({
             "updated_at": datetime.now(timezone.utc).isoformat(),
             "feedback": [f.model_dump() for f in self._feedback[-1000:]],
             "calibrations": [c.model_dump() for c in self._calibration_adjustments[-100:]],
-        }
-        self._state_path.parent.mkdir(parents=True, exist_ok=True)
-        temp = self._state_path.with_suffix(".tmp")
-        await asyncio.to_thread(
-            temp.write_text,
-            json.dumps(state, ensure_ascii=False, indent=2, default=str),
-            "utf-8",
-        )
-        await asyncio.to_thread(temp.replace, self._state_path)
+        })
 
     async def load(self) -> None:
-        if not self._state_path.exists():
+        state = await self._state.load()
+        if not state:
             return
-        try:
-            data = await asyncio.to_thread(self._state_path.read_text, encoding="utf-8")
-            state = json.loads(data)
-            self._feedback = [FeedbackEntry(**f) for f in state.get("feedback", [])]
-            self._calibration_adjustments = [
-                CalibrationAdjustment(**c) for c in state.get("calibrations", [])
-            ]
-        except Exception as e:
-            logger.warning("User feedback state load failed: %s", e)
+        self._feedback = [FeedbackEntry(**f) for f in state.get("feedback", [])]
+        self._calibration_adjustments = [
+            CalibrationAdjustment(**c) for c in state.get("calibrations", [])
+        ]
 
 
 # Singleton

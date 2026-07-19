@@ -94,7 +94,7 @@ class TestAblationEngine:
         engine = self._make_engine()
         ablation = AblationEngine(engine)
         import asyncio
-        results = asyncio.get_event_loop().run_until_complete(ablation.run_ablation())
+        results = asyncio.run(ablation.run_ablation())
         assert len(results) == 4
 
     def test_ablation_result_has_impact(self):
@@ -104,7 +104,7 @@ class TestAblationEngine:
             engine.update_signal(sig, 0.5)
         ablation = AblationEngine(engine)
         import asyncio
-        results = asyncio.get_event_loop().run_until_complete(ablation.run_ablation())
+        results = asyncio.run(ablation.run_ablation())
         for r in results:
             assert hasattr(r, "impact")
             assert hasattr(r, "impact_pct")
@@ -114,7 +114,7 @@ class TestAblationEngine:
         engine = self._make_engine()
         ablation = AblationEngine(engine)
         import asyncio
-        results = asyncio.get_event_loop().run_until_complete(ablation.run_ablation())
+        results = asyncio.run(ablation.run_ablation())
         recs = ablation.get_recommendations(results)
         assert isinstance(recs, list)
 
@@ -305,7 +305,7 @@ class TestThumbnailABTest:
         from services.thumbnail_ab_test import ThumbnailABTest
         ab = ThumbnailABTest()
         import asyncio
-        test = asyncio.get_event_loop().run_until_complete(
+        test = asyncio.run(
             ab.create_test("clip1", "/tmp/video.mp4", "tiktok", num_variants=3)
         )
         assert len(test.variants) == 3
@@ -315,10 +315,10 @@ class TestThumbnailABTest:
         from services.thumbnail_ab_test import ThumbnailABTest
         ab = ThumbnailABTest()
         import asyncio
-        test = asyncio.get_event_loop().run_until_complete(
+        test = asyncio.run(
             ab.create_test("clip1", "/tmp/video.mp4", "tiktok", num_variants=2)
         )
-        asyncio.get_event_loop().run_until_complete(
+        asyncio.run(
             ab.record_impression(test.test_id, test.variants[0].variant_id)
         )
         updated = ab.get_test(test.test_id)
@@ -334,7 +334,7 @@ class TestThumbnailABTest:
         from services.thumbnail_ab_test import ThumbnailABTest
         ab = ThumbnailABTest()
         import asyncio
-        asyncio.get_event_loop().run_until_complete(
+        asyncio.run(
             ab.create_test("clip1", "/tmp/v.mp4", "tiktok")
         )
         active = ab.get_active_tests()
@@ -461,7 +461,7 @@ class TestQualityDashboard:
         from services.quality_dashboard import QualityDashboard
         qd = QualityDashboard()
         import asyncio
-        report = asyncio.get_event_loop().run_until_complete(qd.generate_weekly_report())
+        report = asyncio.run(qd.generate_weekly_report())
         assert report.total_clips == 0
 
 
@@ -597,7 +597,7 @@ class TestUserFeedback:
                 "clip" + str(i), "opening", 0.9, user_agrees=False
             )
         import asyncio
-        adjustments = asyncio.get_event_loop().run_until_complete(
+        adjustments = asyncio.run(
             uf.compute_calibration_adjustments()
         )
         assert len(adjustments) >= 1
@@ -640,7 +640,7 @@ class TestAutoBootIntegration:
     def test_boot_report_has_new_keys(self):
         from services.auto_boot import auto_boot
         import asyncio
-        report = asyncio.get_event_loop().run_until_complete(auto_boot())
+        report = asyncio.run(auto_boot())
         assert "publisher" in report
         assert "ab_test" in report
         assert "quality_dashboard" in report
@@ -650,5 +650,4 @@ class TestAutoBootIntegration:
     def test_shutdown_completes(self):
         from services.auto_boot import auto_shutdown
         import asyncio
-        # Should not raise
-        asyncio.get_event_loop().run_until_complete(auto_shutdown())
+        asyncio.run(auto_shutdown())

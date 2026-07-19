@@ -12,8 +12,6 @@ Features:
 """
 from __future__ import annotations
 
-import asyncio
-import json
 import logging
 import math
 import re
@@ -25,6 +23,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from pydantic import BaseModel, Field
+from shared.utils.json_state import JsonStateStore
 
 logger = logging.getLogger("signal_fusion")
 
@@ -461,7 +460,7 @@ class SignalFusionStore:
     """Sinyal füzyon verilerini JSON'a kaydet/yükle."""
 
     def __init__(self, state_path: str | Path | None = None):
-        self._state_path = Path(state_path or "data/signal_fusion_state.json")
+        self._state = JsonStateStore(state_path or "data/signal_fusion_state.json")
         self._ablation_history: List[Dict] = []
         self._weight_updates: List[Dict] = []
         self._reliability_data: Dict[str, List] = {}
@@ -472,30 +471,15 @@ class SignalFusionStore:
         weight_updates: List[Dict],
         reliability: Dict[str, List],
     ) -> None:
-        state = {
+        await self._state.save({
             "updated_at": datetime.now(timezone.utc).isoformat(),
             "ablation_history": ablation_history[-200:],
             "weight_updates": weight_updates[-100:],
             "reliability": {k: v[-200:] for k, v in reliability.items()},
-        }
-        self._state_path.parent.mkdir(parents=True, exist_ok=True)
-        temp = self._state_path.with_suffix(".tmp")
-        await asyncio.to_thread(
-            temp.write_text,
-            json.dumps(state, ensure_ascii=False, indent=2, default=str),
-            "utf-8",
-        )
-        await asyncio.to_thread(temp.replace, self._state_path)
+        })
 
     async def load(self) -> Dict[str, Any]:
-        if not self._state_path.exists():
-            return {}
-        try:
-            data = await asyncio.to_thread(self._state_path.read_text, encoding="utf-8")
-            return json.loads(data)
-        except Exception as e:
-            logger.warning("Signal fusion state load failed: %s", e)
-            return {}
+        return await self._state.load()
 
 
 # ── Helper ──

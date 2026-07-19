@@ -616,13 +616,19 @@ class MasterPipeline:
 
         # VOD suresi
         try:
-            probe = await asyncio.create_subprocess_exec(
-                "ffprobe", "-v", "quiet", "-show_entries", "format=duration",
-                "-of", "csv=p=0", str(vod_file),
-                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-            )
-            out, _ = await probe.communicate()
-            vod_duration = float(out.decode().strip()) if out else 5196.0
+            if video_processor.available:
+                probe_result = await video_processor.probe(str(vod_file))
+                vod_duration = float(
+                    probe_result.get("format", {}).get("duration", 5196.0)
+                ) if probe_result.get("success") else 5196.0
+            else:
+                probe = await asyncio.create_subprocess_exec(
+                    "ffprobe", "-v", "quiet", "-show_entries", "format=duration",
+                    "-of", "csv=p=0", str(vod_file),
+                    stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+                )
+                out, _ = await probe.communicate()
+                vod_duration = float(out.decode().strip()) if out else 5196.0
         except Exception:
             vod_duration = 5196.0
 
