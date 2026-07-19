@@ -1,29 +1,29 @@
 """
 Polyglot Microservices Client
 ==============================
-Python FastAPI Core'un TypeScript AI Worker ve Go Render Engine
-ile haberleşmesini sağlayan HTTP istemci katmanı.
+Python FastAPI Core'un TypeScript AI Worker ile haberleşmesini sağlayan
+HTTP istemci katmanı.
 
 Kullanım:
-    from services.microservices_client import ai_worker, render_engine
+    from services.microservices_client import ai_worker
 
     clips = await ai_worker.analyze(transcript_text)
-    job = await render_engine.queue_render(video_path, out_path, start, end)
-    status = await render_engine.get_status(job["job_id"])
+
+NOTE: Go render_engine was removed (dead code). All rendering is handled
+by Python's services/social_video_generator.py and render_pipeline.py.
 """
 from __future__ import annotations
 
 import logging
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 import httpx
 
 logger = logging.getLogger("microservices_client")
 
 # ── Service URLs (override via env vars) ──────────────────────────────────────
-AI_WORKER_URL    = os.environ.get("AI_WORKER_URL",    "http://localhost:3001")
-RENDER_ENGINE_URL = os.environ.get("RENDER_ENGINE_URL", "http://localhost:3002")
+AI_WORKER_URL = os.environ.get("AI_WORKER_URL", "http://localhost:3001")
 
 _TIMEOUT = httpx.Timeout(60.0, connect=5.0)
 
@@ -31,7 +31,12 @@ _TIMEOUT = httpx.Timeout(60.0, connect=5.0)
 # ─────────────────────────────── AI Worker ────────────────────────────────────
 
 class AIWorkerClient:
-    """TypeScript AI Agent Worker istemcisi (Chain-of-Thought klip seçimi)."""
+    """TypeScript AI Agent Worker istemcisi (Chain-of-Thought klip seçimi).
+
+    DESIGN DECISION: ai_worker owns its own LLM client (llmClient.ts) and
+    does NOT route through Python's LLM facade. See ai_worker/src/llmClient.ts
+    for rationale. Python fallback activates only when this service is offline.
+    """
 
     async def health(self) -> bool:
         try:
@@ -84,61 +89,5 @@ class AIWorkerClient:
             return []
 
 
-# ─────────────────────────── Go Render Engine ────────────────────────────────
-
-class RenderEngineClient:
-    """Go FFmpeg Render Engine istemcisi (goroutine worker pool)."""
-
-    async def health(self) -> bool:
-        try:
-            async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-                r = await client.get(f"{RENDER_ENGINE_URL}/health")
-                return r.status_code == 200
-        except Exception:
-            return False
-
-    async def queue_render(
-        self,
-        video_path: str,
-        output_path: str,
-        start: float,
-        end: float,
-        platform: str = "tiktok",
-    ) -> Optional[Dict[str, Any]]:
-        """
-        Go render kuyruğuna yeni bir iş ekler.
-        {'job_id': '...', 'status': 'pending'} döndürür.
-        """
-        if not await self.health():
-            logger.warning("Go Render Engine offline, using Python render fallback.")
-            return None
-
-        payload = {
-            "video_path": video_path,
-            "output_path": output_path,
-            "start": start,
-            "end": end,
-            "platform": platform,
-        }
-        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-            resp = await client.post(f"{RENDER_ENGINE_URL}/render", json=payload)
-            resp.raise_for_status()
-            return resp.json()
-
-    async def get_status(self, job_id: str) -> Optional[Dict[str, Any]]:
-        """İş durumunu sorgular: pending | running | done | failed"""
-        try:
-            async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-                resp = await client.get(f"{RENDER_ENGINE_URL}/status/{job_id}")
-                if resp.status_code == 404:
-                    return None
-                resp.raise_for_status()
-                return resp.json()
-        except Exception as e:
-            logger.error("Render status check failed: %s", e)
-            return None
-
-
 # ── Singleton instances ───────────────────────────────────────────────────────
-ai_worker     = AIWorkerClient()
-render_engine = RenderEngineClient()
+ai_worker = AIWorkerClient()

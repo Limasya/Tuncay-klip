@@ -1,6 +1,19 @@
 /**
  * LLM Client — Wraps OpenAI-compatible API calls.
- * Uses OPENAI_API_KEY or GROQ_API_KEY env (Groq is free + fast).
+ *
+ * DESIGN DECISION: This client is intentionally SEPARATE from Python's
+ * llm_client.py / litellm_config.yaml zero-cost provider chain.
+ *
+ * Rationale:
+ * - ai_worker is a TypeScript-first microservice with its own runtime (Node.js)
+ * - It runs in a separate process and has different latency/retry requirements
+ * - Its 3-agent CoT pipeline (Analyzer→Critic→Editor) is self-contained
+ * - The Python LLM pipeline handles different concerns: semantic highlights,
+ *   metadata generation, smart clip extraction, and scene-level analysis
+ * - Keeping them separate avoids cross-language FFI overhead and simplifies
+ *   debugging each pipeline independently
+ *
+ * Provider priority: Groq (free) > OpenRouter > OpenAI (paid)
  */
 
 import OpenAI from "openai";

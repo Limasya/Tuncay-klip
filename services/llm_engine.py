@@ -27,6 +27,8 @@ from __future__ import annotations
 
 from services.llm_model_defaults import get_gemini_model_default, resolve_gemini_model
 import logging
+import hashlib
+import json
 import os
 import re
 import time

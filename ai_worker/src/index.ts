@@ -3,6 +3,11 @@
  * =========================================
  * Multi-agent Chain-of-Thought clip selection engine.
  *
+ * DESIGN DECISION: This service owns its own LLM client (llmClient.ts) and
+ * does NOT route through Python's LLM facade. See llmClient.ts header for
+ * rationale. The Python fallback in microservices_client.py activates only
+ * when this service is offline.
+ *
  * Agents:
  *  1. AnalyzerAgent  — Reads transcript, identifies viral moments with reasoning
  *  2. CriticAgent    — Reviews the selections, flags issues (too long, boring start)

@@ -27,16 +27,14 @@ from services.youtube_downloader import youtube_downloader
 from services.faster_whisper_service import faster_whisper
 from services.llm_reasoner import llm_reasoner
 from services.social_video_generator import social_video_gen
-from services.action_recognizer import action_recognizer
 from services.thumbnail_generator import thumbnail_generator
 from services.scene_detection import SceneDetectionEngine
 from services.social_media_ai import social_media_ai
-from services.emotion_detector import emotion_detector
 from services.ai_critic import ai_critic
 from services.critic_analytics import critic_analytics
-from services.audio_analyzer import audio_analyzer
 from services.kick_archive import TARGET_CHANNEL_URL, is_target_vod_url
 from shared.utils.video_processor import video_processor
+from services.ai_analysis import ai_analyzer
 
 logger = logging.getLogger("master_pipeline")
 _scene_detect = SceneDetectionEngine()
@@ -418,38 +416,31 @@ class MasterPipeline:
             sliced_paths = await self._batch_slice_videos(vod_path, semantic_clips)
 
         if config.do_analyze:
-            logger.info("Adim 4b — YOLOv8 + SceneDetect + Emotion analiz...")
-            analysis_tasks = [
-                asyncio.gather(
-                    action_recognizer.calculate_action_score(p),
-                    _scene_detect.detect_scenes(p),
-                    emotion_detector.analyze_video_emotions(p, sample_fps=0.3),
-                    return_exceptions=True,
-                )
-                for p in sliced_paths
-            ]
-            analysis_results = await asyncio.gather(*analysis_tasks)
+            logger.info("Adim 4b — Unified AI analiz (C++ signal + YOLO + Scene + Emotion)...")
+            analyses = await ai_analyzer.analyze_vod(vod_path, semantic_clips)
 
-            for idx, ((yolo_res, scene_res, emotion_res), clip, sliced_path) in enumerate(
-                zip(analysis_results, semantic_clips, sliced_paths)
-            ):
-                action_score = yolo_res.get("avg_objects_per_frame", 0) if isinstance(yolo_res, dict) else 0
-                scene_count = scene_res.total_scenes if hasattr(scene_res, "total_scenes") else 0
-                emotion_bonus = 0.0
-                emotion_label = "neutral"
-                if isinstance(emotion_res, dict) and emotion_res.get("success"):
-                    spikes = emotion_res.get("viral_spikes", [])
-                    if spikes:
-                        emotion_bonus = max(s["viral_weight"] for s in spikes)
-                        emotion_label = spikes[0]["emotion"]
-
-                viral_score = round(action_score * 10 + scene_count * 0.5 + emotion_bonus * 5, 2)
-                scored_clips.append({
-                    "idx": idx, "clip": clip, "sliced_path": sliced_path,
-                    "action_score": action_score, "scene_count": scene_count,
-                    "emotion": emotion_label, "emotion_bonus": emotion_bonus,
-                    "viral_score": viral_score, "reason": clip.get("reason", ""),
-                })
+            for idx, (clip, sliced_path) in enumerate(zip(semantic_clips, sliced_paths)):
+                if idx < len(analyses):
+                    a = analyses[idx]
+                    scored_clips.append({
+                        "idx": idx, "clip": clip, "sliced_path": sliced_path,
+                        "action_score": a.video.action_score,
+                        "scene_count": a.video.scene_count,
+                        "emotion": a.emotion.dominant_emotion,
+                        "emotion_bonus": a.emotion.viral_weight,
+                        "cpp_bonus": a.score_breakdown.get("correlation", 0),
+                        "bpm": a.audio.bpm,
+                        "loud_peaks": a.audio.loud_peaks,
+                        "viral_moments": [m.__dict__ for m in a.viral_moments],
+                        "viral_score": a.viral_score,
+                        "score_breakdown": a.score_breakdown,
+                        "reason": clip.get("reason", ""),
+                    })
+                else:
+                    scored_clips.append({
+                        "idx": idx, "clip": clip, "sliced_path": sliced_path,
+                        "viral_score": 0, "reason": clip.get("reason", ""),
+                    })
             scored_clips.sort(key=lambda x: x["viral_score"], reverse=True)
             result.scored_clips = scored_clips
             logger.info("Skorlama tamam. En viral: #%.2f", scored_clips[0]["viral_score"] if scored_clips else 0)
@@ -715,38 +706,31 @@ class MasterPipeline:
             sliced_paths = await self._batch_slice_videos(str(vod_file), semantic_clips)
 
         if config.do_analyze:
-            logger.info("Adim 4b — Analiz...")
-            analysis_tasks = [
-                asyncio.gather(
-                    action_recognizer.calculate_action_score(p),
-                    _scene_detect.detect_scenes(p),
-                    emotion_detector.analyze_video_emotions(p, sample_fps=0.3),
-                    return_exceptions=True,
-                )
-                for p in sliced_paths
-            ]
-            analysis_results = await asyncio.gather(*analysis_tasks)
+            logger.info("Adim 4b — Unified AI analiz...")
+            analyses = await ai_analyzer.analyze_vod(str(vod_file), semantic_clips)
 
-            for idx, ((yolo_res, scene_res, emotion_res), clip, sliced_path) in enumerate(
-                zip(analysis_results, semantic_clips, sliced_paths)
-            ):
-                action_score = yolo_res.get("avg_objects_per_frame", 0) if isinstance(yolo_res, dict) else 0
-                scene_count = scene_res.total_scenes if hasattr(scene_res, "total_scenes") else 0
-                emotion_bonus = 0.0
-                emotion_label = "neutral"
-                if isinstance(emotion_res, dict) and emotion_res.get("success"):
-                    spikes = emotion_res.get("viral_spikes", [])
-                    if spikes:
-                        emotion_bonus = max(s["viral_weight"] for s in spikes)
-                        emotion_label = spikes[0]["emotion"]
-
-                viral_score = round(action_score * 10 + scene_count * 0.5 + emotion_bonus * 5, 2)
-                scored_clips.append({
-                    "idx": idx, "clip": clip, "sliced_path": sliced_path,
-                    "action_score": action_score, "scene_count": scene_count,
-                    "emotion": emotion_label, "emotion_bonus": emotion_bonus,
-                    "viral_score": viral_score, "reason": clip.get("reason", ""),
-                })
+            for idx, (clip, sliced_path) in enumerate(zip(semantic_clips, sliced_paths)):
+                if idx < len(analyses):
+                    a = analyses[idx]
+                    scored_clips.append({
+                        "idx": idx, "clip": clip, "sliced_path": sliced_path,
+                        "action_score": a.video.action_score,
+                        "scene_count": a.video.scene_count,
+                        "emotion": a.emotion.dominant_emotion,
+                        "emotion_bonus": a.emotion.viral_weight,
+                        "cpp_bonus": a.score_breakdown.get("correlation", 0),
+                        "bpm": a.audio.bpm,
+                        "loud_peaks": a.audio.loud_peaks,
+                        "viral_moments": [m.__dict__ for m in a.viral_moments],
+                        "viral_score": a.viral_score,
+                        "score_breakdown": a.score_breakdown,
+                        "reason": clip.get("reason", ""),
+                    })
+                else:
+                    scored_clips.append({
+                        "idx": idx, "clip": clip, "sliced_path": sliced_path,
+                        "viral_score": 0, "reason": clip.get("reason", ""),
+                    })
             scored_clips.sort(key=lambda x: x["viral_score"], reverse=True)
             result.scored_clips = scored_clips
             logger.info("Skorlama tamam. En viral: #%.2f", scored_clips[0]["viral_score"] if scored_clips else 0)
@@ -1085,38 +1069,33 @@ class MasterPipeline:
                 sliced_paths.append("")
 
         if config.do_analyze:
-            logger.info("Adim 4b — Analiz...")
+            logger.info("Adim 4b — Unified AI analiz (stream mode)...")
             valid_paths = [(i, p) for i, p in enumerate(sliced_paths) if p]
-            analysis_tasks = [
-                asyncio.gather(
-                    action_recognizer.calculate_action_score(p),
-                    _scene_detect.detect_scenes(p),
-                    emotion_detector.analyze_video_emotions(p, sample_fps=0.3),
-                    return_exceptions=True,
-                )
-                for _, p in valid_paths
-            ]
-            analysis_results = await asyncio.gather(*analysis_tasks) if analysis_tasks else []
 
-            for (orig_idx, sliced_path), (yolo_res, scene_res, emotion_res) in zip(valid_paths, analysis_results):
+            for orig_idx, sliced_path in valid_paths:
                 clip = semantic_clips[orig_idx]
-                action_score = yolo_res.get("avg_objects_per_frame", 0) if isinstance(yolo_res, dict) else 0
-                scene_count = scene_res.total_scenes if hasattr(scene_res, "total_scenes") else 0
-                emotion_bonus = 0.0
-                emotion_label = "neutral"
-                if isinstance(emotion_res, dict) and emotion_res.get("success"):
-                    spikes = emotion_res.get("viral_spikes", [])
-                    if spikes:
-                        emotion_bonus = max(s["viral_weight"] for s in spikes)
-                        emotion_label = spikes[0]["emotion"]
-
-                viral_score = round(action_score * 10 + scene_count * 0.5 + emotion_bonus * 5, 2)
-                scored_clips.append({
-                    "idx": orig_idx, "clip": clip, "sliced_path": sliced_path,
-                    "action_score": action_score, "scene_count": scene_count,
-                    "emotion": emotion_label, "emotion_bonus": emotion_bonus,
-                    "viral_score": viral_score, "reason": clip.get("reason", ""),
-                })
+                try:
+                    analysis = await ai_analyzer.analyze_clip(sliced_path)
+                    scored_clips.append({
+                        "idx": orig_idx, "clip": clip, "sliced_path": sliced_path,
+                        "action_score": analysis.video.action_score,
+                        "scene_count": analysis.video.scene_count,
+                        "emotion": analysis.emotion.dominant_emotion,
+                        "emotion_bonus": analysis.emotion.viral_weight,
+                        "cpp_bonus": analysis.score_breakdown.get("correlation", 0),
+                        "bpm": analysis.audio.bpm,
+                        "loud_peaks": analysis.audio.loud_peaks,
+                        "viral_moments": [m.__dict__ for m in analysis.viral_moments],
+                        "viral_score": analysis.viral_score,
+                        "score_breakdown": analysis.score_breakdown,
+                        "reason": clip.get("reason", ""),
+                    })
+                except Exception as e:
+                    logger.debug("Analiz hatasi (stream clip %d): %s", orig_idx, e)
+                    scored_clips.append({
+                        "idx": orig_idx, "clip": clip, "sliced_path": sliced_path,
+                        "viral_score": 0, "reason": clip.get("reason", ""),
+                    })
             scored_clips.sort(key=lambda x: x["viral_score"], reverse=True)
         elif sliced_paths:
             for idx, clip in enumerate(semantic_clips):

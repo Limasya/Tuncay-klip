@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 import logging
+import sys
 import time
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -307,20 +308,93 @@ async def _build_dashboard_status() -> dict:
 
 @app.get("/health")
 async def health_check():
+    """
+    Unified health endpoint — exposes all engine/service statuses.
+
+    Returns a comprehensive health report covering:
+    - Python core services
+    - C++ signal_engine (via ctypes)
+    - TypeScript AI Worker (via HTTP)
+    - Rust video-processor (via subprocess)
+    - Available analysis engines
+    """
+    import subprocess
+    from pathlib import Path
+
+    engines = {}
+
+    # ── C++ signal_engine (in-process ctypes) ──────────────────────────────
+    try:
+        from signal_engine.python.signal_client import signal_engine as cpp_se
+        if cpp_se.available:
+            version = cpp_se.version()
+            engines["cpp_signal_engine"] = {"status": "healthy", "version": version}
+        else:
+            engines["cpp_signal_engine"] = {"status": "unavailable", "error": "DLL not loaded"}
+    except Exception as e:
+        engines["cpp_signal_engine"] = {"status": "error", "error": str(e)[:120]}
+
+    # ── Rust video-processor (subprocess) ──────────────────────────────────
+    try:
+        rust_bin = Path("tools/video-processor/target/release/tuncay-video-processor.exe")
+        if sys.platform != "win32":
+            rust_bin = Path("tools/video-processor/target/release/tuncay-video-processor")
+        if rust_bin.exists():
+            proc = subprocess.run(
+                [str(rust_bin), "version"],
+                capture_output=True, text=True, timeout=5,
+            )
+            if proc.returncode == 0:
+                engines["rust_video_processor"] = {"status": "healthy", "version": proc.stdout.strip()}
+            else:
+                engines["rust_video_processor"] = {"status": "error", "error": proc.stderr[:120]}
+        else:
+            engines["rust_video_processor"] = {"status": "unavailable", "error": "binary not found"}
+    except Exception as e:
+        engines["rust_video_processor"] = {"status": "error", "error": str(e)[:120]}
+
+    # ── TypeScript AI Worker (HTTP probe) ──────────────────────────────────
+    try:
+        from services.microservices_client import ai_worker
+        ai_ok = await ai_worker.health()
+        engines["typescript_ai_worker"] = {
+            "status": "healthy" if ai_ok else "unavailable",
+            "url": os.environ.get("AI_WORKER_URL", "http://localhost:3001"),
+        }
+    except Exception as e:
+        engines["typescript_ai_worker"] = {"status": "error", "error": str(e)[:120]}
+
+    # ── Analysis engines (in-process) ──────────────────────────────────────
+    try:
+        from services.ai_analysis import ai_analyzer
+        engines["analysis_engines"] = {
+            "status": "healthy" if ai_analyzer._engines else "degraded",
+            "available": ai_analyzer._engines,
+        }
+    except Exception as e:
+        engines["analysis_engines"] = {"status": "error", "error": str(e)[:120]}
+
+    # ── Python LLM providers ───────────────────────────────────────────────
+    try:
+        from services import llm_client
+        facade = llm_client.get_router_status()
+        engines["python_llm"] = {
+            "status": "healthy" if facade.get("enabled_providers") else "degraded",
+            "providers": facade.get("enabled_providers", []),
+            "active_provider": facade.get("active_provider", "none"),
+        }
+    except Exception as e:
+        engines["python_llm"] = {"status": "error", "error": str(e)[:120]}
+
+    overall = "ok"
+    if any(e.get("status") == "error" for e in engines.values()):
+        overall = "degraded"
+
     return {
-        "status": "ok",
+        "status": overall,
         "version": "2.0.0",
         "phase": 7,
-        "services": "15 microservices + 9 AI services",
-        "ai_features": [
-            "LLM Engine (OpenAI/Claude/Ollama)",
-            "Vision AI (Scene/Object/Gesture/KeyFrame)",
-            "Audio AI (Speech/Event/Crowd/Music)",
-            "Chat AI (NLP/Toxicity/Language/Hype/Trends)",
-            "Recommendation Engine",
-            "Smart Editor",
-            "AI Pipeline Hub",
-        ],
+        "engines": engines,
     }
 
 
