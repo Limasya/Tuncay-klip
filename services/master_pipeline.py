@@ -282,6 +282,53 @@ class MasterPipeline:
             return out_path
         return input_path
 
+    async def _batch_slice_videos(
+        self, input_video: str, clips: List[Dict[str, Any]], max_jobs: int = 4
+    ) -> List[str]:
+        """Rust batch komutuyla toplu klip kesimi — parallel FFmpeg."""
+        stem = Path(input_video).stem
+        paths = [
+            str(self.temp_dir / f"{stem}_clip_{i}.mp4")
+            for i in range(len(clips))
+        ]
+
+        if video_processor.available and len(clips) > 1:
+            manifest_jobs = []
+            for idx, clip in enumerate(clips):
+                manifest_jobs.append({
+                    "input": input_video,
+                    "output": paths[idx],
+                    "start": clip.get("start", 0),
+                    "duration": max(1.0, clip.get("end", 60) - clip.get("start", 0)),
+                })
+
+            import json as _json
+            manifest_path = str(self.temp_dir / f"{stem}_manifest.json")
+            await asyncio.to_thread(
+                Path(manifest_path).write_text,
+                _json.dumps({"jobs": manifest_jobs}),
+                "utf-8",
+            )
+            try:
+                result = await video_processor.batch(
+                    manifest_path=manifest_path,
+                    output_dir=str(self.temp_dir),
+                    jobs=max_jobs,
+                )
+                if result.get("success"):
+                    logger.info("Batch slice tamamlandi: %d/%d klip",
+                                result.get("succeeded", 0), result.get("total", 0))
+                    return paths
+                logger.warning("Batch slice basarisiz: %s", result.get("error"))
+            except Exception as e:
+                logger.warning("Batch slice hatasi: %s — fallback to sequential", e)
+
+        for idx, clip in enumerate(clips):
+            paths[idx] = await self._slice_video(
+                input_video, clip.get("start", 0), clip.get("end", 60), idx
+            )
+        return paths
+
     async def process_url(self, url: str, config: Optional[PipelineConfig] = None, **kwargs) -> Dict[str, Any]:
         """
         Pipeline ana giris noktu.
@@ -367,10 +414,8 @@ class MasterPipeline:
         sliced_paths: list[str] = []
 
         if config.do_analyze or config.do_render:
-            logger.info("Adim 4 — Klipler kesiliyor...")
-            for idx, clip in enumerate(semantic_clips):
-                p = await self._slice_video(vod_path, clip.get("start", 0), clip.get("end", 60), idx)
-                sliced_paths.append(p)
+            logger.info("Adim 4 — Klipler kesiliyor (batch)...")
+            sliced_paths = await self._batch_slice_videos(vod_path, semantic_clips)
 
         if config.do_analyze:
             logger.info("Adim 4b — YOLOv8 + SceneDetect + Emotion analiz...")
@@ -666,10 +711,8 @@ class MasterPipeline:
         sliced_paths: list[str] = []
 
         if config.do_analyze or config.do_render:
-            logger.info("Adim 4 — Klipler kesiliyor...")
-            for idx, clip in enumerate(semantic_clips):
-                p = await self._slice_video(str(vod_file), clip.get("start", 0), clip.get("end", 60), idx)
-                sliced_paths.append(p)
+            logger.info("Adim 4 — Klipler kesiliyor (batch)...")
+            sliced_paths = await self._batch_slice_videos(str(vod_file), semantic_clips)
 
         if config.do_analyze:
             logger.info("Adim 4b — Analiz...")
