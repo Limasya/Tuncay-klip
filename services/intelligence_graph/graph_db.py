@@ -7,13 +7,13 @@ Her şey birbirine bağlı, AI graph'ı traverse ederek bağlamı anlar.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
+from shared.utils.json_state import JsonStateStore
 from services.intelligence_graph.graph_models import (
     EntityType, EdgeType, GraphNode, GraphEdge, GraphQuery, GraphContext,
     GraphStats, FrameNode, ObjectNode, SpeechNode, EmotionNode, MovementNode,
@@ -34,7 +34,7 @@ class IntelligenceGraphDB:
         self._edge_index: dict[EdgeType, set[str]] = defaultdict(set)
         self._adjacency: dict[str, set[str]] = defaultdict(set)  # node_id -> edge_ids
         self._reverse_adjacency: dict[str, set[str]] = defaultdict(set)
-        self._state_path = Path(state_path or "data/intelligence_graph_state.json")
+        self._state = JsonStateStore(state_path or "data/intelligence_graph_state.json")
         self._lock = asyncio.Lock()
 
     # ── Node Operations ──
@@ -498,48 +498,36 @@ class IntelligenceGraphDB:
 
     async def save(self) -> None:
         """Graph'ı JSON'a kaydet."""
-        state = {
+        await self._state.save({
             "channel": "thetuncay",
             "updated_at": datetime.now(timezone.utc).isoformat(),
             "nodes": [n.model_dump() for n in self._nodes.values()],
             "edges": [e.model_dump() for e in self._edges.values()],
-        }
-        self._state_path.parent.mkdir(parents=True, exist_ok=True)
-        temp = self._state_path.with_suffix(".tmp")
-        await asyncio.to_thread(
-            temp.write_text,
-            json.dumps(state, ensure_ascii=False, indent=2, default=str),
-            "utf-8",
-        )
-        await asyncio.to_thread(temp.replace, self._state_path)
+        })
         logger.info("Graph saved: %d nodes, %d edges", len(self._nodes), len(self._edges))
 
     async def load(self) -> None:
         """Graph'ı JSON'dan yükle."""
-        if not self._state_path.exists():
+        state = await self._state.load()
+        if not state:
             return
-        try:
-            data = await asyncio.to_thread(self._state_path.read_text, encoding="utf-8")
-            state = json.loads(data)
 
-            for nd in state.get("nodes", []):
-                node = self._node_from_dict(nd)
-                if node:
-                    self._nodes[node.id] = node
-                    self._node_index[node.entity_type].add(node.id)
+        for nd in state.get("nodes", []):
+            node = self._node_from_dict(nd)
+            if node:
+                self._nodes[node.id] = node
+                self._node_index[node.entity_type].add(node.id)
 
-            for ed in state.get("edges", []):
-                edge = GraphEdge(**ed)
-                if edge.source_id in self._nodes and edge.target_id in self._nodes:
-                    self._edges[edge.id] = edge
-                    self._edge_index[edge.edge_type].add(edge.id)
-                    self._adjacency[edge.source_id].add(edge.id)
-                    self._reverse_adjacency[edge.target_id].add(edge.id)
+        for ed in state.get("edges", []):
+            edge = GraphEdge(**ed)
+            if edge.source_id in self._nodes and edge.target_id in self._nodes:
+                self._edges[edge.id] = edge
+                self._edge_index[edge.edge_type].add(edge.id)
+                self._adjacency[edge.source_id].add(edge.id)
+                self._reverse_adjacency[edge.target_id].add(edge.id)
 
-            logger.info("Graph loaded: %d nodes, %d edges",
-                       len(self._nodes), len(self._edges))
-        except Exception as e:
-            logger.warning("Graph load failed: %s", e)
+        logger.info("Graph loaded: %d nodes, %d edges",
+                   len(self._nodes), len(self._edges))
 
     def _node_from_dict(self, d: dict) -> Optional[GraphNode]:
         """Dict'ten uygun node tipine dönüştür."""

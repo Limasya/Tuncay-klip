@@ -347,7 +347,7 @@ class GraphBuilder:
         return {
             "running": True,
             "stats": stats.model_dump(),
-            "state_file": str(self._graph._state_path),
+            "state_file": str(self._graph._state._path),
         }
 
 

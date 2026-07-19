@@ -15,7 +15,6 @@ Intelligence Graph'tan otomatik beslenir, natural language ile sorgulanabilir.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import time
 import uuid
@@ -24,6 +23,8 @@ from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Any, Optional
+
+from shared.utils.json_state import JsonStateStore
 
 from pydantic import BaseModel, Field
 
@@ -185,7 +186,7 @@ class KnowledgeBase:
         self._fact_index: dict[FactType, set[str]] = defaultdict(set)
         self._stream_index: dict[str, set[str]] = defaultdict(set)
         self._tag_index: dict[str, set[str]] = defaultdict(set)
-        self._state_path = Path(state_path or "data/knowledge_base_state.json")
+        self._state = JsonStateStore(state_path or "data/knowledge_base_state.json")
 
     # ── Fact Operations ──
 
@@ -400,19 +401,11 @@ class KnowledgeBase:
 
     async def save(self) -> None:
         """Knowledge Base'i JSON'a kaydet."""
-        state = {
+        await self._state.save({
             "updated_at": datetime.now(timezone.utc).isoformat(),
             "facts": [f.model_dump() for f in self._facts.values()],
             "sessions": [s.model_dump() for s in self._sessions.values()],
-        }
-        self._state_path.parent.mkdir(parents=True, exist_ok=True)
-        temp = self._state_path.with_suffix(".tmp")
-        await asyncio.to_thread(
-            temp.write_text,
-            json.dumps(state, ensure_ascii=False, indent=2, default=str),
-            "utf-8",
-        )
-        await asyncio.to_thread(temp.replace, self._state_path)
+        })
         logger.info(
             "Knowledge Base saved: %d facts, %d sessions",
             len(self._facts),
@@ -421,31 +414,27 @@ class KnowledgeBase:
 
     async def load(self) -> None:
         """Knowledge Base'i JSON'dan yükle."""
-        if not self._state_path.exists():
+        state = await self._state.load()
+        if not state:
             return
-        try:
-            data = await asyncio.to_thread(self._state_path.read_text, encoding="utf-8")
-            state = json.loads(data)
 
-            for fd in state.get("facts", []):
-                fact = StreamFact(**fd)
-                self._facts[fact.fact_id] = fact
-                self._fact_index[fact.fact_type].add(fact.fact_id)
-                self._stream_index[fact.stream_id].add(fact.fact_id)
-                for tag in fact.tags:
-                    self._tag_index[tag].add(fact.fact_id)
+        for fd in state.get("facts", []):
+            fact = StreamFact(**fd)
+            self._facts[fact.fact_id] = fact
+            self._fact_index[fact.fact_type].add(fact.fact_id)
+            self._stream_index[fact.stream_id].add(fact.fact_id)
+            for tag in fact.tags:
+                self._tag_index[tag].add(fact.fact_id)
 
-            for sd in state.get("sessions", []):
-                session = StreamSession(**sd)
-                self._sessions[session.stream_id] = session
+        for sd in state.get("sessions", []):
+            session = StreamSession(**sd)
+            self._sessions[session.stream_id] = session
 
-            logger.info(
-                "Knowledge Base loaded: %d facts, %d sessions",
-                len(self._facts),
-                len(self._sessions),
-            )
-        except Exception as e:
-            logger.warning("Knowledge Base load failed: %s", e)
+        logger.info(
+            "Knowledge Base loaded: %d facts, %d sessions",
+            len(self._facts),
+            len(self._sessions),
+        )
 
 
 # ── Ingestion: Intelligence Graph → Knowledge Base ──
