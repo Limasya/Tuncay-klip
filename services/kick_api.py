@@ -10,7 +10,7 @@ import asyncio
 import json
 import logging
 import subprocess
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, Dict, Any, Callable, Awaitable
 from config import get_settings
@@ -101,7 +101,7 @@ class KickAPIService:
             token_data = response.json()
             self.access_token = token_data["access_token"]
             expires_in = token_data.get("expires_in", 3600)
-            self.token_expires_at = datetime.utcnow() + \
+            self.token_expires_at = datetime.now(timezone.utc) + \
                 __import__("datetime").timedelta(seconds=expires_in)
             logger.info("Kick OAuth2 token alindi, expires_in=%d", expires_in)
             return self.access_token
@@ -139,7 +139,7 @@ class KickAPIService:
             }
 
             self._channel_cache = result
-            self._cache_time = datetime.utcnow().timestamp()
+            self._cache_time = datetime.now(timezone.utc).timestamp()
 
             return result
         except httpx.HTTPError as e:
@@ -421,7 +421,8 @@ class KickAPIService:
         """Kanal public clip'lerini listele. Once curl_cffi, sonra httpx dener."""
         slug = settings.kick_channel_slug
         url = f"{settings.kick_api_base}/channels/{slug}/clips"
-        params = {"limit": limit, "sort": sort}
+        # Kick API sort parametresini desteklemez — sadece limit gönder
+        params = {"limit": limit}
 
         # Strateji 1: curl_cffi ile Cloudflare bypass
         if _CURL_CFFI_AVAILABLE:

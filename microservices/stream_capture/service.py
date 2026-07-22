@@ -15,7 +15,7 @@ import subprocess
 import time
 from collections import deque
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Callable, Optional
 
 import cv2
@@ -282,7 +282,7 @@ class StreamCaptureService:
         )
 
         self._is_running = True
-        self._start_time = datetime.utcnow()
+        self._start_time = datetime.now(timezone.utc)
         self._stream_info = StreamInfo(
             platform="kick",
             channel_slug=self.stream_url.split("/")[-1] if "/" in self.stream_url else "unknown",
@@ -418,7 +418,7 @@ class StreamCaptureService:
             samples = np.frombuffer(raw, dtype=np.int16).astype(np.float32)
             samples = samples / 32768.0
 
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc)
             stream_time = (
                 (now - self._start_time).total_seconds()
                 if self._start_time else 0.0
@@ -465,7 +465,7 @@ class StreamCaptureService:
 
             # Convert to numpy
             frame_array = np.frombuffer(raw_data, dtype=np.uint8).reshape((h, w, 3))
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc)
 
             frame = Frame(
                 frame_id=f"f{self._frame_counter:08d}",

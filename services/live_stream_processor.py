@@ -62,9 +62,28 @@ class VideoFrameBuffer:
     """
     Son N saniyelik video karelerini bellekte tutan döngüsel tampon.
     C++ ring buffer'ın video karşılığı — numpy array'ler içindeque tabanlı.
+
+    Adaptive FPS:
+      Stream state'e göre FPS dinamik olarak değiştirilir:
+        STEADY → 2fps  (normal akış)
+        HIGH_ENERGY → 5fps (yoğun an)
+        PEAK_MOMENT → 10fps (zirve an)
     """
 
+    # Stream state → FPS mapping
+    STATE_FPS_MAP = {
+        "steady": 2,
+        "high_energy": 5,
+        "peak_moment": 10,
+        "warming_up": 2,
+        "cooling_down": 2,
+        "starting": 2,
+        "ending": 2,
+    }
+
     def __init__(self, max_seconds: int = 180, target_fps: int = 2):
+        self._max_seconds = max_seconds
+        self._current_fps = target_fps
         self.max_frames = max_seconds * target_fps
         self.frames: deque[VideoFrame] = deque(maxlen=self.max_frames)
         self.target_fps = target_fps
@@ -72,6 +91,30 @@ class VideoFrameBuffer:
         self._last_added_time: float = float("-inf")
         self.total_frames_received: int = 0
         self.total_frames_dropped: int = 0
+
+    def set_fps(self, new_fps: int):
+        """FPS'i dinamik olarak değiştir."""
+        if new_fps == self._current_fps:
+            return
+        if new_fps < 1 or new_fps > 30:
+            return
+
+        old_fps = self._current_fps
+        self._current_fps = new_fps
+        self.target_fps = new_fps
+        self._frame_interval = 1.0 / new_fps
+        self.max_frames = self._max_seconds * new_fps
+
+        # Deque maxlen'i güncelle (yeni eklenen karelerden itibaren geçerli)
+        self.frames = deque(self.frames, maxlen=self.max_frames)
+
+        logger.info("Video FPS değiştirildi: %d → %d (max_frames=%d)",
+                     old_fps, new_fps, self.max_frames)
+
+    def update_from_state(self, stream_state: str):
+        """Stream state'e göre FPS'i güncelle."""
+        new_fps = self.STATE_FPS_MAP.get(stream_state.lower(), self.target_fps)
+        self.set_fps(new_fps)
 
     def maybe_add(self, frame: np.ndarray, timestamp: float,
                   width: int, height: int) -> bool:
@@ -110,6 +153,10 @@ class VideoFrameBuffer:
     @property
     def count(self) -> int:
         return len(self.frames)
+
+    @property
+    def current_fps(self) -> int:
+        return self._current_fps
 
     def clear(self):
         self.frames.clear()
@@ -165,26 +212,68 @@ class FfmpegPipeManager:
     2. Video pipe: HLS → rawvideo rgb24 320x240 → stdout
 
     Hiçbir dosyaya yazmaz, tüm veri pipe üzerinden gelir.
+
+    Reconnection:
+      Pipe reader boş data veya hata aldığında otomatik reconnect dener.
+      Exponential backoff: 2s → 4s → 8s → ... → 60s (cap)
+      Max 10 deneme sonrası _on_disconnect callback çağrılır.
     """
 
     def __init__(self):
         self._audio_process: Optional[subprocess.Popen] = None
         self._video_process: Optional[subprocess.Popen] = None
         self._running = False
+        self._stream_url: Optional[str] = None
+        self._audio_cb = None
+        self._video_cb = None
+
+        # Reconnection state
+        self._reconnect_count = 0
+        self._max_reconnect_attempts = 10
+        self._reconnect_base_delay = 2.0
+        self._reconnect_max_delay = 60.0
+        self._on_disconnect_callback: Optional[Callable] = None
+        self._on_reconnect_callback: Optional[Callable] = None
+
+        # Pipe reader tasks (kept for cleanup)
+        self._reader_tasks: list = []
+
+    def on_disconnect(self, callback: Callable):
+        """Bağlantı koptuğunda çağrılacak callback."""
+        self._on_disconnect_callback = callback
+
+    def on_reconnect(self, callback: Callable):
+        """Yeniden bağlandığında çağrılacak callback."""
+        self._on_reconnect_callback = callback
 
     async def start(self, stream_url: str,
                     audio_cb: Callable[[bytes], Coroutine] | None = None,
                     video_cb: Callable[[bytes, int, int], Coroutine] | None = None):
         """Her iki pipe'ı başlat."""
+        self._stream_url = stream_url
+        self._audio_cb = audio_cb
+        self._video_cb = video_cb
         self._running = True
+        self._reconnect_count = 0
 
-        # Audio pipe
+        await self._spawn_ffmpeg_processes()
+
+        tasks = self._start_readers()
+        return tasks
+
+    async def _spawn_ffmpeg_processes(self):
+        """FFmpeg subprocess'lerini başlat."""
+        if self._audio_process:
+            await self._kill_process(self._audio_process)
+        if self._video_process:
+            await self._kill_process(self._video_process)
+
         audio_cmd = [
             "ffmpeg",
             "-reconnect", "1",
             "-reconnect_streamed", "1",
             "-reconnect_delay_max", "5",
-            "-i", stream_url,
+            "-i", self._stream_url,
             "-vn",
             "-ac", "1",
             "-ar", "44100",
@@ -194,13 +283,12 @@ class FfmpegPipeManager:
             "pipe:1",
         ]
 
-        # Video pipe (düşük çözünürlük — analiz için yeterli)
         video_cmd = [
             "ffmpeg",
             "-reconnect", "1",
             "-reconnect_streamed", "1",
             "-reconnect_delay_max", "5",
-            "-i", stream_url,
+            "-i", self._stream_url,
             "-an",
             "-vf", "scale=320:240",
             "-f", "rawvideo",
@@ -225,22 +313,23 @@ class FfmpegPipeManager:
             bufsize=10**7,
         )
 
-        # Okuma task'larını başlat
+    def _start_readers(self) -> list:
+        """Okuma task'larını başlat."""
         tasks = []
-        if audio_cb:
+        if self._audio_cb:
             tasks.append(asyncio.create_task(
-                self._read_audio_pipe(self._audio_process, audio_cb)
+                self._read_audio_pipe(self._audio_process, self._audio_cb)
             ))
-        if video_cb:
+        if self._video_cb:
             tasks.append(asyncio.create_task(
-                self._read_video_pipe(self._video_process, video_cb)
+                self._read_video_pipe(self._video_process, self._video_cb)
             ))
-
+        self._reader_tasks = tasks
         return tasks
 
     async def _read_audio_pipe(self, proc: subprocess.Popen,
                                 callback: Callable[[bytes], Coroutine]):
-        """Audio pipe'tan PCM chunk'ları oku."""
+        """Audio pipe'tan PCM chunk'ları oku + reconnect."""
         CHUNK_BYTES = 44100 * 4  # 1 saniyelik chunk (float32 = 4 byte)
         logger.info("Audio pipe okuma başladı (chunk=%d bytes = 1s)", CHUNK_BYTES)
 
@@ -251,16 +340,18 @@ class FfmpegPipeManager:
                     None, proc.stdout.read, CHUNK_BYTES
                 )
                 if not data:
-                    logger.warning("Audio pipe kapandı, yeniden bağlanıyor...")
-                    break
+                    logger.warning("Audio pipe kapandı")
+                    await self._attempt_reconnect("audio")
+                    return
                 await callback(data)
             except Exception as e:
                 logger.error("Audio pipe okuma hatası: %s", e)
-                break
+                await self._attempt_reconnect("audio")
+                return
 
     async def _read_video_pipe(self, proc: subprocess.Popen,
                                 callback: Callable[[bytes, int, int], Coroutine]):
-        """Video pipe'tan raw frame chunk'ları oku."""
+        """Video pipe'tan raw frame chunk'ları oku + reconnect."""
         FRAME_SIZE = 320 * 240 * 3  # rgb24 = 3 byte/pixel
         logger.info("Video pipe okuma başladı (frame=%d bytes)", FRAME_SIZE)
 
@@ -272,22 +363,82 @@ class FfmpegPipeManager:
                 )
                 if not data or len(data) < FRAME_SIZE:
                     logger.warning("Video pipe kapandı veya eksik veri")
-                    break
+                    await self._attempt_reconnect("video")
+                    return
                 await callback(data, 320, 240)
             except Exception as e:
                 logger.error("Video pipe okuma hatası: %s", e)
-                break
+                await self._attempt_reconnect("video")
+                return
+
+    async def _attempt_reconnect(self, source: str):
+        """Exponential backoff ile yeniden bağlantı dene."""
+        if not self._running:
+            return
+
+        self._reconnect_count += 1
+        if self._reconnect_count > self._max_reconnect_attempts:
+            logger.error(
+                "FFmpeg reconnect başarısız: %d deneme aşıldı, bağlantı kesiliyor",
+                self._max_reconnect_attempts,
+            )
+            if self._on_disconnect_callback:
+                try:
+                    await self._on_disconnect_callback()
+                except Exception:
+                    pass
+            self._running = False
+            return
+
+        delay = min(
+            self._reconnect_base_delay * (2 ** (self._reconnect_count - 1)),
+            self._reconnect_max_delay,
+        )
+
+        logger.warning(
+            "FFmpeg reconnect denemesi %d/%d (%s source), bekleme: %.1fs",
+            self._reconnect_count,
+            self._max_reconnect_attempts,
+            source,
+            delay,
+        )
+
+        await asyncio.sleep(delay)
+
+        if not self._running:
+            return
+
+        try:
+            await self._spawn_ffmpeg_processes()
+            self._start_readers()
+            self._reconnect_count = 0
+            logger.info("FFmpeg pipes yeniden başlatıldı")
+
+            if self._on_reconnect_callback:
+                try:
+                    await self._on_reconnect_callback(self._reconnect_count)
+                except Exception:
+                    pass
+        except Exception as e:
+            logger.error("FFmpeg yeniden başlatma hatası: %s", e)
+
+    async def _kill_process(self, proc: subprocess.Popen):
+        """Process'i temizle."""
+        try:
+            proc.terminate()
+            proc.wait(timeout=5)
+        except Exception:
+            try:
+                proc.kill()
+            except Exception:
+                pass
 
     async def stop(self):
         """Her iki pipe'ı durdur."""
         self._running = False
         for proc in [self._audio_process, self._video_process]:
             if proc:
-                try:
-                    proc.terminate()
-                    proc.wait(timeout=5)
-                except Exception:
-                    proc.kill()
+                await self._kill_process(proc)
         self._audio_process = None
         self._video_process = None
         logger.info("FFmpeg pipes durduruldu.")
@@ -378,7 +529,6 @@ class LiveStreamProcessor:
         try:
             from signal_engine.python.signal_client import signal_engine as se
             if se.available:
-                # 180 saniye * 44100 Hz = 7,938,000 samples → en yakın 2'nin kuvveti
                 import math
                 capacity = 2 ** math.ceil(math.log2(
                     self._audio_buffer_seconds * int(self.audio_sample_rate)
@@ -390,6 +540,11 @@ class LiveStreamProcessor:
                 logger.warning("signal_engine mevcut değil, ses buffer Python'da tutulacak")
         except Exception as e:
             logger.warning("C++ ring buffer oluşturulamadı: %s", e)
+
+        # Stream state listener — adaptive FPS için
+        self._analysis_tasks.append(
+            asyncio.create_task(self._state_watcher_loop())
+        )
 
         # FFmpeg pipe'larını başlat
         tasks = await self._ffmpeg.start(
@@ -679,7 +834,6 @@ class LiveStreamProcessor:
             if not score:
                 continue
 
-            # Basit kompozit skor (event_detector'daki gibi ağırlıklı)
             composite = (
                 min(1.0, score.audio_energy / 10000) * 0.3 +
                 score.video_motion * 0.2 +
@@ -689,17 +843,15 @@ class LiveStreamProcessor:
             )
             score.composite_score = composite
 
-            # Hysteresis: üst üste yüksek skor gerekiyor
             if composite >= THRESHOLD:
                 consecutive_high += 1
             else:
                 consecutive_high = 0
 
-            # Tetikleme
             if (consecutive_high >= REQUIRED_CONSECUTIVE and
                     time.time() - last_trigger > COOLDOWN):
                 logger.info(
-                    "🔥 KLIP TETİKLEME! score=%.2f, audio=%.1f, motion=%.3f, "
+                    "KLIP TETIKLEME! score=%.2f, audio=%.1f, motion=%.3f, "
                     "consecutive=%d, time=%.1fs",
                     composite, score.audio_energy, score.video_motion,
                     consecutive_high, self.current_time,
@@ -707,8 +859,39 @@ class LiveStreamProcessor:
                 last_trigger = time.time()
                 consecutive_high = 0
 
-                # Burada decision_engine'e CLIP_CANDIDATE event'i gönderilecek
-                # şimdilik sadece log
+    async def _state_watcher_loop(self):
+        """Stream state değişimlerini izle, adaptive FPS'i güncelle.
+        Composite score bazlı otomatik state transition."""
+        STEP = 2
+        last_state = "steady"
+        high_energy_streak = 0
+
+        while self._running:
+            await asyncio.sleep(STEP)
+            score = self._score_buffer.latest
+            if not score:
+                continue
+
+            composite = score.composite_score
+
+            # State transition logic
+            if composite >= 0.8:
+                new_state = "peak_moment"
+                high_energy_streak += 1
+            elif composite >= 0.6:
+                new_state = "high_energy"
+                high_energy_streak += 1
+            else:
+                new_state = "steady"
+                high_energy_streak = 0
+
+            if new_state != last_state:
+                logger.info(
+                    "Stream state değişti: %s → %s (composite=%.2f)",
+                    last_state, new_state, composite,
+                )
+                last_state = new_state
+                self._video_buffer.update_from_state(new_state)
 
     # ── Public API ───────────────────────────────────────────────────────────
 
@@ -733,11 +916,13 @@ class LiveStreamProcessor:
                 "frame_count": self._video_buffer.count,
                 "total_received": self._video_buffer.total_frames_received,
                 "total_dropped": self._video_buffer.total_frames_dropped,
-                "current_fps": round(self._video_buffer.count / max(1, self.current_time), 1),
+                "current_fps": self._video_buffer.current_fps,
+                "actual_fps": round(self._video_buffer.count / max(1, self.current_time), 1),
             },
             "chat": {
                 "total_messages": chat_status.get("total_messages", 0),
                 "velocity": chat_status.get("velocity", {}),
+                "backoff": chat_status.get("backoff", {}),
             },
             "pipeline": {
                 "processed_frames": pipeline_stats.get("processed_frames", 0),
@@ -749,6 +934,8 @@ class LiveStreamProcessor:
                 "latest_composite": self._score_buffer.latest.composite_score
                 if self._score_buffer.latest else 0,
             },
+            "pipe_healthy": self._ffmpeg._running if self._ffmpeg else False,
+            "reconnect_count": self._ffmpeg._reconnect_count if self._ffmpeg else 0,
         }
 
     def on_audio(self, callback: Callable):

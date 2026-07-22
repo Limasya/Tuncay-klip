@@ -182,9 +182,11 @@ class TestLiveStreamProcessor:
         # Senkron callback — await gerekmeyen
         # Manuel olarak it
         import asyncio
-        asyncio.get_event_loop().run_until_complete(
+        loop = asyncio.new_event_loop()
+        loop.run_until_complete(
             proc._on_video_frame(frame.tobytes(), 320, 240)
         )
+        loop.close()
 
         assert len(received) == 1
         assert received[0][1] == 320
@@ -232,7 +234,9 @@ class TestFfmpegPipeManager:
         import asyncio
         from services.live_stream_processor import FfmpegPipeManager
         mgr = FfmpegPipeManager()
-        asyncio.get_event_loop().run_until_complete(mgr.stop())
+        loop = asyncio.new_event_loop()
+        loop.run_until_complete(mgr.stop())
+        loop.close()
         assert mgr._running is False
 
 

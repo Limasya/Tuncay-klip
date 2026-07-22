@@ -29,7 +29,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 import numpy as np
@@ -224,7 +224,7 @@ class PipelineOrchestrator:
             await self.chat_source.start()
 
         self._is_running = True
-        self._start_time = datetime.utcnow()
+        self._start_time = datetime.now(timezone.utc)
 
         logger.info(f"Pipeline started: {stream_url}")
 

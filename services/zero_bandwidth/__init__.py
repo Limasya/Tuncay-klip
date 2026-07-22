@@ -11,8 +11,13 @@ Modul yapisi:
 - audio_fallback.py: Ses-only transkripsiyon
 - alerting.py: Cloudflare tespit ve Discord alerting
 - renderer.py: Clip render (FFmpeg ile segment indirme)
+
+Konfigurasyon:
+- CHANNEL: Kanal adi (varsayilan: thetuncay)
+  Ortam degiskeninden okunur: ZERO_BANDWIDTH_CHANNEL
 """
+from services.zero_bandwidth._config import CHANNEL
 from services.zero_bandwidth.models import ClipSuggestion, VODAnalysis
 from services.zero_bandwidth.clipper import ZeroBandwidthClipper
 
-__all__ = ["ZeroBandwidthClipper", "ClipSuggestion", "VODAnalysis"]
+__all__ = ["ZeroBandwidthClipper", "ClipSuggestion", "VODAnalysis", "CHANNEL"]

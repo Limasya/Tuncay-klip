@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 import os
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from shared.event_bus import EventBus, get_event_bus
@@ -68,8 +68,8 @@ class ClipGeneratorService:
             clip_result = ClipResult(
                 file_path=clip_path,
                 duration_seconds=self._estimate_duration(candidate_data),
-                start_time=datetime.utcnow(),
-                end_time=datetime.utcnow(),
+                start_time=datetime.now(timezone.utc),
+                end_time=datetime.now(timezone.utc),
                 highlight_score=score,
                 category=self._categorize(candidate_data),
                 tags=candidate_data.get("trigger_signals", []),
@@ -104,9 +104,9 @@ class ClipGeneratorService:
             try:
                 event_time = datetime.fromisoformat(event_time_str)
             except (ValueError, TypeError):
-                event_time = datetime.utcnow()
+                event_time = datetime.now(timezone.utc)
         else:
-            event_time = datetime.utcnow()
+            event_time = datetime.now(timezone.utc)
 
         # Use capture service's clip extraction
         output_path = os.path.join(

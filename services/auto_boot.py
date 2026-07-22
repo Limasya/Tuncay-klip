@@ -187,7 +187,7 @@ async def auto_boot() -> dict:
             from services.task_queue import task_queue
 
             async def _handle_clip_analysis(payload: dict) -> dict:
-                from services.ai_pipeline import ai_pipeline_hub
+                from services.ai_pipeline import ai_pipeline as ai_pipeline_hub
                 return await ai_pipeline_hub.analyze_full_clip(payload.get("clip_id", ""))
 
             task_queue.register_handler("clip_analysis", _handle_clip_analysis)
@@ -219,6 +219,18 @@ async def auto_boot() -> dict:
                 from services.kick_clips_collector import kick_clips_collector
                 report["kick_clips_collector"] = await kick_clips_collector.start()
                 logger.info("Kick Clips Collector basladi — public clip'ler toplaniyor")
+
+                # ── Step 9a: İlk clip toplama — açılışta hemen çek ──
+                try:
+                    initial = await kick_clips_collector.collect_all(limit=100)
+                    logger.info(
+                        "İlk clip toplama tamamlandı: %d clip (%d yeni)",
+                        initial.get("known_clips", 0),
+                        initial.get("new_clips", 0),
+                    )
+                    report["kick_clips_initial"] = initial
+                except Exception as e:
+                    logger.debug("İlk clip toplama atlandı: %s", e)
 
                 # ── Step 9b: Kick Archive Scheduler — VOD'lari periyodik isle ──
                 from services.kick_archive import kick_archive

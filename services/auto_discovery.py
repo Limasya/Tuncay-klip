@@ -170,6 +170,7 @@ async def _probe_local(target: dict) -> DiscoveredProvider:
                 models = [m.get("name", m) if isinstance(m, dict) else str(m) for m in data["models"]]
         except Exception:
             latency_ms = (asyncio.get_event_loop().time() - start) * 1000
+            available = False
 
     model = os.environ.get(target["env_var_model"], target["default_model"])
 

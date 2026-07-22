@@ -4,8 +4,13 @@ Chat Signal Producer — Kick chat polling → EventBus chat.spike events
 Kick chat mesajlarını polling ile çeker, velocity spike tespit eder,
 EventBus'a chat.spike event'i yayınlar.
 
+Cloudflare Risk Azaltma:
+  - Jitter: Polling aralığına rastgele ±0.3s eklenir
+  - Exponential Backoff: HTTP hatalarında 2s→4s→8s→...→30s (cap)
+  - Max 5 consecutive error sonrası poll interval'ı artır
+
 Akış:
-  Kick chat HTTP polling (2s)
+  Kick chat HTTP polling (2s + jitter)
        │
        ▼
   Velocity hesaplama (messages/sec son 30s vs baseline son 300s)
@@ -19,11 +24,53 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
 import time
 from collections import deque
 from typing import Any, Callable, Dict, Optional
 
 logger = logging.getLogger("chat_signal_producer")
+
+
+class BackoffState:
+    """Exponential backoff state tracker."""
+
+    def __init__(
+        self,
+        base_delay: float = 2.0,
+        max_delay: float = 30.0,
+        max_retries: int = 5,
+    ):
+        self.base_delay = base_delay
+        self.max_delay = max_delay
+        self.max_retries = max_retries
+        self._consecutive_errors = 0
+
+    def record_success(self):
+        """Successful request — reset counter."""
+        self._consecutive_errors = 0
+
+    def record_error(self) -> float:
+        """Failed request — return delay before next attempt."""
+        self._consecutive_errors += 1
+        if self._consecutive_errors >= self.max_retries:
+            logger.warning(
+                "Chat polling backoff: %d consecutive errors, "
+                "polling interval increased",
+                self._consecutive_errors,
+            )
+        return min(
+            self.base_delay * (2 ** (self._consecutive_errors - 1)),
+            self.max_delay,
+        )
+
+    @property
+    def consecutive_errors(self) -> int:
+        return self._consecutive_errors
+
+    @property
+    def is_degraded(self) -> bool:
+        return self._consecutive_errors >= self.max_retries
 
 
 class ChatVelocityTracker:
@@ -94,6 +141,11 @@ class ChatSignalProducer:
     """
     Kick chat polling → EventBus chat.spike producer.
 
+    Cloudflare Risk Azaltma:
+      - Jitter: ±0.3s rastgele offset
+      - Exponential Backoff: HTTP hatalarında 2s→30s
+      - Degraded mode: 5+ hata sonrası polling yavaşlar
+
     Usage:
         producer = ChatSignalProducer()
         await producer.start(stream_id="tuncay", poll_interval=2.0)
@@ -101,6 +153,8 @@ class ChatSignalProducer:
     Her spike tespit ettiğinde EventBus'a chat.spike event'i yayınlar.
     EventDetectorService bu event'i alıp scoring'a ekler.
     """
+
+    JITTER_RANGE = 0.3  # ±0.3s
 
     def __init__(self):
         self._tracker = ChatVelocityTracker()
@@ -110,6 +164,8 @@ class ChatSignalProducer:
         self._stream_id: str = "default"
         self._last_spike_time: float = 0.0
         self._spike_cooldown: float = 5.0  # saniye
+        self._backoff = BackoffState()
+        self._base_poll_interval: float = 2.0
 
     async def start(
         self,
@@ -120,8 +176,8 @@ class ChatSignalProducer:
         """Chat polling'i başlat."""
         self._running = True
         self._stream_id = stream_id
+        self._base_poll_interval = poll_interval
 
-        # kick_api'yı başlat
         try:
             from services.kick_api import kick_service
             self._kick_service = kick_service
@@ -129,12 +185,13 @@ class ChatSignalProducer:
             logger.error("kick_api mevcut değil, chat signal üretilemiyor")
             return
 
-        # Polling task'ı başlat
         self._poll_task = asyncio.create_task(
             self._poll_loop(poll_interval, chatroom_id)
         )
-        logger.info("Chat signal producer başlatıldı: stream=%s, interval=%.1fs",
-                     stream_id, poll_interval)
+        logger.info(
+            "Chat signal producer başlatıldı: stream=%s, interval=%.1fs (+jitter±%.1fs)",
+            stream_id, poll_interval, self.JITTER_RANGE,
+        )
 
     async def stop(self):
         """Polling'i durdur."""
@@ -147,10 +204,26 @@ class ChatSignalProducer:
                 pass
         logger.info("Chat signal producer durduruldu.")
 
+    def _jittered_sleep(self, base_interval: float) -> float:
+        """Polling aralığına jitter ekle."""
+        jitter = random.uniform(-self.JITTER_RANGE, self.JITTER_RANGE)
+        return max(0.1, base_interval + jitter)
+
     async def _poll_loop(self, interval: float, chatroom_id: Optional[int]):
-        """Periyodik chat polling döngüsü."""
+        """Periyodik chat polling döngüsü + backoff + jitter."""
         cursor = None
         while self._running:
+            sleep_time = self._jittered_sleep(interval)
+
+            # Backoff: consecutive error varsa bekleme süresini artır
+            if self._backoff.is_degraded:
+                backoff_delay = self._backoff.record_error()
+                sleep_time = max(sleep_time, backoff_delay)
+                logger.debug(
+                    "Chat polling degraded: sleep=%.1fs (errors=%d)",
+                    sleep_time, self._backoff.consecutive_errors,
+                )
+
             try:
                 data = await self._kick_service.get_chat_messages(cursor)
                 messages = data.get("data", [])
@@ -160,27 +233,28 @@ class ChatSignalProducer:
                     self._tracker.record_message()
                     await self._process_message(msg)
 
-                # Velocity kontrolü
                 velocity = self._tracker.get_velocity()
                 if velocity["is_spike"]:
                     await self._emit_spike(velocity)
 
+                self._backoff.record_success()
+
             except Exception as e:
                 logger.error("Chat polling hatası: %s", e)
+                backoff_delay = self._backoff.record_error()
+                sleep_time = max(sleep_time, backoff_delay)
 
-            await asyncio.sleep(interval)
+            await asyncio.sleep(sleep_time)
 
     async def _process_message(self, msg: Dict[str, Any]):
         """Tek bir chat mesajını işle."""
-        # Mesaj içeriği analizi burada yapılabilir
-        # Şimdilik sadece velocity takibi yeterli
         pass
 
     async def _emit_spike(self, velocity: Dict[str, float]):
         """Chat spike event'i yayınla."""
         now = time.time()
         if now - self._last_spike_time < self._spike_cooldown:
-            return  # cooldown
+            return
 
         self._last_spike_time = now
 
@@ -192,7 +266,6 @@ class ChatSignalProducer:
             "total_messages": self._tracker.total_messages,
         }
 
-        # EventBus'a yayınla
         try:
             from shared.event_bus import EventBus, EventType, SystemEvent
             bus = EventBus()
@@ -214,7 +287,6 @@ class ChatSignalProducer:
         except Exception as e:
             logger.error("Chat spike yayınlanamadı: %s", e)
 
-        # Callback'leri çağır
         for cb in self._on_spike_callbacks:
             try:
                 if asyncio.iscoroutinefunction(cb):
@@ -235,6 +307,10 @@ class ChatSignalProducer:
             "stream_id": self._stream_id,
             "total_messages": self._tracker.total_messages,
             "velocity": velocity,
+            "backoff": {
+                "consecutive_errors": self._backoff.consecutive_errors,
+                "is_degraded": self._backoff.is_degraded,
+            },
         }
 
 

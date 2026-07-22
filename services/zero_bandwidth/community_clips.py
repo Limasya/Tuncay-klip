@@ -12,6 +12,8 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
+from ._config import CHANNEL
+
 logger = logging.getLogger("zero_bandwidth_clipper")
 
 # Cluster tespiti icin pencere boyutu (saniye)
@@ -42,8 +44,27 @@ async def fetch_community_clips(
 ) -> list[dict[str, Any]]:
     """Kick API'den community clip'leri cek.
 
+    Once kick_client.list_channel_clips() dener, Cloudflare bypass yapamazsa
+    direkt curl_cffi ile CHANNEL sabitini kullanir.
+
     cloudflare_checker: (status_code, response_text) -> bool fonksiyonu.
     """
+    # Strateji 1: kick_client uzerinden (Cloudflare bypass destekliyorsa)
+    try:
+        raw_clips = await kick_client.list_channel_clips(limit=50, sort="newest")
+        if raw_clips:
+            clips = []
+            for c in raw_clips:
+                clip = _normalize_clip(c)
+                if clip:
+                    clips.append(clip)
+            if clips:
+                logger.info("kick_client ile %d community clip cekildi", len(clips))
+                return clips
+    except Exception as e:
+        logger.debug("kick_client.list_channel_clips basarisiz: %s", e)
+
+    # Strateji 2: curl_cffi ile direkt API cagrisi
     try:
         from curl_cffi.requests import Session as CurlSession
 
@@ -52,7 +73,7 @@ async def fetch_community_clips(
 
         try:
             resp = session.get(
-                f"https://kick.com/api/v2/channels/thetuncay/clips",
+                f"https://kick.com/api/v2/channels/{CHANNEL}/clips",
                 headers={
                     "Accept": "application/json",
                     "User-Agent": "Mozilla/5.0",

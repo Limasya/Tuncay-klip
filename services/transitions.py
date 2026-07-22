@@ -59,6 +59,13 @@ XFADING_MAP: Dict[str, str] = {
     "morph": "dissolve",
     "cut": "",
     "custom": "",
+    # Yeni Adobe-Level Geçişler
+    "glitch_pixelize": "pixelize",
+    "cinematic_blur": "hblur",
+    "luma_slice": "hlslice",
+    "circle_open": "circleopen",
+    "dynamic_zoom": "zoomin",
+    "slow_fade": "fadeslow",
 }
 
 SUPPORTED_XFADE: set = {
@@ -408,6 +415,21 @@ TRANSITION_PRESETS: Dict[str, Dict[str, Any]] = {
         "transition_type": "fade_white",
         "duration_seconds": 0.3,
         "description": "Flash white (0.3s)",
+    },
+    "glitch_transition": {
+        "transition_type": "glitch_pixelize",
+        "duration_seconds": 0.25,
+        "description": "Fast digital glitch / pixelize (0.25s)",
+    },
+    "luma_slice": {
+        "transition_type": "luma_slice",
+        "duration_seconds": 0.6,
+        "description": "Horizontal slice transition (0.6s)",
+    },
+    "dynamic_zoom": {
+        "transition_type": "dynamic_zoom",
+        "duration_seconds": 0.5,
+        "description": "Aggressive zoom-in transition (0.5s)",
     },
 }
 

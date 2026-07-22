@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from services import llm_client
@@ -195,7 +195,7 @@ class AIGeneratorMicroservice:
                     "thumbnail_concept": thumbnail,
                     "platform_metadata": platform_metadata,
                     "source": "llm_engine_v2",
-                    "generated_at": datetime.utcnow().isoformat(),
+                    "generated_at": datetime.now(timezone.utc).isoformat(),
                 },
                 source_service="ai_generator",
                 stream_id=event.stream_id,

@@ -296,10 +296,19 @@ class PlatformExportManager:
             logger.warning("Bilinmeyen platform: %s, mp4 varsayılıyor", platform)
             profile = self._profiles["tiktok"]
 
+        # Detect best hardware video encoder
+        v_codec = profile.video_codec
+        if v_codec == "libx264":
+            try:
+                from services.auto_editor import auto_editor
+                v_codec = auto_editor.get_best_encoder()
+            except Exception:
+                pass
+
         cmd = [
             "ffmpeg", "-y",
             "-i", input_path,
-            "-c:v", profile.video_codec,
+            "-c:v", v_codec,
             "-c:a", profile.audio_codec,
             "-b:v", profile.video_bitrate,
             "-b:a", profile.audio_bitrate,

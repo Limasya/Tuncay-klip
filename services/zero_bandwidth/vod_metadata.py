@@ -11,16 +11,23 @@ import logging
 from typing import Any, Optional
 from urllib.parse import urlparse
 
+from ._config import CHANNEL
+
 logger = logging.getLogger("zero_bandwidth_clipper")
 
 
 def extract_vod_id(url: str) -> Optional[str]:
-    """Kick VOD URL'sinden VOD ID'sini cikar."""
+    """Kick VOD URL'sinden VOD ID'sini cikar.
+
+    /{channel}/videos/{id} veya /video/{id} pattern'ini tanir.
+    """
     try:
         parsed = urlparse(url)
         parts = [p for p in parsed.path.split("/") if p]
-        if len(parts) >= 3 and parts[0] == "thetuncay" and parts[1] == "videos":
+        if len(parts) >= 3 and parts[1] == "videos":
             return parts[2]
+        if len(parts) >= 2 and parts[0] == "video":
+            return parts[1]
     except Exception:
         pass
     return None
@@ -43,7 +50,7 @@ async def fetch_vod_metadata(kick_client, vod_url: str) -> Optional[dict[str, An
 
         try:
             resp = session.get(
-                f"https://kick.com/api/v2/channels/thetuncay/videos",
+                f"https://kick.com/api/v2/channels/{CHANNEL}/videos",
                 headers={
                     "Accept": "application/json",
                     "User-Agent": "Mozilla/5.0",

@@ -112,7 +112,10 @@ class EmotionDetector:
 
         cap.release()
 
-        # Viral spike'ları birleştir (yanyana olanları tek segment yap)
+        # Temporal smoothing: 3-frame pencere ile emotion siniflandirmasini yumusat
+        timeline = self._smooth_timeline(timeline, window=3)
+
+        # Viral spike'lari birlestir (yanyana olanlari tek segment yap)
         merged_spikes = self._merge_emotion_spikes(viral_spikes)
 
         # Genel duygu dağılımı
@@ -128,6 +131,37 @@ class EmotionDetector:
             "viral_spikes": merged_spikes,
             "peak_emotion": max(emotion_counts, key=emotion_counts.get) if emotion_counts else "neutral",
         }
+
+    def _smooth_timeline(
+        self, timeline: List[Dict], window: int = 3
+    ) -> List[Dict]:
+        """
+        Temporal smoothing: hareketli pencere ile dominant emotion siniflandirmasini yumusatir.
+        Tekrarlanan tek karelik dalgalanmalari onler.
+        """
+        if len(timeline) < window:
+            return timeline
+
+        smoothed = []
+        half_w = window // 2
+        for i, entry in enumerate(timeline):
+            start = max(0, i - half_w)
+            end = min(len(timeline), i + half_w + 1)
+            neighborhood = timeline[start:end]
+
+            # En yogun emotion'u bul
+            counts: Dict[str, float] = {}
+            for j, nb in enumerate(neighborhood):
+                # Ortadaki noktalara daha agirlik ver
+                dist = abs(i - (start + j))
+                weight = 1.0 / (1.0 + dist)
+                em = nb["dominant_emotion"]
+                counts[em] = counts.get(em, 0.0) + weight
+
+            best_emotion = max(counts, key=counts.get) if counts else entry["dominant_emotion"]
+            smoothed.append({**entry, "dominant_emotion": best_emotion})
+
+        return smoothed
 
     def _merge_emotion_spikes(
         self, spikes: List[Dict], max_gap: float = 3.0

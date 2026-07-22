@@ -270,13 +270,26 @@ class TestEndToEndLatency:
                 evidence_threshold=0.2,
             )
 
+            HIGH_SIGNALS = {
+                "audio_spike": 0.8,
+                "chat_velocity": 0.6,
+                "emotion_intensity": 0.5,
+                "emotion_change": 0.7,
+                "pose_gesture": 0.6,
+                "pose_motion": 0.5,
+                "chat_sentiment": 0.7,
+                "viewer_delta": 0.5,
+                "ocr_keyword": 0.6,
+                "speech_content": 0.5,
+                "donation": 0.8,
+            }
+
             t_start = time.perf_counter()
 
             for i in range(20):
                 scoring = detector._get_stream_scoring("test")
-                scoring.update_signal("audio_spike", 0.8)
-                scoring.update_signal("chat_velocity", 0.6)
-                scoring.update_signal("emotion_intensity", 0.5)
+                for k, v in HIGH_SIGNALS.items():
+                    scoring.update_signal(k, v)
                 detector._stream_last_score_time["test"] = 0.0
                 await detector._maybe_emit_score("test")
                 await asyncio.sleep(0.02)
@@ -348,13 +361,26 @@ class TestEndToEndLatency:
                 evidence_threshold=0.2,
             )
 
+            HIGH_SIGNALS = {
+                "audio_spike": 0.8,
+                "chat_velocity": 0.6,
+                "emotion_intensity": 0.5,
+                "emotion_change": 0.7,
+                "pose_gesture": 0.6,
+                "pose_motion": 0.5,
+                "chat_sentiment": 0.7,
+                "viewer_delta": 0.5,
+                "ocr_keyword": 0.6,
+                "speech_content": 0.5,
+                "donation": 0.8,
+            }
+
             t_start = time.perf_counter()
 
             for i in range(30):
                 scoring = detector._get_stream_scoring("test")
-                scoring.update_signal("audio_spike", 0.8)
-                scoring.update_signal("chat_velocity", 0.6)
-                scoring.update_signal("emotion_intensity", 0.5)
+                for k, v in HIGH_SIGNALS.items():
+                    scoring.update_signal(k, v)
                 detector._stream_last_score_time["test"] = 0.0
                 await detector._maybe_emit_score("test")
                 await asyncio.sleep(0.05)

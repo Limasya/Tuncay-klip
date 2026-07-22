@@ -84,7 +84,7 @@ class KickClipsCollector:
         """Yeni clip'leri kontrol et ve kaydet."""
         self._stats["last_check"] = datetime.now(timezone.utc).isoformat()
 
-        state = await self._read_state()
+        state = await self.read_state()
         known_ids = set(state.get("known_clip_ids", []))
 
         # Kick API'den公众clip'leri cek
@@ -133,7 +133,7 @@ class KickClipsCollector:
 
     async def collect_all(self, limit: int = 100) -> dict[str, Any]:
         """Tum公众clip'leri topla ve rapor olustur."""
-        state = await self._read_state()
+        state = await self.read_state()
         known_ids = set(state.get("known_clip_ids", []))
 
         all_clips = []
@@ -185,7 +185,7 @@ class KickClipsCollector:
 
     async def get_top_clips(self, limit: int = 10, sort_by: str = "views") -> list[dict[str, Any]]:
         """En populer clip'leri dondur."""
-        state = await self._read_state()
+        state = await self.read_state()
         clips = list(state.get("clips", {}).values())
 
         if sort_by == "views":
@@ -197,9 +197,14 @@ class KickClipsCollector:
 
         return clips[:limit]
 
+    async def get_clip(self, clip_id: str) -> Optional[dict[str, Any]]:
+        """Tek bir clip getir."""
+        state = await self.read_state()
+        return state.get("clips", {}).get(clip_id)
+
     async def search_clips(self, query: str) -> list[dict[str, Any]]:
         """Clip'ler arasinda ara."""
-        state = await self._read_state()
+        state = await self.read_state()
         query_lower = query.lower()
         results = []
 
@@ -213,7 +218,7 @@ class KickClipsCollector:
 
     async def get_clip_stats(self) -> dict[str, Any]:
         """Clip istatistiklerini dondur."""
-        state = await self._read_state()
+        state = await self.read_state()
         clips = state.get("clips", {})
 
         if not clips:
@@ -246,12 +251,14 @@ class KickClipsCollector:
 
     async def get_status(self) -> dict[str, Any]:
         """Collector durumunu dondur."""
+        state = await self.read_state()
+        has_data = len(state.get("clips", {})) > 0
         return {
-            "running": self._is_running,
+            "running": self._is_running or has_data,
             "channel": self._settings.kick_channel_slug,
             "channel_url": f"https://kick.com/{self._settings.kick_channel_slug}",
             "check_interval": self._check_interval,
-            "stats": self._stats.copy(),
+            "stats": {**self._stats.copy(), "has_data": has_data, "clip_count": len(state.get("clips", {}))},
             "state_file": str(self._state_store.path),
         }
 
@@ -266,7 +273,7 @@ class KickClipsCollector:
             "updated_at": None,
         }
 
-    async def _read_state(self) -> dict[str, Any]:
+    async def read_state(self) -> dict[str, Any]:
         state = await self._state_store.load()
         if not isinstance(state, dict):
             return self._default_state()

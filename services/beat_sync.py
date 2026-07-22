@@ -7,6 +7,7 @@ import asyncio
 import json
 import logging
 import math
+import os
 import tempfile
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -47,13 +48,27 @@ class BeatGrid:
 class BeatSyncEngine:
     """
     Beat-senkronize duzenleme motoru.
-    librosa ile gercek beat detection, FFmpeg filter uretimi.
+    C++ signal_engine (native, fastest) → librosa (Python) → energy-based fallback (slow).
     """
 
     def __init__(self):
         self._default_bpm = 120
         self._temp_dir = Path("data/temp")
         self._temp_dir.mkdir(parents=True, exist_ok=True)
+        self._signal_engine = None
+        self._cpp_available = False
+        self._init_cpp_engine()
+
+    def _init_cpp_engine(self):
+        """C++ signal_engine yuklemeyi dene."""
+        try:
+            from signal_engine.python.signal_client import signal_engine
+            if signal_engine.available:
+                self._signal_engine = signal_engine
+                self._cpp_available = True
+                logger.info("C++ signal_engine aktif — native beat detection kullanilacak")
+        except Exception as e:
+            logger.debug("C++ signal_engine yuklenemedi: %s", e)
 
     async def detect_beats(
         self,
@@ -64,16 +79,23 @@ class BeatSyncEngine:
         """
         Ses/video dosyasindan beat'leri algilar.
 
-        librosa mevcutsa: gercek beat detection (onset + tempo).
-        Degilse: enerji tabanli fallback.
-
-        Args:
-            audio_path: Ses veya video dosya yolu.
-            sensitivity: Beat esik degeri (0-1). Yuksek = daha az beat.
-            bpm_override: BPM degeri zorla (None = otomatik algila).
+        Sira:
+          1. C++ signal_engine (en hizli, native)
+          2. librosa (orta)
+          3. Enerji tabanli fallback (en yavas)
         """
         duration = await self._get_duration(audio_path)
 
+        # 1. C++ signal_engine ile native beat detection
+        if self._cpp_available:
+            try:
+                return await self._cpp_signal_detect(
+                    audio_path, duration, sensitivity, bpm_override
+                )
+            except Exception as e:
+                logger.debug("C++ beat detection basarisiz: %s", e)
+
+        # 2. librosa ile Python beat detection
         if LIBROSA_AVAILABLE:
             try:
                 return await self._librosa_detect(
@@ -82,7 +104,137 @@ class BeatSyncEngine:
             except Exception as e:
                 logger.warning("librosa beat detection basarisiz: %s, fallback kullaniliyor", e)
 
+        # 3. Enerji tabanli fallback
         return await self._energy_based_detect(audio_path, duration, bpm_override)
+
+    async def _cpp_signal_detect(
+        self,
+        audio_path: str,
+        duration: float,
+        sensitivity: float,
+        bpm_override: Optional[float],
+    ) -> BeatGrid:
+        """C++ signal_engine ile native beat detection — FFT + onset + BPM."""
+        import numpy as np
+
+        # Ses dosyasini WAV'a cevir (signal_engine ham float array alir)
+        ext = Path(audio_path).suffix.lower()
+        audio_tmp = None
+        if ext in (".mp4", ".mkv", ".avi", ".mov", ".webm", ".flv"):
+            audio_tmp = await self._extract_audio(audio_path)
+            if not audio_tmp:
+                raise RuntimeError("Ses cikarma basarisiz")
+            work_path = audio_tmp
+        elif ext in (".mp3", ".wav", ".ogg", ".m4a"):
+            # WAV'a cevir
+            wav_path = str(self._temp_dir / f"cpp_beat_{Path(audio_path).stem}.wav")
+            if not os.path.exists(wav_path):
+                cmd = ["ffmpeg", "-y", "-i", audio_path, "-ac", "1", "-ar", "22050",
+                       "-f", "wav", wav_path]
+                proc = await asyncio.create_subprocess_exec(
+                    *cmd, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
+                )
+                await proc.communicate()
+                if proc.returncode != 0:
+                    raise RuntimeError("WAV donusumu basarisiz")
+            work_path = wav_path
+        else:
+            work_path = audio_path
+
+        # WAV'dan float array oku (soundfile veya FFmpeg pipe)
+        samples = await self._read_wav_to_floats(work_path)
+        if not samples or len(samples) < 1024:
+            raise RuntimeError("Samples yetersiz")
+
+        sample_rate = 22050  # downsampled to 22kHz
+        
+        # C++ signal_engine.analyze_audio cagir (FFT + onset + beat)
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(
+            None,
+            lambda: self._signal_engine.analyze_audio(samples, float(sample_rate)),
+        )
+
+        if not result.get("success", False):
+            raise RuntimeError(f"C++ analysis failed: {result.get('error', 'unknown')}")
+
+        beats_data = result.get("beats", [])
+        bpm = result.get("bpm", bpm_override or 120.0)
+        onset_strength = result.get("onset_strength", [])
+
+        if bpm_override:
+            bpm = bpm_override
+
+        if not beats_data:
+            raise RuntimeError("C++ beat detection returned no beats")
+
+        # Beat listesi olustur
+        beat_list = []
+        for i, bt in enumerate(beats_data):
+            bt_time = bt.get("time", 0.0) if isinstance(bt, dict) else float(bt)
+            bt_strength = bt.get("strength", 0.5) if isinstance(bt, dict) else 0.5
+
+            if bt_time > duration:
+                break
+
+            strength = max(0.1, min(1.0, bt_strength))
+            is_downbeat = (i % 4 == 0)
+
+            beat_list.append(BeatInfo(
+                time=float(bt_time),
+                strength=float(strength),
+                bpm=float(bpm),
+                beat_number=i % 4,
+                is_downbeat=is_downbeat,
+            ))
+
+        if not beat_list:
+            raise RuntimeError("No valid beats after filtering")
+
+        total_bars = len(beat_list) // 4 if len(beat_list) >= 4 else 1
+
+        logger.info(
+            "C++ beat detection: BPM=%.1f, %d beat, %d bar, sure=%.1fs",
+            bpm, len(beat_list), total_bars, duration,
+        )
+
+        # Temizlik
+        if audio_tmp and Path(audio_tmp).exists():
+            try:
+                Path(audio_tmp).unlink()
+            except Exception:
+                pass
+
+        return BeatGrid(
+            bpm=float(bpm),
+            beats=beat_list,
+            total_bars=total_bars,
+            time_signature="4/4",
+            duration=duration,
+        )
+
+    async def _read_wav_to_floats(self, wav_path: str) -> list[float]:
+        """FFmpeg pipe ile WAV'dan float32 array oku."""
+        try:
+            import numpy as np
+            cmd = [
+                "ffmpeg", "-y", "-i", wav_path,
+                "-f", "f32le", "-ac", "1", "-ar", "22050",
+                "-",
+            ]
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            raw_data, _ = await proc.communicate()
+            if proc.returncode != 0 or not raw_data:
+                raise RuntimeError("FFmpeg pipe failed")
+
+            samples = np.frombuffer(raw_data, dtype=np.float32).tolist()
+            return samples
+        except ImportError:
+            raise RuntimeError("numpy required for C++ signal_engine bridge")
 
     async def _librosa_detect(
         self,

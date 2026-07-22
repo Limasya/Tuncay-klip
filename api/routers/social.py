@@ -20,6 +20,7 @@ from services.social_video_generator import social_video_gen
 from services.master_pipeline import master_pipeline
 from services.ai_pipeline import ai_pipeline
 from utils.auth_compat import Principal, Scope, require_scope
+from config import get_settings
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/social", tags=["social"])

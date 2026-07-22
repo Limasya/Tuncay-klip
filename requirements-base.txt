@@ -7,12 +7,14 @@
 # API-only / hafif mikroservisler için: pip install -r requirements-base.txt
 
 # Core Web Framework
-fastapi>=0.111.0
+# fastapi/starlette pin: httpx>=0.28 requires starlette>=1.0.0, which needs fastapi>=0.139.0
+fastapi>=0.139.0
+starlette>=1.0.0
 uvicorn[standard]>=0.30.1
 python-dotenv>=1.0.1
 pydantic>=2.7.0
 pydantic-settings>=2.3.0
-httpx>=0.27.0
+httpx>=0.28.0
 aiohttp>=3.9.5
 websockets>=12.0
 

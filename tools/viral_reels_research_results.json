@@ -1,0 +1,232 @@
+{
+  "metadata": {
+    "timestamp": "2026-07-20 00:07:57",
+    "total_elapsed_s": 14.7,
+    "providers_called": [
+      "groq",
+      "gemini",
+      "openrouter"
+    ],
+    "prompt": "Sen bir viral TikTok ve Instagram Reels edit uzmanısın. 2025-2026'da viral olan Türk gaming/yayıncı Reels ve TikTok videolarının ortak edit pattern'lerini analiz et. Özellikle şu konulara odaklan:\n\n1. **Meme/Fotoğraf Overlay**: Viral videolarda meme ve fotoğraflar nasıl yerleştiriliyor? (boyut, pozisyon, zamanlama, animasyon). Tam ekran kaplamadan nasıl overlay yapılıyor?\n2. **Ses Efektleri**: Hangi ses efektleri nerede kullanılıyor? (vine boom, click, bass drop, record scratch, vs). Hangi zaman"
+  },
+  "raw_responses": [
+    {
+      "provider": "groq",
+      "success": true,
+      "elapsed_s": 2.9,
+      "raw_text": "```json\n{\n  \"edit_teknikleri\": [\n    {\n      \"teknik_adi\": \"Meme/Fotoğraf Overlay\",\n      \"viral_etki_skoru\": 80,\n      \"kullanim_zamanlami\": \"0-3 saniye\",\n      \"ffmpeg_implementation\": \"ffmpeg -i input.mp4 -i meme.png -filter_complex overlay=W-w-10:H-h-10 output.mp4\",\n      \"ornek_aciklama\": \"Viral videolarda meme ve fotoğraflar genellikle 0-3 saniye arasında, ekranın sağ alt veya sol üst köşesinde yerleştiriliyor. FFmpeg ile bu efekt实现 edilebilir.\"\n    },\n    {\n      \"teknik_adi\": \"Ses Efektleri\",\n      \"viral_etki_skoru\": 90,\n      \"kullanim_zamanlami\": \"5-10 saniye\",\n      \"ffmpeg_implementation\": \"ffmpeg -i input.mp4 -i ses_efekti.mp3 -filter_complex amerge output.mp4\",\n      \"ornek_aciklama\": \"Viral videolarda ses efektleri genellikle 5-10 saniye arasında, vine boom, click, bass drop gibi efektler kullanılıyor. FFmpeg ile bu efektleri videoya ekleyebilirsiniz.\"\n    },\n    {\n      \"teknik_adi\": \"Müzik\",\n      \"viral_etki_skoru\": 95,\n      \"kullanim_zamanlami\": \"0-60 saniye\",\n      \"ffmpeg_implementation\": \"ffmpeg -i input.mp4 -i muzik.mp3 -filter_complex amerge output.mp4\",\n      \"ornek_aciklama\": \"Viral videolarda müzik kullanımı genellikle orijinal ses yerine trending audio kullanılıyor. Ses seviyesi genellikle -20 dB ile -15 dB arasında ayarlanıyor.\"\n    },\n    {\n      \"teknik_adi\": \"Text/Metin Overlay\",\n      \"viral_etki_skoru\": 85,\n      \"kullanim_zamanlami\": \"10-15 saniye\",\n      \"ffmpeg_implementation\": \"ffmpeg -i input.mp4 -filter_complex drawtext='text=Merhaba':x=10:y=10 output.mp4\",\n      \"ornek_aciklama\": \"Viral videolarda başlık, alt yazı, hook text genellikle 10-15 saniye arasında, ekranın üst veya alt kısmında yerleştiriliyor. FFmpeg ile bu efektleri videoya ekleyebilirsiniz.\"\n    },\n    {\n      \"teknik_adi\": \"Geçiş Efektleri\",\n      \"viral_etki_skoru\": 80,\n      \"kullanim_zamanlami\": \"15-30 saniye\",\n      \"ffmpeg_implementation\": \"ffmpeg -i input.mp4 -filter_complex fade=t=in:st=15:d=5 output.mp4\",\n      \"ornek_aciklama\": \"Viral videolarda geçiş efektleri genellikle 15-30 saniye arasında, jump cut, whip pan, zoom gibi efektler kullanılıyor. FFmpeg ile bu efektleri videoya ekleyebilirsiniz.\"\n    },\n    {\n      \"teknik_adi\": \"Hız Değişimi\",\n      \"viral_etki_skoru\": 90,\n      \"kullanim_zamanlami\": \"30-45 saniye\",\n      \"ffmpeg_implementation\": \"ffmpeg -i input.mp4 -filter_complex setpts=2*PTS output.mp4\",\n      \"ornek_aciklama\": \"Viral videolarda hız değişimi genellikle 30-45 saniye arasında, speed ramp, slow-mo, freeze frame gibi efektler kullanılıyor. FFmpeg ile bu efektleri videoya ekleyebilirsiniz.\"\n    },\n    {\n      \"teknik_adi\": \"Renk/Filter\",\n      \"viral_etki_skoru\": 85,\n      \"kullanim_zamanlami\": \"0-60 saniye\",\n      \"ffmpeg_implementation\": \"ffmpeg -i input.mp4 -filter_complex eq=saturation=1.5 output.mp4\",\n      \"ornek_aciklama\": \"Viral videolarda renk grading ve filter'lar genellikle tüm video boyunca kullanılıyor. FFmpeg ile bu efektleri videoya ekleyebilirsiniz.\"\n    },\n    {\n      \"teknik_adi\": \"Genel Yapı\",\n      \"viral_etki_skoru\": 95,\n      \"kullanim_zamanlami\": \"0-60 saniye\",\n      \"ffmpeg_implementation\": \"ffmpeg -i input.mp4 -filter_complex concat=n=3:v=1:a=1 output.mp4\",\n      \"ornek_aciklama\": \"Viral videolarda genel yapı genellikle hook → buildup → payoff → send trigger şeklinde oluşturuluyor. FFmpeg ile bu efektleri videoya ekleyebilirsiniz.\"\n    }\n  ]\n}\n```",
+      "error": null
+    },
+    {
+      "provider": "gemini",
+      "success": false,
+      "elapsed_s": 0.3,
+      "raw_text": "",
+      "error": "HTTP 429: {\n  \"error\": {\n    \"code\": 429,\n    \"message\": \"You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \\n* Quota ex"
+    },
+    {
+      "provider": "openrouter",
+      "success": true,
+      "elapsed_s": 14.4,
+      "raw_text": "```json\n[\n    {\n        \"teknik_adi\": \"Meme/Fotoğraf Overlay\",\n        \"viral_etki_skoru\": 85,\n        \"kullanım_zamanlaması\": \"0-5 saniye\",\n        \"ffmpeg_implementation\": \"overlay滤镜\",\n        \"örnek_açıklama\": \"Meme ve fotoğraflar tam ekran kaplamadan yerleştirilir. Genellikle video'nun başında ve hook'ta kullanılır. Fotoğraflar genellikle animasyonlu olarak girer ve çıkarmak için opacity filtresi kullanılır.\"\n    },\n    {\n        \"teknik_adi\": \"Ses Efektleri\",\n        \"viral_etki_skoru\": 80,\n        \"kullanım_zamanlaması\": \"0,5-1,5 saniye\",\n        \"ffmpeg_implementation\": \"af=atempo\",\n        \"örnek_açıklama\": \"Viral videolarda vine boom, click, bass drop, record scratch gibi ses efektleri genellikle hook'ta veya önemli olaylar gerçekleştiğinde kullanılır. Ses seviyesi genellikle video sesiyle uyumlu olarak ayarlanır.\"\n    },\n    {\n        \"teknik_adi\": \"Müzik\",\n        \"viral_etki_skoru\": 90,\n        \"kullanım_zamanlaması\": \"0-90 saniye\",\n        \"ffmpeg_implementation\": \"af=atempo\",\n        \"örnek_açıklama\": \"Trendy audio'lar genellikle video'nun başından sonuna kadar kullanılır. Ses seviyesi genellikle video sesiyle uyumlu olarak ayarlanır. Müzik ses seviyesi genellikle -10 dB olarak ayarlanır.\"\n    },\n    {\n        \"teknik_adi\": \"Text/Metin Overlay\",\n        \"viral_etki_skoru\": 88,\n        \"kullanım_zamanlaması\": \"0-5 saniye\",\n        \"ffmpeg_implementation\": \"drawtext\",\n        \"örnek_açıklama\": \"Başlık, alt yazı ve hook text genellikle video'nun başında veya önemli olaylar gerçekleştiğinde kullanılır. Font, renk ve animasyon genellikle videonun temasına göre seçilir. Text'ler genellikle fade filtresiyle belirli bir süre boyunca gösterilir.\"\n    },\n    {\n        \"teknik_adi\": \"Geçiş Efektleri\",\n        \"viral_etki_skoru\": 92,\n        \"kullanım_zamanlaması\": \"0-5 saniye\",\n        \"ffmpeg_implementation\": \"transition\",\n        \"örnek_açıklama\": \"Jump cut ve whip pan genellikle video'nun önemli olayları arasında kullanılır. Zoom ve glitch genellikle video'nun sonunda veya hook'ta kullanılır. Transition'lar genellikle video'nun 2-3 saniyesinde geçiş yapılır.\"\n    },\n    {\n        \"teknik_adi\": \"Hız Değişimi\",\n        \"viral_etki_skoru\": 87,\n        \"kullanım_zamanlaması\": \"0-5 saniye ve video'nun sonunda\",\n        \"ffmpeg_implementation\": \"setpts\",\n        \"örnek_açıklama\": \"Speed ramp, slow-mo ve freeze frame genellikle video'nun önemli olayları arasında veya hook'ta kullanılır. Genellikle video'nun 2-3 saniyesinde hız değişikliği yapılır ve genellikle 2x veya 0.5x hızlar kullanılır.\"\n    },\n    {\n        \"teknik_adi\": \"Renk/Filter\",\n        \"viral_etki_skoru\": 85,\n        \"kullanım_zamanlaması\": \"0-5 saniye ve video'nun sonunda\",\n        \"ffmpeg_implementation\": \"colorchannelmixer\",\n        \"örnek_açıklama\": \"Renkgrading ve filter'lar genellikle video'nun hook'ta veya important olaylar gerçekleştiğinde kullanılır. Renkgrading genellikle video'nun temasına göre seçilir ve genellikle video'nun 2-3 saniyesinde uygulanır.\"\n    },\n    {\n        \"teknik_adi\": \"Genel Yapı\",\n        \"viral_etki_skoru\": 95,\n        \"kullanım_zamanlaması\": \"0-90 saniye\",\n        \"ffmpeg_implementation\": \"concat\",\n        \"örnek_açıklama\": \"Hook → buildup → payoff → send trigger genellikle video'nun yapısında kullanılır. Hook genellikle video'nun ilk 5-10 saniyesi, buildup genellikle 10-30 saniye arası, payoff genellikle 30-60 saniye arası ve send trigger genellikle 60-90 saniye arası kullanılır.\"\n    }\n]\n```",
+      "error": null
+    }
+  ],
+  "summary": {
+    "toplam_teknik_sayisi": 8,
+    "top_10_teknik": [
+      {
+        "teknik_adi": "Müzik",
+        "viral_etki_skoru": 95.0,
+        "zamanlama": "",
+        "ffmpeg_implementasyon": "ffmpeg -i input.mp4 -i muzik.mp3 -filter_complex amerge output.mp4",
+        "aciklama": "Viral videolarda müzik kullanımı genellikle orijinal ses yerine trending audio kullanılıyor. Ses seviyesi genellikle -20 dB ile -15 dB arasında ayarlanıyor.",
+        "kaynak_provider": "groq"
+      },
+      {
+        "teknik_adi": "Genel Yapı",
+        "viral_etki_skoru": 95.0,
+        "zamanlama": "",
+        "ffmpeg_implementasyon": "ffmpeg -i input.mp4 -filter_complex concat=n=3:v=1:a=1 output.mp4",
+        "aciklama": "Viral videolarda genel yapı genellikle hook → buildup → payoff → send trigger şeklinde oluşturuluyor. FFmpeg ile bu efektleri videoya ekleyebilirsiniz.",
+        "kaynak_provider": "groq"
+      },
+      {
+        "teknik_adi": "Geçiş Efektleri",
+        "viral_etki_skoru": 92.0,
+        "zamanlama": "",
+        "ffmpeg_implementasyon": "transition",
+        "aciklama": "Jump cut ve whip pan genellikle video'nun önemli olayları arasında kullanılır. Zoom ve glitch genellikle video'nun sonunda veya hook'ta kullanılır. Transition'lar genellikle video'nun 2-3 saniyesinde geçiş yapılır.",
+        "kaynak_provider": "openrouter"
+      },
+      {
+        "teknik_adi": "Ses Efektleri",
+        "viral_etki_skoru": 90.0,
+        "zamanlama": "",
+        "ffmpeg_implementasyon": "ffmpeg -i input.mp4 -i ses_efekti.mp3 -filter_complex amerge output.mp4",
+        "aciklama": "Viral videolarda ses efektleri genellikle 5-10 saniye arasında, vine boom, click, bass drop gibi efektler kullanılıyor. FFmpeg ile bu efektleri videoya ekleyebilirsiniz.",
+        "kaynak_provider": "groq"
+      },
+      {
+        "teknik_adi": "Hız Değişimi",
+        "viral_etki_skoru": 90.0,
+        "zamanlama": "",
+        "ffmpeg_implementasyon": "ffmpeg -i input.mp4 -filter_complex setpts=2*PTS output.mp4",
+        "aciklama": "Viral videolarda hız değişimi genellikle 30-45 saniye arasında, speed ramp, slow-mo, freeze frame gibi efektler kullanılıyor. FFmpeg ile bu efektleri videoya ekleyebilirsiniz.",
+        "kaynak_provider": "groq"
+      },
+      {
+        "teknik_adi": "Text/Metin Overlay",
+        "viral_etki_skoru": 88.0,
+        "zamanlama": "",
+        "ffmpeg_implementasyon": "drawtext",
+        "aciklama": "Başlık, alt yazı ve hook text genellikle video'nun başında veya önemli olaylar gerçekleştiğinde kullanılır. Font, renk ve animasyon genellikle videonun temasına göre seçilir. Text'ler genellikle fade filtresiyle belirli bir süre boyunca gösterilir.",
+        "kaynak_provider": "openrouter"
+      },
+      {
+        "teknik_adi": "Meme/Fotoğraf Overlay",
+        "viral_etki_skoru": 85.0,
+        "zamanlama": "",
+        "ffmpeg_implementasyon": "overlay滤镜",
+        "aciklama": "Meme ve fotoğraflar tam ekran kaplamadan yerleştirilir. Genellikle video'nun başında ve hook'ta kullanılır. Fotoğraflar genellikle animasyonlu olarak girer ve çıkarmak için opacity filtresi kullanılır.",
+        "kaynak_provider": "openrouter"
+      },
+      {
+        "teknik_adi": "Renk/Filter",
+        "viral_etki_skoru": 85.0,
+        "zamanlama": "",
+        "ffmpeg_implementasyon": "ffmpeg -i input.mp4 -filter_complex eq=saturation=1.5 output.mp4",
+        "aciklama": "Viral videolarda renk grading ve filter'lar genellikle tüm video boyunca kullanılıyor. FFmpeg ile bu efektleri videoya ekleyebilirsiniz.",
+        "kaynak_provider": "groq"
+      }
+    ],
+    "tum_teknikler": [
+      {
+        "teknik_adi": "Müzik",
+        "viral_etki_skoru": 95.0,
+        "zamanlama": "",
+        "ffmpeg_implementasyon": "ffmpeg -i input.mp4 -i muzik.mp3 -filter_complex amerge output.mp4",
+        "aciklama": "Viral videolarda müzik kullanımı genellikle orijinal ses yerine trending audio kullanılıyor. Ses seviyesi genellikle -20 dB ile -15 dB arasında ayarlanıyor.",
+        "kaynak_provider": "groq"
+      },
+      {
+        "teknik_adi": "Genel Yapı",
+        "viral_etki_skoru": 95.0,
+        "zamanlama": "",
+        "ffmpeg_implementasyon": "ffmpeg -i input.mp4 -filter_complex concat=n=3:v=1:a=1 output.mp4",
+        "aciklama": "Viral videolarda genel yapı genellikle hook → buildup → payoff → send trigger şeklinde oluşturuluyor. FFmpeg ile bu efektleri videoya ekleyebilirsiniz.",
+        "kaynak_provider": "groq"
+      },
+      {
+        "teknik_adi": "Geçiş Efektleri",
+        "viral_etki_skoru": 92.0,
+        "zamanlama": "",
+        "ffmpeg_implementasyon": "transition",
+        "aciklama": "Jump cut ve whip pan genellikle video'nun önemli olayları arasında kullanılır. Zoom ve glitch genellikle video'nun sonunda veya hook'ta kullanılır. Transition'lar genellikle video'nun 2-3 saniyesinde geçiş yapılır.",
+        "kaynak_provider": "openrouter"
+      },
+      {
+        "teknik_adi": "Ses Efektleri",
+        "viral_etki_skoru": 90.0,
+        "zamanlama": "",
+        "ffmpeg_implementasyon": "ffmpeg -i input.mp4 -i ses_efekti.mp3 -filter_complex amerge output.mp4",
+        "aciklama": "Viral videolarda ses efektleri genellikle 5-10 saniye arasında, vine boom, click, bass drop gibi efektler kullanılıyor. FFmpeg ile bu efektleri videoya ekleyebilirsiniz.",
+        "kaynak_provider": "groq"
+      },
+      {
+        "teknik_adi": "Hız Değişimi",
+        "viral_etki_skoru": 90.0,
+        "zamanlama": "",
+        "ffmpeg_implementasyon": "ffmpeg -i input.mp4 -filter_complex setpts=2*PTS output.mp4",
+        "aciklama": "Viral videolarda hız değişimi genellikle 30-45 saniye arasında, speed ramp, slow-mo, freeze frame gibi efektler kullanılıyor. FFmpeg ile bu efektleri videoya ekleyebilirsiniz.",
+        "kaynak_provider": "groq"
+      },
+      {
+        "teknik_adi": "Text/Metin Overlay",
+        "viral_etki_skoru": 88.0,
+        "zamanlama": "",
+        "ffmpeg_implementasyon": "drawtext",
+        "aciklama": "Başlık, alt yazı ve hook text genellikle video'nun başında veya önemli olaylar gerçekleştiğinde kullanılır. Font, renk ve animasyon genellikle videonun temasına göre seçilir. Text'ler genellikle fade filtresiyle belirli bir süre boyunca gösterilir.",
+        "kaynak_provider": "openrouter"
+      },
+      {
+        "teknik_adi": "Meme/Fotoğraf Overlay",
+        "viral_etki_skoru": 85.0,
+        "zamanlama": "",
+        "ffmpeg_implementasyon": "overlay滤镜",
+        "aciklama": "Meme ve fotoğraflar tam ekran kaplamadan yerleştirilir. Genellikle video'nun başında ve hook'ta kullanılır. Fotoğraflar genellikle animasyonlu olarak girer ve çıkarmak için opacity filtresi kullanılır.",
+        "kaynak_provider": "openrouter"
+      },
+      {
+        "teknik_adi": "Renk/Filter",
+        "viral_etki_skoru": 85.0,
+        "zamanlama": "",
+        "ffmpeg_implementasyon": "ffmpeg -i input.mp4 -filter_complex eq=saturation=1.5 output.mp4",
+        "aciklama": "Viral videolarda renk grading ve filter'lar genellikle tüm video boyunca kullanılıyor. FFmpeg ile bu efektleri videoya ekleyebilirsiniz.",
+        "kaynak_provider": "groq"
+      }
+    ],
+    "provider_katkilari": {
+      "groq": {
+        "success": true,
+        "teknik_sayisi": 8,
+        "sure_s": 2.9,
+        "hata": null
+      },
+      "gemini": {
+        "success": false,
+        "teknik_sayisi": 0,
+        "sure_s": 0.3,
+        "hata": "HTTP 429: {\n  \"error\": {\n    \"code\": 429,\n    \"message\": \"You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \\n* Quota ex"
+      },
+      "openrouter": {
+        "success": true,
+        "teknik_sayisi": 8,
+        "sure_s": 14.4,
+        "hata": null
+      }
+    },
+    "ffmpeg_komut_ozeti": [
+      {
+        "teknik": "Müzik",
+        "skor": 95.0,
+        "ffmpeg": "ffmpeg -i input.mp4 -i muzik.mp3 -filter_complex amerge output.mp4"
+      },
+      {
+        "teknik": "Genel Yapı",
+        "skor": 95.0,
+        "ffmpeg": "ffmpeg -i input.mp4 -filter_complex concat=n=3:v=1:a=1 output.mp4"
+      },
+      {
+        "teknik": "Geçiş Efektleri",
+        "skor": 92.0,
+        "ffmpeg": "transition"
+      },
+      {
+        "teknik": "Ses Efektleri",
+        "skor": 90.0,
+        "ffmpeg": "ffmpeg -i input.mp4 -i ses_efekti.mp3 -filter_complex amerge output.mp4"
+      },
+      {
+        "teknik": "Hız Değişimi",
+        "skor": 90.0,
+        "ffmpeg": "ffmpeg -i input.mp4 -filter_complex setpts=2*PTS output.mp4"
+      },
+      {
+        "teknik": "Text/Metin Overlay",
+        "skor": 88.0,
+        "ffmpeg": "drawtext"
+      },
+      {
+        "teknik": "Meme/Fotoğraf Overlay",
+        "skor": 85.0,
+        "ffmpeg": "overlay滤镜"
+      },
+      {
+        "teknik": "Renk/Filter",
+        "skor": 85.0,
+        "ffmpeg": "ffmpeg -i input.mp4 -filter_complex eq=saturation=1.5 output.mp4"
+      }
+    ]
+  }
+}

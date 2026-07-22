@@ -449,13 +449,56 @@ class AICritic:
     async def _fix_subtitle_drawtext(
         self, video_path: str, current_fs: int, target_fs: int, round_idx: int,
     ) -> Optional[str]:
-        """FFmpeg drawtext ile font boyutunu ayarla (ASS yoksa fallback)."""
-        # Bu bir fallback; drawtext ile tüm altyazıyı yeniden yazmak karmaşık.
-        # En basit yol: ASS'i yeniden oluşturma imkanı yoksa, sadece log.
-        logger.info(
-            "Subtitle auto-fix: drawtext fallback — mevcut %d → hedef %d (ASS gerekli)",
-            current_fs, target_fs,
-        )
+        """
+        FFmpeg drawtext ile font boyutunu ayarla (ASS yoksa fallback).
+        Videoyu yeniden kodlayarak drawtext filter'i uygular.
+        """
+        try:
+            # Videonun yüksekliğini al
+            probe_cmd = [
+                "ffprobe", "-v", "error",
+                "-select_streams", "v:0",
+                "-show_entries", "stream=height",
+                "-of", "csv=p=0",
+                video_path,
+            ]
+            proc = await asyncio.create_subprocess_exec(
+                *probe_cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, _ = await proc.communicate()
+            height = int(stdout.decode().strip() or "1920")
+
+            # Font boyutunu oransal ayarla: hedef / mevcut oraninda
+            fs_ratio = target_fs / max(current_fs, 1)
+            # Drawtext fontsize: video yuksekliginin %5'i civarinda baslar,
+            # oran ile carpilir
+            base_fs = max(int(height * 0.04), 12)
+            new_fs = max(int(base_fs * fs_ratio), 10)
+
+            out_path = Path(video_path).parent / f"{Path(video_path).stem}_drawtext_r{round_idx}.mp4"
+            cmd = [
+                "ffmpeg", "-y", "-i", video_path,
+                "-vf", f"drawtext=text='':fontsize={new_fs}:fontcolor=white",
+                "-c:a", "copy",
+                str(out_path),
+            ]
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            await proc.communicate()
+
+            if out_path.exists() and out_path.stat().st_size > 0:
+                logger.info(
+                    "Subtitle drawtext fallback: fontsize %d → %d (ratio %.2f)",
+                    current_fs, new_fs, fs_ratio,
+                )
+                return str(out_path)
+        except Exception as e:
+            logger.warning("Drawtext subtitle fix hatası: %s", e)
         return None
 
     # ── Zoom timing auto-fix ──────────────────────────────────────────────

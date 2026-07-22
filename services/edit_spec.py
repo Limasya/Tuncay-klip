@@ -6,7 +6,12 @@ Pydantic v2 uyumlu.
 from pydantic import BaseModel, Field, field_validator
 from typing import Optional, List, Dict, Any
 from enum import Enum
-from datetime import datetime
+from datetime import datetime, timezone
+
+
+def _utcnow() -> datetime:
+    """Timezone-aware UTC now. Replaces deprecated _utcnow()."""
+    return datetime.now(timezone.utc)
 
 
 # --- Enums ---
@@ -389,7 +394,7 @@ class ClipSpec(BaseModel):
         pass
 
     version: str = Field(default="1.0")
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=_utcnow)
 
     # Kaynak
     source_path: str

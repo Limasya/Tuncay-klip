@@ -147,6 +147,7 @@ class CompositorConfig:
     color_space: str = "bt709"
     max_layers: int = 100
     use_gpu: bool = False
+    lut_path: Optional[str] = None  # Global LUT path for color grading
 
 
 class LayerCompositor:
@@ -226,8 +227,10 @@ class LayerCompositor:
                 return ""
 
         visible = [l for l in layers if l.visible and l.opacity > 0.0]
-        if len(visible) <= 1:
+        if not visible:
             return ""
+        if len(visible) == 1:
+            return self._build_lut_stage("0:v")
 
         visible.sort(key=lambda l: l.z_order)
         return self._build_overlay_chain(visible)
@@ -270,40 +273,59 @@ class LayerCompositor:
             return ""
 
         parts: List[str] = []
-        prev_label = "v0"
+        prev_label = "0:v"
+        lut_filter = ""
+        if self._config.lut_path:
+            from services.smart_crop import apply_cinematic_lut
+
+            lut_filter = apply_cinematic_lut(self._config.lut_path)
 
         for i in range(1, len(layers)):
             layer = layers[i]
-            out_label = f"v{i}" if i < len(layers) - 1 else "vout"
+            is_last = i == len(layers) - 1
+            out_label = "vout_pre" if is_last and lut_filter else ("vout" if is_last else f"v{i}")
 
             overlay_expr = layer.transform.to_ffmpeg_overlay()
             opacity_val = layer.opacity
             blend = layer.blend_mode
 
-            if opacity_val < 1.0 or blend != BlendMode.NORMAL:
-                if opacity_val < 1.0 and blend == BlendMode.NORMAL:
-                    parts.append(
-                        f"[{prev_label}][{i}:v]format=yuva420p,"
-                        f"colorchannelmixer=aa={opacity_val:.2f},"
-                        f"{overlay_expr}[{out_label}]"
-                    )
-                elif blend in (BlendMode.MULTIPLY, BlendMode.SCREEN):
-                    ffmpeg_blend = BLEND_TO_FFMPEG.get(blend, "overlay")
-                    parts.append(
-                        f"[{prev_label}][{i}:v]{ffmpeg_blend}[{out_label}]"
-                    )
-                else:
-                    parts.append(
-                        f"[{prev_label}][{i}:v]{overlay_expr}[{out_label}]"
-                    )
+            if blend == BlendMode.NORMAL and opacity_val < 1.0:
+                layer_label = f"layer{i}"
+                parts.append(
+                    f"[{i}:v]format=yuva420p,colorchannelmixer=aa={opacity_val:.3f}"
+                    f"[{layer_label}]"
+                )
+                parts.append(
+                    f"[{prev_label}][{layer_label}]{overlay_expr}:shortest=1:eof_action=pass"
+                    f"[{out_label}]"
+                )
+            elif blend != BlendMode.NORMAL:
+                ffmpeg_blend = BLEND_TO_FFMPEG.get(blend, "normal")
+                parts.append(
+                    f"[{prev_label}][{i}:v]blend=all_mode={ffmpeg_blend}:"
+                    f"all_opacity={opacity_val:.3f}[{out_label}]"
+                )
             else:
                 parts.append(
-                    f"[{prev_label}][{i}:v]{overlay_expr}[{out_label}]"
+                    f"[{prev_label}][{i}:v]{overlay_expr}:shortest=1:eof_action=pass"
+                    f"[{out_label}]"
                 )
 
             prev_label = out_label
 
-        return ";".join(parts)
+        chain = ";".join(parts)
+        if lut_filter:
+            chain += f";[vout_pre]{lut_filter}[vout]"
+
+        return chain
+
+    def _build_lut_stage(self, input_label: str) -> str:
+        if not self._config.lut_path:
+            return ""
+        from services.smart_crop import apply_cinematic_lut
+
+        lut_filter = apply_cinematic_lut(self._config.lut_path)
+        return f"[{input_label}]{lut_filter}[vout]" if lut_filter else ""
 
     def get_composite_count(self, timeline: Timeline) -> int:
         """Count how many video tracks need compositing (layers > 1)."""

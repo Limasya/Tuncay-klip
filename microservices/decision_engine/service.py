@@ -27,7 +27,7 @@ from __future__ import annotations
 import logging
 import time
 from collections import deque
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from shared.event_bus import EventBus, get_event_bus
@@ -206,9 +206,9 @@ class DecisionEngineService:
         if decision.decision == "CREATE_CLIP":
             candidate = ClipCandidate(
                 stream_id=event.stream_id,
-                event_timestamp=datetime.utcnow(),
-                start_time=datetime.utcnow(),
-                end_time=datetime.utcnow(),
+                event_timestamp=datetime.now(timezone.utc),
+                start_time=datetime.now(timezone.utc),
+                end_time=datetime.now(timezone.utc),
                 highlight_score=score,
                 trigger_signals=[
                     k for k, v in score.breakdown.items()

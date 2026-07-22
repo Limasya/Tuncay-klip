@@ -105,7 +105,10 @@ class OpenAIProvider:
         self, prompt: str, max_tokens: int = 1024, temperature: float = 0.7,
         system_prompt: str | None = None,
     ) -> str:
-        url = f"{self.base_url}/v1/chat/completions"
+        if "chat/completions" in self.base_url:
+            url = self.base_url
+        else:
+            url = f"{self.base_url}/v1/chat/completions"
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
@@ -117,7 +120,11 @@ class OpenAIProvider:
             "temperature": temperature,
         }
         data = await _http_post_json(url, payload, headers, timeout=60)
-        return data["choices"][0]["message"]["content"].strip()
+        msg = data["choices"][0]["message"]
+        content = msg.get("content", "").strip()
+        if not content:
+            content = msg.get("reasoning_content", "").strip()
+        return content
 
 
 # ---------------------------------------------------------------------------
@@ -447,7 +454,11 @@ class GroqProvider:
             "temperature": temperature,
         }
         data = await _http_post_json(url, payload, headers, timeout=30)
-        return data["choices"][0]["message"]["content"].strip()
+        msg = data["choices"][0]["message"]
+        content = msg.get("content", "").strip()
+        if not content and msg.get("reasoning"):
+            content = msg["reasoning"].strip()
+        return content
 
 
 # ---------------------------------------------------------------------------

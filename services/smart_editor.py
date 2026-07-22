@@ -275,7 +275,7 @@ class AutoTrimSuggestor:
             "current_duration": round(clip_duration, 1),
             "trim_candidates": trim_candidates[:3] if clip_duration > target_duration else [],
             "keep_regions": [
-                {"start": s.get("timestamp", 0) - 2, "end": s.get("timestamp", 0) + 3,
+                {"start": max(0, s.get("timestamp", 0) - 2), "end": min(clip_duration, s.get("timestamp", 0) + 3),
                  "reason": f"high score: {s.get('score', 0):.2f}"}
                 for s in highlight_scores[:3]
             ],
@@ -306,15 +306,14 @@ class BeatSyncAnalyzer:
     def analyze_audio(self, audio_data: np.ndarray | None = None) -> dict:
         """Detect beats and suggest sync points."""
         try:
-            import np as numpy
+            import numpy as np
         except ImportError:
-            pass
+            return {"bpm": 120, "beat_times": [], "confidence": 0.0}
 
         if audio_data is None or len(audio_data) == 0:
             return {"bpm": 120, "beat_times": [], "confidence": 0.0}
 
         try:
-            import numpy as np
             audio_f = audio_data.astype(np.float64)
 
             # Simple onset detection: energy peaks

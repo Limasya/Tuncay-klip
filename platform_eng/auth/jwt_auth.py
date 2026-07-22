@@ -9,6 +9,8 @@ Mevcut `config.get_settings()` (secret_key, algorithm) ve python-jose kullanıl�
 böylece repodaki `utils/auth.py` ile uyumludur. Defense-in-depth: gateway JWT'yi
 doğrulasa bile servis içinde tekrar doğrulanır.
 """
+import logging
+import os
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -17,10 +19,57 @@ from fastapi import Header, HTTPException
 from platform_eng.auth.api_keys import ApiKeyStore
 from platform_eng.auth.rbac import scopes_for_roles
 
+logger = logging.getLogger("jwt_auth")
 
 # Uygulama genelinde paylaşılan varsayılan API key deposu.
 # (Production'da DI ile DB destekli bir store enjekte edilebilir.)
 default_api_key_store = ApiKeyStore()
+
+
+def bootstrap_admin_api_key() -> Optional[str]:
+    """
+    ADMIN_API_KEY env var'ı set edilmişse, deposu boşsa otomatik kaydeder.
+
+    Bu fonksiyon main.py lifespan startup'ta çağrılır.
+    Eğer env var'daki key zaten kayıtlıysa (restart) tekrar eklemez.
+
+    Returns:
+        Kaydedilen plaintext key ya da None (env var yoksa / zaten kayıtlıysa).
+    """
+    admin_key = os.environ.get("ADMIN_API_KEY", "").strip()
+    if not admin_key:
+        logger.info("ADMIN_API_KEY env var not set — skipping bootstrap")
+        return None
+
+    # Check if this exact key is already registered (idempotent on restart)
+    existing = default_api_key_store.authenticate(admin_key)
+    if existing is not None:
+        logger.info("ADMIN_API_KEY already registered (client_id=%s)", existing.client_id)
+        return None
+
+    # Register with full admin scopes
+    from platform_eng.auth.rbac import Role, ROLE_SCOPES
+    admin_scopes = [s.value for s in ROLE_SCOPES[Role.ADMIN]]
+
+    import hashlib
+    digest = hashlib.sha256(admin_key.encode()).hexdigest()
+
+    from platform_eng.auth.api_keys import ApiKey, _now, DEFAULT_TTL_DAYS
+    from datetime import timedelta
+    record = ApiKey(
+        key_hash=digest,
+        client_id="admin-bootstrap",
+        scopes=frozenset(admin_scopes),
+        expires_at=_now() + timedelta(days=DEFAULT_TTL_DAYS),
+    )
+    default_api_key_store._keys[digest] = record
+
+    logger.warning(
+        "ADMIN_API_KEY bootstrapped — client_id=admin-bootstrap scopes=admin "
+        "(key prefix: %s...)",
+        admin_key[:8],
+    )
+    return admin_key
 
 
 @dataclass

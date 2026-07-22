@@ -89,7 +89,7 @@ class KickArchiveService:
             "vods": {},
         }
 
-    async def _read_state(self) -> dict[str, Any]:
+    async def read_state(self) -> dict[str, Any]:
         state = await self._state_store.load()
         if not isinstance(state, dict) or state.get("channel") != TARGET_CHANNEL_SLUG:
             return self._default_state()
@@ -147,7 +147,7 @@ class KickArchiveService:
                 "clips_generated": 0,
                 "vods": [],
             }
-            state = await self._read_state()
+            state = await self.read_state()
             vods = await self.list_public_vods(vod_limit)
             report["discovered"] = len(vods)
 
@@ -248,7 +248,7 @@ class KickArchiveService:
     async def _run_zero_bandwidth_scan(self) -> None:
         """Periyodik zero-bandwidth tarama: sadece metadata + LLM tahmini."""
         settings = get_settings()
-        state = await self._read_state()
+        state = await self.read_state()
         zw_state = state.get("zero_bandwidth_analyses", {})
 
         try:
@@ -364,7 +364,7 @@ class KickArchiveService:
 
     async def get_zero_bandwidth_status(self) -> dict[str, Any]:
         """Zero-bandwidth analiz durumunu dondur."""
-        state = await self._read_state()
+        state = await self.read_state()
         zw = state.get("zero_bandwidth_analyses", {})
         counts = {"completed": 0, "failed": 0}
         total_clips = 0
@@ -412,7 +412,7 @@ class KickArchiveService:
 
     async def get_status(self) -> dict[str, Any]:
         """Return safe operational state for the fixed target archive."""
-        state = await self._read_state()
+        state = await self.read_state()
         vods = state.get("vods", {})
         counts = {"completed": 0, "processing": 0, "failed": 0}
         for item in vods.values():

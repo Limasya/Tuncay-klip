@@ -1,7 +1,7 @@
 """
 JWT kimlik doğrulama yardımcı modülü.
 """
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 from jose import JWTError, jwt
 from config import get_settings
@@ -12,7 +12,7 @@ settings = get_settings()
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
     """JWT access token oluşturur."""
     to_encode = data.copy()
-    expire = datetime.utcnow() + (
+    expire = datetime.now(timezone.utc) + (
         expires_delta or timedelta(minutes=settings.access_token_expire_minutes)
     )
     to_encode.update({"exp": expire})

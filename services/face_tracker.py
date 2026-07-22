@@ -34,11 +34,8 @@ class FaceTracker:
         Videodaki yüzü analiz edip, her analiz karesi için
         yüzün x,y merkez koordinatlarını (0.0 - 1.0 arası) döndürür.
         """
-        if not self.mp_face_detection:
-            logger.warning("MediaPipe is not installed. Face tracking disabled.")
-            return {"error": "mediapipe_missing"}
-
-        logger.info("Starting face tracking for %s (FPS: %d)", video_path, fps)
+        detector_name = "MediaPipe" if self.mp_face_detection else "OpenCV Haar"
+        logger.info("Starting %s face tracking for %s (FPS: %d)", detector_name, video_path, fps)
 
         # OpenCV IO blocking olabilir, Thread havuzunda calistiralim
         return await asyncio.to_thread(self._analyze_video, video_path, fps)
@@ -58,25 +55,44 @@ class FaceTracker:
         face_positions = []
         current_frame = 0
 
-        # MediaPipe modeli baslat
-        with self.mp_face_detection.FaceDetection(
-            model_selection=1, min_detection_confidence=0.5
-        ) as face_detection:
+        face_detection = None
+        haar = None
+        if self.mp_face_detection:
+            face_detection = self.mp_face_detection.FaceDetection(
+                model_selection=1, min_detection_confidence=0.5
+            )
+        else:
+            cascade_path = os.path.join(cv2.data.haarcascades, "haarcascade_frontalface_default.xml")
+            haar = cv2.CascadeClassifier(cascade_path)
+
+        try:
             while cap.isOpened():
                 ret, frame = cap.read()
                 if not ret:
                     break
 
                 if current_frame % frame_interval == 0:
-                    # BGR -> RGB
-                    frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                    results = face_detection.process(frame_rgb)
-
                     timestamp_sec = current_frame / video_fps
-                    
-                    if results.detections:
+                    if face_detection:
+                        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                        results = face_detection.process(frame_rgb)
+                        detections = results.detections or []
+                    else:
+                        detections = []
+                        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                        faces = haar.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(40, 40))
+                        if len(faces):
+                            x, y, w, h = max(faces, key=lambda box: box[2] * box[3])
+                            face_positions.append({
+                                "time": round(timestamp_sec, 2),
+                                "x": (x + w / 2) / frame.shape[1],
+                                "y": (y + h / 2) / frame.shape[0],
+                                "size": max(w / frame.shape[1], h / frame.shape[0]),
+                            })
+
+                    if detections:
                         # En yüksek skora sahip yüzü al (genelde yayıncı ekrana yakındır)
-                        best_det = max(results.detections, key=lambda d: d.score[0])
+                        best_det = max(detections, key=lambda d: d.score[0])
                         bbox = best_det.location_data.relative_bounding_box
                         
                         center_x = bbox.xmin + bbox.width / 2
@@ -95,10 +111,11 @@ class FaceTracker:
                             "y": center_y,
                             "size": face_size
                         })
-
                 current_frame += 1
-
-        cap.release()
+        finally:
+            if face_detection:
+                face_detection.close()
+            cap.release()
 
         # Konumları yumuşat (Smoothing)
         smoothed = self._smooth_trajectory(face_positions)
@@ -106,7 +123,8 @@ class FaceTracker:
         return {
             "success": True,
             "trajectory": smoothed,
-            "samples": len(smoothed)
+            "samples": len(smoothed),
+            "detector": detector_name,
         }
 
     def _smooth_trajectory(self, positions: List[Dict], alpha: float = 0.15) -> List[Dict]:

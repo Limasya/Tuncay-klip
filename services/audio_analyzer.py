@@ -52,6 +52,63 @@ class AudioAnalyzer:
             logger.error("Audio analysis failed: %s", e)
             return {"error": str(e)}
 
+    async def get_voice_activity(self, video_path: str) -> Dict[str, Any]:
+        """Return energy-based voice/activity ranges by inverting silence ranges."""
+        duration = await self._probe_duration(video_path)
+        if duration <= 0:
+            return {"success": False, "segments": [], "speech_ratio": 0.0}
+
+        cmd = [
+            "ffmpeg", "-hide_banner", "-i", video_path,
+            "-af", "silencedetect=noise=-35dB:d=0.35",
+            "-f", "null", "-",
+        ]
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            _, stderr = await proc.communicate()
+            output = stderr.decode(errors="replace")
+            starts = [float(value) for value in re.findall(r"silence_start:\s*([\d.]+)", output)]
+            ends = [float(value) for value in re.findall(r"silence_end:\s*([\d.]+)", output)]
+            silences = list(zip(starts, ends))
+
+            active = []
+            cursor = 0.0
+            for start, end in silences:
+                if start - cursor >= 0.2:
+                    active.append({"start": round(cursor, 2), "end": round(start, 2)})
+                cursor = max(cursor, end)
+            if duration - cursor >= 0.2:
+                active.append({"start": round(cursor, 2), "end": round(duration, 2)})
+
+            active_duration = sum(segment["end"] - segment["start"] for segment in active)
+            return {
+                "success": True,
+                "segments": active,
+                "speech_ratio": round(active_duration / duration, 3),
+                "method": "ffmpeg_energy_vad",
+            }
+        except Exception as exc:
+            logger.error("Voice activity analysis failed: %s", exc)
+            return {"success": False, "segments": [], "speech_ratio": 0.0}
+
+    @staticmethod
+    async def _probe_duration(video_path: str) -> float:
+        proc = await asyncio.create_subprocess_exec(
+            "ffprobe", "-v", "error", "-show_entries", "format=duration",
+            "-of", "default=noprint_wrappers=1:nokey=1", video_path,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        stdout, _ = await proc.communicate()
+        try:
+            return float(stdout.decode().strip())
+        except (TypeError, ValueError):
+            return 0.0
+
     def _parse_ebur128(self, output: str) -> List[Dict[str, float]]:
         """ebur128 çıktısından t (saniye) ve S (momentary loudness) değerlerini ayrıştırır."""
         peaks = []

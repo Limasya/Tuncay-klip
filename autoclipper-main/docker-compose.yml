@@ -1,0 +1,18 @@
+version: '3.8'
+services:
+  redis:
+    image: redis:6
+    ports: ["6379:6379"]
+  backend:
+    build: ./backend
+    ports: ["8000:8000"]
+    depends_on: [redis]
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+  celery:
+    build: ./backend
+    command: celery -A celery_app.celery worker --loglevel=info
+    depends_on: [redis]
+  frontend:
+    build: ./frontend
+    ports: ["3000:3000"]

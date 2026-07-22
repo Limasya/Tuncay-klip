@@ -136,74 +136,107 @@ class EmotionArcEngine:
 
     def generate_emotion_color_filter(self, arc: EmotionArc) -> str:
         """
-        Emotion arc'ten FFmpeg eq filter üretir.
-        Zaman içinde renk değişimi.
+        Emotion arc'ten FFmpeg eq filter uretir.
+        Zaman icinde renk degisimi — her emotion point icin ayri enable araligi.
         """
         if not arc.points:
             return "null"
 
-        # Her emotion point için eq degerleri
+        duration = arc.duration or (arc.points[-1].time + 1.0)
         filters = []
+
         for i, point in enumerate(arc.points):
             params = self._params.get(point.emotion, self._params["neutral"])
             intensity = point.intensity
 
-            # Yoğunluğa göre parametreleri ölçekle
             sat = 1.0 + (params["saturation"] - 1.0) * intensity
             con = 1.0 + (params["contrast"] - 1.0) * intensity
             bright = params["brightness"] * intensity
 
+            # Zaman araligi: bu noktadan sonraki noktaya kadar
+            t_start = point.time
+            if i + 1 < len(arc.points):
+                t_end = arc.points[i + 1].time
+            else:
+                t_end = duration
+
             filters.append(
                 f"eq=brightness={bright:.3f}:"
                 f"contrast={con:.3f}:"
-                f"saturation={sat:.3f}"
+                f"saturation={sat:.3f}:"
+                f"enable='between(t,{t_start:.2f},{t_end:.2f})'"
             )
 
-        # Tek filtre: ilk emotion'u kullan (basitleştirilmiş)
         if filters:
-            return filters[0]
+            return ",".join(filters)
 
         return "null"
 
     def generate_emotion_speed_filter(self, arc: EmotionArc) -> str:
         """
-        Emotion arc'ten hız filter'ı üretir.
-        Heyecan anlarında hızlanma, sakin anlarda yavaşlama.
+        Emotion arc'ten hiz filter'i uretir.
+        Heyecan anlarinda hizlanma, sakin anlarda yavaslama — zaman bazli.
         """
         if not arc.points:
             return "null"
 
-        # Arousal ortalamasına göre hız
-        avg_arousal = arc.average_arousal
+        duration = arc.duration or (arc.points[-1].time + 1.0)
+        segments = []
 
-        if avg_arousal > 0.7:
-            speed = 1.1
-        elif avg_arousal < 0.3:
-            speed = 0.9
-        else:
-            speed = 1.0
+        for i, point in enumerate(arc.points):
+            arousal = point.arousal
 
-        if speed != 1.0:
-            return f"setpts={1.0/speed}*PTS"
+            if arousal > 0.7:
+                speed = 1.1
+            elif arousal < 0.3:
+                speed = 0.9
+            else:
+                speed = 1.0
 
-        return "null"
+            if speed != 1.0:
+                t_start = point.time
+                if i + 1 < len(arc.points):
+                    t_end = arc.points[i + 1].time
+                else:
+                    t_end = duration
+                segments.append(
+                    f"setpts={1.0/speed}*PTS:enable='between(t,{t_start:.2f},{t_end:.2f})'"
+                )
+
+        return ",".join(segments) if segments else "null"
 
     def generate_emotion_vignette_filter(self, arc: EmotionArc) -> str:
         """
-        Emotion arc'ten vignette filter'ı üretir.
-        Olumsuz duygularda daha güçlü vignette.
+        Emotion arc'ten vignette filter'i uretir.
+        Olumsuz duygularda daha guclu vignette — zaman bazli.
         """
-        avg_valence = arc.average_valence
-
-        if avg_valence < -0.3:
-            # Olumsuz: güçlü vignette
-            return "vignette=PI/3"
-        elif avg_valence > 0.3:
-            # Olumlu: hafif veya yok
+        if not arc.points:
             return "null"
-        else:
-            # Nötr: orta
-            return "vignette=PI/4"
+
+        duration = arc.duration or (arc.points[-1].time + 1.0)
+        segments = []
+
+        for i, point in enumerate(arc.points):
+            valence = point.valence
+
+            if valence < -0.3:
+                vig_angle = "PI/3"
+            elif valence > 0.3:
+                vig_angle = None
+            else:
+                vig_angle = "PI/4"
+
+            if vig_angle:
+                t_start = point.time
+                if i + 1 < len(arc.points):
+                    t_end = arc.points[i + 1].time
+                else:
+                    t_end = duration
+                segments.append(
+                    f"vignette={vig_angle}:enable='between(t,{t_start:.2f},{t_end:.2f})'"
+                )
+
+        return ",".join(segments) if segments else "null"
 
     def generate_emotion_combined_filter(
         self,
@@ -248,11 +281,19 @@ class EmotionArcEngine:
             p2 = arc.points[i + 1]
 
             if p1.time <= time <= p2.time:
-                # Doğrusal interpolasyon
+                # Dogrusal interpolasyon — yumusak gecis
                 t_ratio = (time - p1.time) / max(p2.time - p1.time, 0.001)
+                # Emotion gecisi: yogunluga gore yumusak karar
+                if t_ratio < 0.3:
+                    emotion = p1.emotion
+                elif t_ratio > 0.7:
+                    emotion = p2.emotion
+                else:
+                    emotion = p1.emotion if p1.intensity >= p2.intensity else p2.emotion
+
                 return EmotionPoint(
                     time=time,
-                    emotion=p1.emotion if t_ratio < 0.5 else p2.emotion,
+                    emotion=emotion,
                     intensity=p1.intensity + (p2.intensity - p1.intensity) * t_ratio,
                     valence=p1.valence + (p2.valence - p1.valence) * t_ratio,
                     arousal=p1.arousal + (p2.arousal - p1.arousal) * t_ratio,

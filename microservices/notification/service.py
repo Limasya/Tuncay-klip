@@ -14,7 +14,7 @@ import hmac
 import json
 import logging
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Optional
 
@@ -115,7 +115,7 @@ class MessageFormatter:
             "title": title,
             "color": color,
             "fields": fields,
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "footer": {"text": "Klip Yakalama Sistemi"},
         }
 
@@ -142,7 +142,7 @@ class MessageFormatter:
         if stream_id:
             lines.append(f"📺 Stream: {stream_id}")
 
-        lines.append(f"\n<i>{datetime.utcnow().strftime('%H:%M:%S UTC')}</i>")
+        lines.append(f"\n<i>{datetime.now(timezone.utc).strftime('%H:%M:%S UTC')}</i>")
 
         return {
             "text": "\n".join(lines),
@@ -156,7 +156,7 @@ class MessageFormatter:
             "event": event_type,
             "title": MessageFormatter._event_title(event_type),
             "stream_id": stream_id,
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "payload": payload,
             "source": "klip-yakalama-sistemi",
         }

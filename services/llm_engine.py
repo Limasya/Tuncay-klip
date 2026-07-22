@@ -26,6 +26,7 @@ Enhanced Features:
 from __future__ import annotations
 
 from services.llm_model_defaults import get_gemini_model_default, resolve_gemini_model
+import asyncio
 import logging
 import hashlib
 import json
@@ -54,6 +55,45 @@ def _maybe_span(name: str, **attributes):
 
 
 logger = logging.getLogger("llm_engine")
+
+
+# ---------------------------------------------------------------------------
+# Circuit Breaker
+# ---------------------------------------------------------------------------
+class CircuitBreaker:
+    """Circuit breaker for LLM providers — stops calling a provider after N consecutive failures.
+
+    States: CLOSED (normal) → OPEN (failing) → HALF_OPEN (probing)
+    """
+    CLOSED = "closed"
+    OPEN = "open"
+    HALF_OPEN = "half_open"
+
+    def __init__(self, failure_threshold: int = 3, recovery_timeout: float = 60.0):
+        self._failure_count = 0
+        self._failure_threshold = failure_threshold
+        self._recovery_timeout = recovery_timeout
+        self._state = self.CLOSED
+        self._last_failure_time = 0.0
+
+    @property
+    def state(self) -> str:
+        if self._state == self.OPEN and time.time() - self._last_failure_time >= self._recovery_timeout:
+            self._state = self.HALF_OPEN
+        return self._state
+
+    def record_success(self):
+        self._failure_count = 0
+        self._state = self.CLOSED
+
+    def record_failure(self):
+        self._failure_count += 1
+        self._last_failure_time = time.time()
+        if self._failure_count >= self._failure_threshold:
+            self._state = self.OPEN
+
+    def can_try(self) -> bool:
+        return self.state != self.OPEN
 
 
 # ---------------------------------------------------------------------------
@@ -566,9 +606,10 @@ class LLMEngine:
 
     def __init__(self):
         self._providers: list[tuple[str, Callable]] = []
+        self._circuit_breakers: dict[str, CircuitBreaker] = {}
         self._cache: dict[str, tuple[float, Any]] = {}
         self._cache_ttl: float = 300.0  # 5 min
-        self._rate_limiter = deque(maxlen=100)
+        self._cache_max_size: int = 500
 
         self._stats = {
             "total_requests": 0,
@@ -577,6 +618,7 @@ class LLMEngine:
             "total_cost": 0.0,
             "cache_hits": 0,
             "fallback_count": 0,
+            "circuit_breaker_open_count": 0,
         }
 
         self._quality_scorer = ContentQualityScorer()
@@ -593,14 +635,39 @@ class LLMEngine:
             TemplateProvider,
         )
 
-        # ── 1. OpenAI ──
+        # ── 1. OpenAI (GitHub Models dahil) ──
         openai_key = os.environ.get("OPENAI_API_KEY", "")
         if openai_key:
             self._providers.append(("openai", OpenAIProvider(
                 api_key=openai_key,
                 model=os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
+                base_url=os.environ.get("OPENAI_BASE_URL", "https://api.openai.com"),
             )))
-            logger.info("OpenAI registered (model=%s)", os.environ.get("OPENAI_MODEL", "gpt-4o-mini"))
+            logger.info("OpenAI registered (base=%s, model=%s)",
+                        os.environ.get("OPENAI_BASE_URL", "https://api.openai.com"),
+                        os.environ.get("OPENAI_MODEL", "gpt-4o-mini"))
+
+        # ── 1b. Completions.me (ücretsiz, sınırsız, OpenAI-compatible) ──
+        completions_key = os.environ.get("COMPLETIONS_API_KEY", "")
+        if completions_key:
+            self._providers.append(("completions", OpenAIProvider(
+                api_key=completions_key,
+                model=os.environ.get("COMPLETIONS_MODEL", "claude-sonnet-4.5"),
+                base_url=os.environ.get("COMPLETIONS_BASE_URL", "https://completions.me/api/v1/chat/completions"),
+            )))
+            logger.info("Completions.me registered (model=%s)",
+                        os.environ.get("COMPLETIONS_MODEL", "claude-sonnet-4.5"))
+
+        # ── 1c. BazaarLink.ai (ücretsiz, auto routing, OpenAI-compatible) ──
+        bazaarlink_key = os.environ.get("BAZAARLINK_API_KEY", "")
+        if bazaarlink_key:
+            self._providers.append(("bazaarlink", OpenAIProvider(
+                api_key=bazaarlink_key,
+                model=os.environ.get("BAZAARLINK_MODEL", "auto:free"),
+                base_url=os.environ.get("BAZAARLINK_BASE_URL", "https://bazaarlink.ai/api/v1/chat/completions"),
+            )))
+            logger.info("BazaarLink.ai registered (model=%s)",
+                        os.environ.get("BAZAARLINK_MODEL", "auto:free"))
 
         # ── 2. Anthropic Claude ──
         claude_key = os.environ.get("ANTHROPIC_API_KEY", "")
@@ -634,7 +701,7 @@ class LLMEngine:
         if groq_key:
             self._providers.append(("groq", GroqProvider(
                 api_key=groq_key,
-                model=os.environ.get("GROQ_MODEL", "llama-3.1-70b-versatile"),
+                model=os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b"),
             )))
             logger.info("⚡ Groq registered (ücretsiz, hızlı, model=%s)", os.environ.get("GROQ_MODEL", "llama-3.1-70b-versatile"))
 
@@ -741,6 +808,12 @@ class LLMEngine:
         self._providers.append(("template", TemplateProvider()))
         logger.info("Template fallback always available")
 
+        for name, _ in self._providers:
+            self._circuit_breakers[name] = CircuitBreaker(
+                failure_threshold=int(os.environ.get("LLM_CB_THRESHOLD", "3")),
+                recovery_timeout=float(os.environ.get("LLM_CB_RECOVERY", "60.0")),
+            )
+
         self._provider_count = len(self._providers)
         logger.info("LLM Engine initialized with %d providers (fallback chain)", self._provider_count)
 
@@ -748,6 +821,19 @@ class LLMEngine:
         """Build deterministic cache key from prompt content."""
         raw = f"{prompt[:300]}:{language}:{temperature}"
         return hashlib.md5(raw.encode()).hexdigest()
+
+    def _evict_cache(self) -> None:
+        """Remove expired entries and enforce max size (LRU-ish by oldest timestamp)."""
+        now = time.time()
+        # Remove expired
+        expired = [k for k, (ts, _) in self._cache.items() if now - ts >= self._cache_ttl]
+        for k in expired:
+            del self._cache[k]
+        # Enforce max size — remove oldest entries
+        if len(self._cache) > self._cache_max_size:
+            sorted_keys = sorted(self._cache, key=lambda k: self._cache[k][0])
+            for k in sorted_keys[: len(self._cache) - self._cache_max_size]:
+                del self._cache[k]
 
     async def generate(
         self,
@@ -796,15 +882,22 @@ class LLMEngine:
 
             # Check cache
             cache_key = self._build_cache_key(prompt, language, temperature)
+            self._evict_cache()
             if use_cache and cache_key in self._cache:
                 ts, cached = self._cache[cache_key]
                 if time.time() - ts < self._cache_ttl:
                     self._stats["cache_hits"] += 1
                     return cached
 
-            # Try providers in order
+            # Try providers in order (circuit breaker aware)
             last_error = None
             for provider_name, provider_fn in self._providers:
+                cb = self._circuit_breakers.get(provider_name)
+                if cb and not cb.can_try():
+                    self._stats["circuit_breaker_open_count"] += 1
+                    logger.debug("Skipping %s — circuit breaker OPEN", provider_name)
+                    last_error = f"circuit_open:{provider_name}"
+                    continue
                 try:
                     result = await asyncio.wait_for(
                         provider_fn(
@@ -816,11 +909,15 @@ class LLMEngine:
                         timeout=60.0,
                     )
                     if result and len(result.strip()) > 5:
+                        if cb:
+                            cb.record_success()
                         if use_cache:
                             self._cache[cache_key] = (time.time(), result)
                         return result
                 except asyncio.TimeoutError:
                     logger.warning("Provider %s timed out, trying next", provider_name)
+                    if cb:
+                        cb.record_failure()
                     last_error = "timeout"
                 except TypeError:
                     # Provider doesn't accept system_prompt kwarg
@@ -830,21 +927,38 @@ class LLMEngine:
                             timeout=60.0,
                         )
                         if result and len(result.strip()) > 5:
+                            if cb:
+                                cb.record_success()
                             if use_cache:
                                 self._cache[cache_key] = (time.time(), result)
                             return result
                     except asyncio.TimeoutError:
+                        if cb:
+                            cb.record_failure()
                         last_error = "timeout"
                     except Exception as e2:
+                        if cb:
+                            cb.record_failure()
                         last_error = str(e2)
                         self._stats["fallback_count"] += 1
                 except Exception as e:
                     logger.warning("Provider %s failed: %s", provider_name, e)
+                    if cb:
+                        cb.record_failure()
                     last_error = str(e)
                     self._stats["fallback_count"] += 1
 
             logger.error("All providers failed: %s", last_error)
             return self._emergency_fallback(prompt_template, context or {})
+
+    async def generate_completion(
+        self,
+        prompt: str,
+        max_tokens: int = 1024,
+        temperature: float = 0.7,
+    ) -> str:
+        """Direct completion call from a raw prompt string (delegates to generate)."""
+        return await self.generate(prompt, max_tokens=max_tokens, temperature=temperature)
 
     async def generate_json(
         self,
@@ -873,6 +987,7 @@ class LLMEngine:
         tags: list[str] | None = None,
         count: int = 5,
         language: str = "tr",
+        duration: float = 30.0,
     ) -> list[str]:
         """Generate clip title suggestions."""
         ctx = {
@@ -883,7 +998,7 @@ class LLMEngine:
             "game_name": game_name or "Various",
             "viewer_count": f"{viewer_count:,}" if viewer_count else "N/A",
             "tags": ", ".join(tags or []),
-            "duration": "30",
+            "duration": str(duration),
             "count": count,
         }
         result = await self.generate_json("title_generation", ctx, language)
@@ -900,6 +1015,7 @@ class LLMEngine:
         game_name: str = "",
         key_moments: str = "",
         language: str = "tr",
+        duration: float = 30.0,
     ) -> str:
         """Generate video description."""
         ctx = {
@@ -910,7 +1026,7 @@ class LLMEngine:
             "platform": platform,
             "game_name": game_name or "Various",
             "key_moments": key_moments or "Highlight moment",
-            "duration": "30",
+            "duration": str(int(duration)),
         }
         return await self.generate("description_generation", language, ctx)
 

@@ -16,7 +16,7 @@ import asyncio
 import logging
 import time
 from collections import deque
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 import cv2
@@ -492,7 +492,7 @@ class VideoAnalysisService:
         # Build result
         result = FrameAnalysisResult(
             frame_id=frame_id or f"frame_{self._frame_idx}",
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(timezone.utc),
             faces=faces,
             emotions=emotions,
             poses=poses,

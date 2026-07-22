@@ -177,10 +177,10 @@ class TestEventSchemas:
         assert event.source_service == ""
 
     def test_system_event_age(self):
-        from datetime import datetime, timedelta
+        from datetime import datetime, timedelta, timezone
         event = SystemEvent(
             event_type=EventType.STREAM_STARTED,
-            timestamp=datetime.utcnow() - timedelta(seconds=10),
+            timestamp=datetime.now(timezone.utc) - timedelta(seconds=10),
         )
         assert event.age_seconds() >= 9.0
 

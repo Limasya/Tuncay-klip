@@ -1,230 +1,493 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="tr">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Tuncay-Klip Intelligence Dashboard</title>
-    <!-- We load custom styles -->
+    <title>Tuncay-Klip — TikTok & Reels Dashboard</title>
     <link rel="stylesheet" href="/static/style.css">
-    <!-- Lucide Icons -->
     <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@1"></script>
+    <style>
+        .clip-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; }
+        .clip-card {
+            background: var(--bg-secondary, #1a1a2e);
+            border: 1px solid var(--border-color, #2a2a4a);
+            border-radius: 12px; overflow: hidden; transition: transform 0.2s, box-shadow 0.2s;
+            cursor: pointer;
+        }
+        .clip-card:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(0,0,0,0.3); }
+        .clip-thumb {
+            width: 100%; aspect-ratio: 16/9; object-fit: cover; background: #111;
+            display: block;
+        }
+        .clip-info { padding: 12px 14px; }
+        .clip-title-text {
+            font-size: 14px; font-weight: 600; color: var(--text-primary, #eee);
+            margin: 0 0 8px 0; line-height: 1.3;
+            display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+        }
+        .clip-meta-row {
+            display: flex; gap: 12px; font-size: 12px; color: var(--text-secondary, #888);
+            flex-wrap: wrap;
+        }
+        .clip-meta-row span { display: flex; align-items: center; gap: 4px; }
+        .search-bar {
+            display: flex; gap: 8px; margin-bottom: 16px;
+        }
+        .search-bar input {
+            flex: 1; padding: 10px 14px; border-radius: 8px;
+            border: 1px solid var(--border-color, #2a2a4a);
+            background: var(--bg-secondary, #1a1a2e); color: var(--text-primary, #eee);
+            font-size: 14px; outline: none;
+        }
+        .search-bar input:focus { border-color: var(--accent-primary, #6c5ce7); }
+        .sort-btns { display: flex; gap: 4px; }
+        .sort-btn {
+            padding: 8px 14px; border-radius: 8px; border: 1px solid var(--border-color, #2a2a4a);
+            background: transparent; color: var(--text-secondary, #888);
+            cursor: pointer; font-size: 13px; transition: all 0.2s;
+        }
+        .sort-btn.active { background: var(--accent-primary, #6c5ce7); color: #fff; border-color: var(--accent-primary, #6c5ce7); }
+        .clip-stats-bar {
+            display: flex; gap: 24px; padding: 12px 0; margin-bottom: 12px;
+            border-bottom: 1px solid var(--border-color, #2a2a4a);
+            font-size: 13px; color: var(--text-secondary, #888);
+        }
+        .clip-stats-bar strong { color: var(--text-primary, #eee); }
+        .empty-state {
+            text-align: center; padding: 60px 20px; color: var(--text-secondary, #888);
+        }
+        .empty-state i { margin-bottom: 16px; opacity: 0.4; }
+        .kick-url-group {
+            display: flex; gap: 8px; align-items: center;
+        }
+        .kick-url-group input {
+            flex: 1; padding: 10px 14px; border-radius: 8px;
+            border: 1px solid var(--border-color, #2a2a4a);
+            background: var(--bg-secondary, #1a1a2e); color: var(--text-primary, #eee);
+            font-size: 14px;
+        }
+        .badge-count {
+            background: var(--accent-primary, #6c5ce7); color: #fff;
+            border-radius: 10px; padding: 2px 8px; font-size: 11px; font-weight: 600;
+        }
+        .clip-thumb-placeholder {
+            width: 100%; aspect-ratio: 16/9; background: linear-gradient(135deg, #1a1a2e, #2a2a4a);
+            display: flex; align-items: center; justify-content: center;
+            color: var(--text-secondary, #888);
+        }
+    </style>
 </head>
 <body>
 
+<!-- ═══ CLIP PLAYER MODAL ═══ -->
+<div id="clip-modal" style="display:none; position:fixed; inset:0; z-index:9999; background:rgba(0,0,0,0.92); backdrop-filter:blur(10px);" onclick="if(event.target===this)closeClipModal()">
+  <div style="display:flex; height:100%; max-width:1600px; margin:0 auto; padding:16px; gap:16px;">
+
+    <!-- Sol: Video Player -->
+    <div style="flex:2; display:flex; flex-direction:column; min-width:0;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+        <h3 id="modal-title" style="color:#fff; font-size:18px; margin:0; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"></h3>
+        <button onclick="closeClipModal()" style="background:none; border:none; color:#fff; cursor:pointer; font-size:24px; padding:4px 12px;">&times;</button>
+      </div>
+      <div style="flex:1; background:#000; border-radius:12px; overflow:hidden; display:flex; align-items:center; justify-content:center;">
+        <video id="clip-video" controls style="max-width:100%; max-height:100%; border-radius:12px;" playsinline></video>
+      </div>
+      <div id="modal-meta" style="display:flex; gap:16px; margin-top:8px; font-size:13px; color:var(--text-secondary); flex-wrap:wrap;"></div>
+    </div>
+
+    <!-- Sağ: AI Analiz Paneli -->
+    <div style="width:380px; min-width:320px; display:flex; flex-direction:column; gap:12px; overflow-y:auto; padding-right:8px;">
+      <div style="background:var(--bg-secondary,#1a1a2e); border-radius:12px; padding:16px;">
+        <h4 style="margin:0 0 12px 0; color:var(--accent-primary); font-size:15px;">🪝 AI Analiz</h4>
+        <div id="analysis-loading" style="color:var(--text-secondary); font-size:13px;">Yükleniyor...</div>
+        <div id="analysis-content" style="display:none;"></div>
+      </div>
+
+      <!-- Aksiyon Butonları -->
+      <div style="background:var(--bg-secondary,#1a1a2e); border-radius:12px; padding:16px;">
+        <h4 style="margin:0 0 12px 0; color:#fff; font-size:15px;">Aksiyonlar</h4>
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
+          <button onclick="actionAutoHook()" id="btn-auto-hook" class="action-btn" style="background:#e17055;">
+            🪝 Kancalama Ekle
+          </button>
+          <button onclick="actionAutoEdit()" id="btn-auto-edit" class="action-btn" style="background:#6c5ce7;">
+            🎬 Oto-Edit
+          </button>
+          <button onclick="actionSubtitle()" id="btn-subtitle" class="action-btn" style="background:#00b894;">
+            ✏️ Animasyonlu Altyazı
+          </button>
+          <button onclick="actionThumbnail()" id="btn-thumbnail" class="action-btn" style="background:#fdcb6e; color:#333;">
+            🖼️ Thumbnail
+          </button>
+          <button onclick="actionStockHook()" id="btn-stock-hook" class="action-btn" style="background:#0984e3;">
+            🎥 Stok Hook Video
+          </button>
+          <button onclick="toggleRenderPanel()" id="btn-render" class="action-btn" style="background:#e84393;">
+            🚀 Render (Tüm Platformlar)
+          </button>
+          <button onclick="actionViralEffects()" id="btn-viral-effects" class="action-btn" style="background:#fd79a8;">
+            🎭 Viral Efektler (Meme+SFX)
+          </button>
+          <button onclick="actionAddMusic()" id="btn-add-music" class="action-btn" style="background:#00cec9;">
+            🎵 Arka Plan Müziği
+          </button>
+        </div>
+        <div id="action-status" style="margin-top:12px; font-size:13px; color:var(--text-secondary); min-height:40px;"></div>
+
+        <!-- Render Format Paneli (gizli, açılır) -->
+        <div id="render-panel" style="display:none; margin-top:12px; padding:12px; background:rgba(232,67,147,0.08); border-radius:8px; border:1px solid rgba(232,67,147,0.3);">
+          <div style="font-size:12px; font-weight:600; color:#fff; margin-bottom:8px;">📡 Format Seç (2026 spec)</div>
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px;">
+            <button onclick="renderForPlatform('tiktok')" class="render-btn" style="background:#000; border:1px solid #ff0050; color:#fff;">
+              📱 TikTok<br><small style="opacity:0.7;">9:16 • 10M • 21-34s</small>
+            </button>
+            <button onclick="renderForPlatform('instagram_reels')" class="render-btn" style="background:linear-gradient(45deg, #833ab4, #fd1d1d, #fcb045); border:none; color:#fff;">
+              📸 Reels<br><small style="opacity:0.8;">9:16 • 12M • 15-30s</small>
+            </button>
+            <button onclick="renderForPlatform('youtube_shorts')" class="render-btn" style="background:#ff0000; border:none; color:#fff;">
+              ▶️ Shorts<br><small style="opacity:0.8;">9:16 • 10M • 15-60s</small>
+            </button>
+            <button onclick="renderForPlatform('x')" class="render-btn" style="background:#1d9bf0; border:none; color:#fff;">
+              🐦 X / Twitter<br><small style="opacity:0.8;">16:9 • 5M • 2:20</small>
+            </button>
+          </div>
+          <button onclick="renderForAllPlatforms()" style="margin-top:8px; width:100%; padding:8px; background:rgba(232,67,147,0.4); border:none; border-radius:6px; color:#fff; font-weight:600; cursor:pointer; font-size:12px;">
+            ⚡ Tüm Formatlarda Render Et
+          </button>
+          <div style="margin-top:8px; font-size:10px; opacity:0.6; text-align:center;">
+            Output: data/edited_clips/ — H.264 High, AAC, 30fps
+          </div>
+        </div>
+
+        <!-- Render Sonuçları Paneli -->
+        <div id="render-results-panel" style="display:none; margin-top:12px; padding:12px; background:rgba(0,184,148,0.08); border-radius:8px; border:1px solid rgba(0,184,148,0.3);">
+          <div style="font-size:12px; font-weight:600; color:#fff; margin-bottom:8px;">✅ Render Sonuçları</div>
+          <div id="render-results-list" style="font-size:12px; color:var(--text-secondary);">Sonuçlar burada görünecek.</div>
+        </div>
+      </div>
+
+      <!-- Hook Noktaları -->
+      <div style="background:var(--bg-secondary,#1a1a2e); border-radius:12px; padding:16px;">
+        <h4 style="margin:0 0 12px 0; color:#fff; font-size:15px;">🪝 Kancalama Noktaları</h4>
+        <div id="hook-points" style="font-size:13px; color:var(--text-secondary);">Analiz bekleniyor...</div>
+      </div>
+
+      <!-- Stok Video Önerileri -->
+      <div style="background:var(--bg-secondary,#1a1a2e); border-radius:12px; padding:16px;">
+        <h4 style="margin:0 0 12px 0; color:#fff; font-size:15px;">🎥 Stok Video Önerileri</h4>
+        <div id="stock-suggestions" style="font-size:13px; color:var(--text-secondary);">Analiz sonrası öneriler burada görünecek.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<style>
+  .action-btn {
+    padding: 10px 8px; border: none; border-radius: 8px; color: #fff;
+    cursor: pointer; font-size: 12px; font-weight: 600; transition: all 0.2s;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .action-btn:hover { filter: brightness(1.15); transform: translateY(-1px); }
+  .action-btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+  .hook-timestamp {
+    display: inline-flex; align-items: center; gap: 4px;
+    background: rgba(108,92,231,0.15); padding: 3px 8px; border-radius: 6px;
+    font-size: 12px; margin: 2px 0; cursor: pointer; color: var(--accent-primary);
+  }
+  .hook-timestamp:hover { background: rgba(108,92,231,0.3); }
+  .edit-suggestion {
+    background: rgba(0,184,148,0.1); padding: 6px 10px; border-radius: 6px;
+    margin: 4px 0; font-size: 12px; border-left: 3px solid #00b894;
+  }
+</style>
+
 <div class="app-container">
-    
+
     <header class="glass-panel header">
         <h1>
             <i data-lucide="zap" class="icon-accent" style="color: var(--accent-primary)"></i>
-            <span>Tuncay-Klip</span> Intelligence
+            <span>Tuncay-Klip</span> TikTok & Reels
         </h1>
         <div style="display: flex; align-items: center; gap: 16px;">
             <div style="display: flex; align-items: center; gap: 8px;">
                 <span id="ws-status" class="dot" style="background: var(--danger)"></span>
-                <span style="font-size: 13px; color: var(--text-secondary);">WS Status</span>
+                <span style="font-size: 13px; color: var(--text-secondary);">WS</span>
             </div>
             <div class="status-badge status-off" id="stream-status">
                 <span class="dot" id="stream-dot"></span> OFFLINE
             </div>
+            <input type="password" id="api-key-input" placeholder="API Key (ip_...)"
+                   style="width: 180px; padding: 4px 8px; border-radius: 6px; border: 1px solid var(--border-color); background: var(--bg-secondary); color: var(--text-primary); font-size: 12px;"
+                   title="X-API-Key">
         </div>
     </header>
 
+    <!-- ═══ METRICS ═══ -->
     <div class="metrics-grid" id="metrics-grid">
         <div class="glass-card accent">
-            <div class="card-title"><i data-lucide="video" size="16"></i> Clips Today</div>
+            <div class="card-title"><i data-lucide="video" size="16"></i> Top Clips</div>
             <div class="card-value" id="m-clips">0</div>
-            <div class="card-sub">AI auto-generated</div>
+            <div class="card-sub">Kick'ten toplanan</div>
         </div>
         <div class="glass-card green">
-            <div class="card-title"><i data-lucide="users" size="16"></i> Active Conns</div>
-            <div class="card-value" id="m-ws">0</div>
-            <div class="card-sub">WebSocket clients</div>
+            <div class="card-title"><i data-lucide="eye" size="16"></i> Total Views</div>
+            <div class="card-value" id="m-views">0</div>
+            <div class="card-sub">tüm kliplerde</div>
         </div>
-        <div class="glass-card">
-            <div class="card-title"><i data-lucide="activity" size="16"></i> API Requests</div>
-            <div class="card-value" id="m-requests">0</div>
-            <div class="card-sub" id="m-rps">0 req/s</div>
-        </div>
+        <!-- Kick API'den beğeni verisi gelmediği için Total Likes kaldırıldı -->
         <div class="glass-card yellow">
-            <div class="card-title"><i data-lucide="cpu" size="16"></i> AI Pipeline</div>
-            <div class="card-value" id="m-pipeline">0</div>
-            <div class="card-sub">total runs</div>
+            <div class="card-title"><i data-lucide="clock" size="16"></i> Avg Duration</div>
+            <div class="card-value" id="m-duration">0s</div>
+            <div class="card-sub">klip süresi</div>
         </div>
         <div class="glass-card">
-            <div class="card-title"><i data-lucide="git-merge" size="16"></i> Event Bus</div>
-            <div class="card-value" id="m-events">0</div>
-            <div class="card-sub">events dispatched</div>
+            <div class="card-title"><i data-lucide="cpu" size="16"></i> LLM Providers</div>
+            <div class="card-value" id="m-llm-providers">0</div>
+            <div class="card-sub">aktif</div>
         </div>
         <div class="glass-card green">
-            <div class="card-title"><i data-lucide="brain" size="16"></i> LLM Engine</div>
-            <div class="card-value" id="m-llm-providers">0</div>
-            <div class="card-sub">active providers</div>
+            <div class="card-title"><i data-lucide="activity" size="16"></i> API Status</div>
+            <div class="card-value" id="m-api-status">-</div>
+            <div class="card-sub">gateway</div>
         </div>
         <div class="glass-card accent">
-            <div class="card-title"><i data-lucide="database" size="16"></i> Vector Store</div>
-            <div class="card-value" id="m-vector-clips">0</div>
-            <div class="card-sub">clips embedded</div>
+            <div class="card-title"><i data-lucide="radio" size="16"></i> Collector</div>
+            <div class="card-value" id="m-collector">OFF</div>
+            <div class="card-sub">clip toplayıcı</div>
         </div>
     </div>
 
-    <div class="glass-panel pipeline-section">
-        <h2 class="section-title">Otonom Ajans (Master Pipeline) 🚀</h2>
-        <p class="section-desc">
-            YouTube, Twitch veya Kick VOD linkini girin. Yapay Zeka videoyu anlasın, viral klipleri kessin, yüz takibi yapıp sansürlesin ve emojili altyazılarını çıkarıp kapak fotoğrafıyla size teslim etsin.
-        </p>
-        
-        <div class="input-group">
-            <input type="text" id="vod-streamer" placeholder="Yayıncı adı (ör: Tuncay)">
-            <input type="text" id="vod-game" placeholder="Oyun adı (ör: Valorant)">
+    <!-- ═══ KICK CLIPS EXPLORER ═══ -->
+    <div class="glass-panel" style="padding: 24px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; flex-wrap:wrap; gap:12px;">
+            <h2 class="section-title" style="margin:0;">
+                <i data-lucide="scissors" size="20" style="display:inline;vertical-align:middle;margin-right:8px;"></i>
+                Kick Clips Explorer
+                <span class="badge-count" id="clip-total-badge">0</span>
+            </h2>
+            <div class="sort-btns">
+                <button class="sort-btn active" onclick="loadClips('recent', this)">Son Eklenen</button>
+                <button class="sort-btn" onclick="loadClips('views', this)">En Çok İzlenen</button>
+                <!-- Kick API'den beğeni gelmediği için En Çok Beğenilen kaldırıldı -->
+            </div>
         </div>
-        
-        <div class="action-row">
-            <input type="text" id="vod-url" placeholder="https://youtube.com/watch?v=..." style="flex: 1;">
-            <button onclick="startMasterPipeline()" id="pipeline-btn" class="btn-primary">
+
+        <div class="clip-stats-bar" id="clip-stats-bar">
+            <span>Kanal: <strong>kick.com/thetuncay</strong></span>
+            <span>Toplam: <strong id="stat-total">0</strong> klip</span>
+            <span>İzlenme: <strong id="stat-views">0</strong></span>
+            <!-- Beğeni verisi gelmiyor, kaldırıldı -->
+        </div>
+
+        <div class="search-bar">
+            <input type="text" id="clip-search" placeholder="Klip ara... (başlık, creator)" onkeydown="if(event.key==='Enter')searchClips()">
+            <button class="btn-primary" onclick="searchClips()" style="padding:10px 20px;border:none;border-radius:8px;background:var(--accent-primary,#6c5ce7);color:#fff;cursor:pointer;font-size:14px;">
+                <i data-lucide="search" size="16"></i> Ara
+            </button>
+            <button onclick="loadClips('recent')" style="padding:10px 16px;border:1px solid var(--border-color);border-radius:8px;background:transparent;color:var(--text-secondary);cursor:pointer;font-size:13px;">
+                Yenile
+            </button>
+        </div>
+
+        <div id="clip-grid" class="clip-grid">
+            <div class="empty-state">
+                <i data-lucide="film" size="48"></i>
+                <p>Clip'ler yükleniyor...</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- ═══ SKORLU KLİPLER + AUTO-EDIT ═══ -->
+    <div class="glass-panel" style="padding: 24px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; flex-wrap:wrap; gap:12px;">
+            <h2 class="section-title" style="margin:0;">
+                <i data-lucide="star" size="20" style="display:inline;vertical-align:middle;margin-right:8px;"></i>
+                AI Skorlu Klipler & Otomatik Edit
+            </h2>
+            <div style="display:flex; gap:8px;">
+                <button onclick="scoreClips()" id="score-btn" class="sort-btn active">
+                    <i data-lucide="sparkles" size="14"></i> Puanla
+                </button>
+                <button onclick="editHighScored()" id="edit-btn" class="sort-btn">
+                    <i data-lucide="scissors" size="14"></i> Otomatik Edit
+                </button>
+            </div>
+        </div>
+
+        <div class="clip-stats-bar">
+            <span>Edit kuyruğu: <strong id="edit-queue-count">0</strong></span>
+            <span>A grade: <strong id="grade-a-count">0</strong></span>
+            <span>B grade: <strong id="grade-b-count">0</strong></span>
+            <span>C grade: <strong id="grade-c-count">0</strong></span>
+            <span>D grade: <strong id="grade-d-count">0</strong></span>
+        </div>
+
+        <div id="score-status" style="margin-bottom:12px; font-size:13px; color:var(--text-secondary);"></div>
+
+        <div id="scored-grid" class="clip-grid">
+            <div class="empty-state">
+                <i data-lucide="sparkles" size="48"></i>
+                <p>"Puanla" butonuna basarak klipleri değerlendirin</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- ═══ DÜZENLENMİŞ KLİPLER ═══ -->
+    <div class="glass-panel" style="padding: 24px;">
+        <h2 class="section-title" style="margin-bottom:16px;">
+            <i data-lucide="check-circle" size="20" style="display:inline;vertical-align:middle;margin-right:8px;"></i>
+            Düzenlenmiş Klipler
+            <span class="badge-count" id="edited-count">0</span>
+        </h2>
+
+        <div id="edited-grid" class="clip-grid">
+            <div class="empty-state">
+                <i data-lucide="check-circle" size="48"></i>
+                <p>Henüz düzenleme yapılmadı — "Otomatik Edit" ile başlayın</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- ═══ OTONOM AJANS ═══ -->
+    <div class="glass-panel pipeline-section" style="padding:24px;">
+        <h2 class="section-title">
+            <i data-lucide="bot" size="20" style="display:inline;vertical-align:middle;margin-right:8px;"></i>
+            Otonom Ajans — Kick Kanal Analizi
+        </h2>
+        <p class="section-desc">
+            <strong>kick.com/thetuncay</strong> kanalının clip'lerini otomatik olarak keşfet ve analiz et.
+            Yayın indirilmez — sadece metadata, başlık, görüntülenme sayısı ve thumbnail çekilir.
+        </p>
+
+        <div class="kick-url-group">
+            <input type="text" id="kick-url" placeholder="https://kick.com/thetuncay (varsayılan kanal)"
+                   value="https://kick.com/thetuncay">
+            <button onclick="refreshClips()" id="refresh-btn" class="btn-primary" style="padding:10px 20px;border:none;border-radius:8px;background:var(--accent-primary,#6c5ce7);color:#fff;cursor:pointer;font-size:14px;white-space:nowrap;">
                 <span style="display:flex;align-items:center;gap:8px;">
-                    <i data-lucide="play" size="18"></i> Otomatik Üret
+                    <i data-lucide="refresh-cw" size="16"></i> Yenile
                 </span>
             </button>
         </div>
-        
-        <div id="pipeline-status" style="margin-top: 16px; font-size: 14px; font-weight: 500; color: var(--success); display: flex; align-items: center; gap: 8px;"></div>
-        
-        <div id="pipeline-results" class="results-grid"></div>
+
+        <div id="pipeline-status" style="margin-top: 16px; font-size: 14px; color: var(--text-secondary);"></div>
     </div>
 
+    <!-- ═══ SERVICES + EVENTS ═══ -->
     <div class="content-grid">
         <div class="glass-panel" style="padding: 24px;">
-            <h2 class="section-title" style="margin-bottom: 20px;"><i data-lucide="server" size="20" style="display:inline;vertical-align:middle;margin-right:8px;"></i>System Services</h2>
+            <h2 class="section-title" style="margin-bottom: 20px;">
+                <i data-lucide="server" size="20" style="display:inline;vertical-align:middle;margin-right:8px;"></i>System Services
+            </h2>
             <div class="table-container">
                 <table class="table" id="services-table">
                     <thead>
-                        <tr>
-                            <th>Service</th>
-                            <th>Status</th>
-                            <th>Uptime</th>
-                        </tr>
+                        <tr><th>Service</th><th>Status</th><th>Uptime</th></tr>
                     </thead>
-                    <tbody id="services-body">
-                        <!-- Populated by JS -->
-                    </tbody>
+                    <tbody id="services-body"></tbody>
                 </table>
             </div>
         </div>
-        
-        <div class="glass-panel" style="padding: 24px;">
-            <h2 class="section-title" style="margin-bottom: 20px;"><i data-lucide="terminal" size="20" style="display:inline;vertical-align:middle;margin-right:8px;"></i>Live Events Log</h2>
-            <div class="log-container" id="event-log">
-                <!-- Populated by JS -->
-            </div>
-        </div>
-    </div>
 
-    <div class="glass-panel chart-container">
-        <h2 class="section-title">Traffic Analysis (Requests/sec - last 60s)</h2>
-        <div class="sparkline" id="rps-chart"></div>
+        <div class="glass-panel" style="padding: 24px;">
+            <h2 class="section-title" style="margin-bottom: 20px;">
+                <i data-lucide="terminal" size="20" style="display:inline;vertical-align:middle;margin-right:8px;"></i>Live Events
+            </h2>
+            <div class="log-container" id="event-log"></div>
+        </div>
     </div>
 
 </div>
 
 <script>
-// Initialize Icons
+// ── API Key ─────────────────────────────────────────────────────
+const API_KEY_STORAGE = 'tuncay_klip_api_key';
+const apiKeyInput = document.getElementById('api-key-input');
+const savedKey = localStorage.getItem(API_KEY_STORAGE);
+if (savedKey) apiKeyInput.value = savedKey;
+apiKeyInput.addEventListener('change', () => {
+  const val = apiKeyInput.value.trim();
+  if (val) localStorage.setItem(API_KEY_STORAGE, val);
+  else localStorage.removeItem(API_KEY_STORAGE);
+});
+
+function getApiKeyHeaders() {
+  const key = apiKeyInput.value.trim();
+  if (!key) return {};
+  return { 'X-API-Key': key };
+}
+
+// ── Init ────────────────────────────────────────────────────────
 lucide.createIcons();
 
+let currentSort = 'recent';
 const WS_URL = `ws://${location.host}/ws/dashboard`;
 let ws = null;
-let rpsHistory = new Array(60).fill(0);
 
+// Sayfa yüklendiğinde clip'leri, istatistikleri ve puanları otomatik yükle
+// (script body sonunda çalıştığı için DOMContentLoaded gerekmez)
+loadClips('recent');
+loadStats();
+loadCollectorStatus();
+scoreClips();
+
+// ── WebSocket ───────────────────────────────────────────────────
 function connect() {
   ws = new WebSocket(WS_URL);
   ws.onopen = () => {
-    const status = document.getElementById('ws-status');
-    status.style.background = 'var(--success)';
-    status.classList.add('pulse');
+    document.getElementById('ws-status').style.background = 'var(--success)';
     ws.send(JSON.stringify({ subscribe: ['*'] }));
   };
   ws.onclose = () => {
-    const status = document.getElementById('ws-status');
-    status.style.background = 'var(--danger)';
-    status.classList.remove('pulse');
+    document.getElementById('ws-status').style.background = 'var(--danger)';
     setTimeout(connect, 3000);
   };
   ws.onmessage = (e) => {
-    try {
-      const data = JSON.parse(e.data);
-      handleEvent(data);
-    } catch {}
+    try { handleEvent(JSON.parse(e.data)); } catch {}
   };
 }
 
 function handleEvent(data) {
-  if (data.type === 'connected') return;
-
-  if (data.type === 'status_update') {
-    updateMetrics(data.payload);
-  }
-
+  if (data.type === 'status_update') updateMetrics(data.payload);
   if (data.type === 'clip_created') {
-    addLogEntry('CLIP_CREATED', data.payload?.category || 'unknown');
+    addLogEntry('CLIP_CREATED', data.payload?.category || 'new');
     increment('m-clips');
+    loadClips(currentSort);
   }
-
   if (data.type === 'event') {
     addLogEntry(data.event_type || 'EVENT', JSON.stringify(data.payload || {}).slice(0, 80));
   }
-
-  if (data.type === 'service_update') {
-    updateServices(data.services || []);
-  }
+  if (data.type === 'service_update') updateServices(data.services || []);
 }
 
+// ── Metrics ─────────────────────────────────────────────────────
 function updateMetrics(m) {
   if (m.clips !== undefined) setText('m-clips', m.clips);
-  if (m.ws_clients !== undefined) setText('m-ws', m.ws_clients);
-  if (m.requests !== undefined) setText('m-requests', m.requests);
-  if (m.pipeline_runs !== undefined) setText('m-pipeline', m.pipeline_runs);
-  if (m.events_dispatched !== undefined) setText('m-events', m.events_dispatched);
-  if (m.llm_providers !== undefined) setText('m-llm-providers', m.llm_providers);
-  if (m.cache_hit_rate !== undefined) setText('m-cache', m.cache_hit_rate + '%');
   if (m.stream_active !== undefined) {
     const el = document.getElementById('stream-status');
     const dot = document.getElementById('stream-dot');
-    
-    el.innerHTML = '';
-    el.appendChild(dot);
+    el.innerHTML = ''; el.appendChild(dot);
     el.appendChild(document.createTextNode(m.stream_active ? ' LIVE' : ' OFFLINE'));
-    
-    if (m.stream_active) {
-        el.className = 'status-badge status-live';
-        dot.style.background = 'var(--success)';
-        dot.classList.add('pulse');
-    } else {
-        el.className = 'status-badge status-off';
-        dot.style.background = 'var(--danger)';
-        dot.classList.remove('pulse');
-    }
+    el.className = m.stream_active ? 'status-badge status-live' : 'status-badge status-off';
+    dot.style.background = m.stream_active ? 'var(--success)' : 'var(--danger)';
   }
-  if (m.rps !== undefined) {
-    rpsHistory.push(m.rps);
-    if (rpsHistory.length > 60) rpsHistory.shift();
-    renderSparkline();
-  }
+  if (m.llm_providers !== undefined) setText('m-llm-providers', m.llm_providers);
   if (m.services) updateServices(m.services);
 }
 
 function updateServices(services) {
-  const tbody = document.getElementById('services-body');
-  tbody.innerHTML = services.map(s => `
+  document.getElementById('services-body').innerHTML = services.map(s => `
     <tr>
-      <td style="font-weight: 500;">${s.name}</td>
+      <td style="font-weight:500;">${s.name}</td>
       <td><span class="badge ${s.status === 'ok' ? 'badge-green' : s.status === 'degraded' ? 'badge-yellow' : 'badge-red'}">${s.status}</span></td>
-      <td style="color: var(--text-secondary); font-family: 'JetBrains Mono', monospace; font-size: 13px;">${s.uptime || '-'}</td>
+      <td style="color:var(--text-secondary);font-family:'JetBrains Mono',monospace;font-size:13px;">${s.uptime || '-'}</td>
     </tr>
   `).join('');
 }
 
 function addLogEntry(event, msg) {
   const log = document.getElementById('event-log');
-  const time = new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit', second:'2-digit'});
+  const time = new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit'});
   const entry = document.createElement('div');
   entry.className = 'log-entry';
   entry.innerHTML = `<span class="log-time">[${time}]</span><span class="log-event">${event}</span><span class="log-msg">${msg}</span>`;
@@ -232,161 +495,946 @@ function addLogEntry(event, msg) {
   if (log.children.length > 100) log.removeChild(log.lastChild);
 }
 
-function renderSparkline() {
-  const chart = document.getElementById('rps-chart');
-  const max = Math.max(...rpsHistory, 1);
-  chart.innerHTML = rpsHistory.map(v =>
-    `<div class="spark-bar" style="height:${(v / max) * 100}%" title="${v.toFixed(1)} req/s"></div>`
-  ).join('');
-}
-
 function setText(id, val) { document.getElementById(id).textContent = val; }
 function increment(id) { const el = document.getElementById(id); el.textContent = parseInt(el.textContent) + 1; }
 
-// Fallback polling if WS fails
+// ── Kick Clips ──────────────────────────────────────────────────
+async function loadClips(sortBy, btnEl) {
+  currentSort = sortBy || currentSort;
+
+  // Update active sort button
+  if (btnEl) {
+    document.querySelectorAll('.sort-btn').forEach(b => b.classList.remove('active'));
+    btnEl.classList.add('active');
+  }
+
+  try {
+    const resp = await fetch(`/api/kick-clips/?sort_by=${currentSort}&limit=100`, { headers: getApiKeyHeaders() });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const data = await resp.json();
+    renderClipGrid(data.clips || []);
+    setText('m-clips', data.total || 0);
+    setText('clip-total-badge', data.total || 0);
+  } catch (e) {
+    console.error('loadClips error:', e);
+    document.getElementById('clip-grid').innerHTML = `
+      <div class="empty-state">
+        <i data-lucide="alert-triangle" size="48"></i>
+        <p>Clip'ler yüklenemedi — sunucu çalışyor mu?</p>
+        <p style="font-size:12px;margin-top:8px;">${e.message}</p>
+      </div>`;
+    lucide.createIcons();
+  }
+}
+
+async function searchClips() {
+  const q = document.getElementById('clip-search').value.trim();
+  if (!q) { loadClips(currentSort); return; }
+
+  try {
+    const resp = await fetch(`/api/kick-clips/search?q=${encodeURIComponent(q)}`, { headers: getApiKeyHeaders() });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const data = await resp.json();
+    renderClipGrid(data.results || []);
+    setText('clip-total-badge', data.total || 0);
+  } catch (e) {
+    console.error('searchClips error:', e);
+  }
+}
+
+async function loadStats() {
+  try {
+    const resp = await fetch('/api/kick-clips/stats', { headers: getApiKeyHeaders() });
+    if (!resp.ok) return;
+    const data = await resp.json();
+    setText('stat-total', data.total_clips || 0);
+    setText('stat-views', formatNumber(data.total_views || 0));
+    setText('m-views', formatNumber(data.total_views || 0));
+    setText('m-duration', (data.avg_duration || 0).toFixed(0) + 's');
+  } catch {}
+}
+
+async function loadCollectorStatus() {
+  try {
+    const resp = await fetch('/api/kick-clips/status', { headers: getApiKeyHeaders() });
+    if (!resp.ok) return;
+    const data = await resp.json();
+    setText('m-collector', data.running ? 'ON' : 'OFF');
+  } catch {}
+}
+
+function renderClipGrid(clips) {
+  const grid = document.getElementById('clip-grid');
+
+  if (!clips || clips.length === 0) {
+    grid.innerHTML = `
+      <div class="empty-state">
+        <i data-lucide="film" size="48"></i>
+        <p>Henüz clip bulunamadı</p>
+        <p style="font-size:12px;margin-top:8px;">"Yenile" butonu ile Kick'ten clip çekmeyi deneyin</p>
+      </div>`;
+    lucide.createIcons();
+    return;
+  }
+
+  grid.innerHTML = clips.map(c => {
+    const thumb = c.thumbnail_url || c.thumbnail || '';
+    const title = c.title || 'Adsız Klip';
+    const views = c.views || 0;
+    const duration = c.duration || 0;
+    const creator = c.creator_username || c.creator || '';
+    const createdAt = c.created_at ? timeAgo(c.created_at) : '';
+    const clipUrl = c.clip_url || c.url || '#';
+
+    return `
+    <div class="clip-card" onclick="openClipModal('${c.clip_id || ''}', '${escapeHtml(clipUrl)}', '${escapeHtml(title)}', ${views}, 0, ${duration}, '${escapeHtml(creator)}', '${escapeHtml(thumb)}')">
+      ${thumb
+        ? `<img class="clip-thumb" src="${thumb}" alt="${title}" loading="lazy" onerror="this.outerHTML='<div class=clip-thumb-placeholder><i data-lucide=\\'film\\' size=32></i></div>'">`
+        : `<div class="clip-thumb-placeholder"><i data-lucide="film" size="32"></i></div>`
+      }
+      <div class="clip-info">
+        <div class="clip-title-text">${escapeHtml(title)}</div>
+        <div class="clip-meta-row">
+          <span><i data-lucide="eye" size="12"></i> ${formatNumber(views)}</span>
+          <span><i data-lucide="clock" size="12"></i> ${formatDuration(duration)}</span>
+          ${duration >= 15 && duration <= 45 ? '<span style="color:#00b894; font-weight:600;">✓ Süre ideal</span>' : ''}
+          ${creator ? `<span><i data-lucide="user" size="12"></i> ${escapeHtml(creator)}</span>` : ''}
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+
+  lucide.createIcons();
+}
+
+// ── Otonom Ajans ────────────────────────────────────────────────
+async function refreshClips() {
+  const btn = document.getElementById('refresh-btn');
+  const statusDiv = document.getElementById('pipeline-status');
+  btn.disabled = true;
+  btn.innerHTML = '<span style="display:flex;align-items:center;gap:8px;"><i data-lucide="loader" class="pulse" size="16"></i> Taranıyor...</span>';
+  lucide.createIcons();
+
+  statusDiv.style.color = 'var(--text-secondary)';
+  statusDiv.textContent = 'Kick API\'den clip\'ler çekiliyor...';
+
+  try {
+    const resp = await fetch('/api/kick-clips/refresh?limit=200', { method: 'POST', headers: getApiKeyHeaders() });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const data = await resp.json();
+
+    statusDiv.style.color = 'var(--success)';
+    statusDiv.textContent = `Tamamlandı! ${data.total_discovered || 0} clip keşfedildi, ${data.new_clips || 0} yeni.`;
+
+    loadClips(currentSort);
+    loadStats();
+    // Skorlu grid'i her zaman yenile
+    scoreClips();
+    addLogEntry('KICK_SYNC', `${data.new_clips || 0} yeni klip toplandı`);
+  } catch (e) {
+    statusDiv.style.color = 'var(--danger)';
+    statusDiv.textContent = `Hata: ${e.message}`;
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '<span style="display:flex;align-items:center;gap:8px;"><i data-lucide="refresh-cw" size="16"></i> Yenile</span>';
+    lucide.createIcons();
+  }
+}
+
+// ── Helpers ─────────────────────────────────────────────────────
+function formatNumber(n) {
+  if (n >= 1000000) return (n/1000000).toFixed(1) + 'M';
+  if (n >= 1000) return (n/1000).toFixed(1) + 'K';
+  return String(n);
+}
+
+function formatDuration(s) {
+  if (!s) return '0s';
+  const m = Math.floor(s / 60);
+  const sec = Math.floor(s % 60);
+  return m > 0 ? `${m}m ${sec}s` : `${sec}s`;
+}
+
+function timeAgo(isoStr) {
+  const diff = (Date.now() - new Date(isoStr).getTime()) / 1000;
+  if (diff < 60) return 'az önce';
+  if (diff < 3600) return Math.floor(diff/60) + ' dk önce';
+  if (diff < 86400) return Math.floor(diff/3600) + ' saat önce';
+  return Math.floor(diff/86400) + ' gün önce';
+}
+
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+// ── Clip Scoring ────────────────────────────────────────────────
+async function scoreClips() {
+  const btn = document.getElementById('score-btn');
+  const statusDiv = document.getElementById('score-status');
+  btn.disabled = true;
+  statusDiv.textContent = 'Klipler puanlanıyor...';
+  statusDiv.style.color = 'var(--text-secondary)';
+
+  try {
+    const resp = await fetch('/api/kick-clips/scored?min_score=0&limit=200', { headers: getApiKeyHeaders() });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const data = await resp.json();
+    const clips = data.clips || [];
+
+    // Grade sayaçları
+    let aCount = 0, bCount = 0, cCount = 0, dCount = 0, editQ = 0;
+    clips.forEach(c => {
+      if (c.grade === 'A') aCount++;
+      else if (c.grade === 'B') bCount++;
+      else if (c.grade === 'C') cCount++;
+      else dCount++;
+      if (c.verdict === 'edit') editQ++;
+    });
+
+    setText('grade-a-count', aCount);
+    setText('grade-b-count', bCount);
+    setText('grade-c-count', cCount);
+    setText('grade-d-count', dCount);
+    setText('edit-queue-count', editQ);
+
+    renderScoredGrid(clips);
+    statusDiv.textContent = `${clips.length} klip puanlandı — ${editQ} klip edit için hazır`;
+    statusDiv.style.color = 'var(--success)';
+    addLogEntry('CLIP_SCORE', `${clips.length} klip puanlandı, ${editQ} edit kuyruğunda`);
+  } catch (e) {
+    statusDiv.textContent = `Hata: ${e.message}`;
+    statusDiv.style.color = 'var(--danger)';
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function renderScoredGrid(clips) {
+  const grid = document.getElementById('scored-grid');
+  if (!clips || clips.length === 0) {
+    grid.innerHTML = `<div class="empty-state"><i data-lucide="sparkles" size="48"></i><p>Puanlanacak klip yok</p></div>`;
+    lucide.createIcons();
+    return;
+  }
+
+  const categoryEmoji = { funny:'😂', exciting:'🔥', rage:'😡', fail:'💥', skill:'🎯', wholesome:'❤️', other:'🎥' };
+
+  grid.innerHTML = clips.map(c => {
+    const score = c.score || 0;
+    const grade = c.grade || 'D';
+    const verdict = c.verdict || 'skip';
+    const hook = c.hook_score || 0;
+    const viral = c.viral_potential || 0;
+    const category = c.category || 'other';
+    const thumb = c.thumbnail_url || '';
+    const title = c.title || 'Adsız';
+    const views = c.views || 0;
+    const duration = c.duration || 0;
+    const creator = c.creator_username || '';
+    const clipUrl = c.clip_url || '#';
+    const hookMoment = c.best_hook_moment || '';
+    const hookReason = c.hook_reason || '';
+    const suggestedEdit = c.suggested_edit || '';
+    const method = c.scoring_method || 'math';
+
+    const gradeColor = grade === 'A' ? '#00b894' : grade === 'B' ? '#6c5ce7' : grade === 'C' ? '#fdcb6e' : '#d63031';
+    const verdictColor = verdict === 'edit' ? '#00b894' : verdict === 'watch' ? '#fdcb6e' : '#636e72';
+    const verdictText = verdict === 'edit' ? 'EDIT' : verdict === 'watch' ? 'İZLE' : 'ATLA';
+
+    // Hook bar color
+    const hookColor = hook >= 70 ? '#00b894' : hook >= 50 ? '#fdcb6e' : '#d63031';
+
+    return `
+    <div class="clip-card" onclick="openClipModal('${c.clip_id || ''}', '${escapeHtml(clipUrl)}', '${escapeHtml(title)}', ${views}, 0, ${duration}, '${escapeHtml(creator)}', '${escapeHtml(thumb)}')">
+      ${thumb ? `<img class="clip-thumb" src="${thumb}" alt="${title}" loading="lazy">` : `<div class="clip-thumb-placeholder"><i data-lucide="film" size="32"></i></div>`}
+      <div class="clip-info">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+          <span style="font-size:24px; font-weight:800; color:${gradeColor};">${score.toFixed(0)}</span>
+          <span style="background:${gradeColor}22; color:${gradeColor}; padding:2px 8px; border-radius:6px; font-size:12px; font-weight:700;">${grade}</span>
+          <span style="background:${verdictColor}22; color:${verdictColor}; padding:2px 8px; border-radius:6px; font-size:11px; font-weight:600;">${verdictText}</span>
+          <span style="font-size:16px;" title="${category}">${categoryEmoji[category] || '🎥'}</span>
+        </div>
+        <div class="clip-title-text">${escapeHtml(title)}</div>
+
+        <!-- Kancalama Bar -->
+        <div style="margin:8px 0 4px 0;">
+          <div style="display:flex; justify-content:space-between; font-size:11px; margin-bottom:3px;">
+            <span style="color:${hookColor}; font-weight:600;">🪝 Kancalama: ${hook.toFixed(0)}</span>
+            <span style="color:var(--text-secondary);">Viral: ${viral.toFixed(0)}</span>
+          </div>
+          <div style="height:4px; background:#222; border-radius:2px; overflow:hidden;">
+            <div style="height:100%; width:${hook}%; background:${hookColor}; border-radius:2px;"></div>
+          </div>
+        </div>
+
+        <div class="clip-meta-row">
+          <span><i data-lucide="eye" size="12"></i> ${formatNumber(views)}</span>
+          <span><i data-lucide="clock" size="12"></i> ${formatDuration(duration)}</span>
+          ${creator ? `<span>@${escapeHtml(creator)}</span>` : ''}
+        </div>
+
+        <!-- Viral Efekt Potansiyeli -->
+        ${(c.meme_potential > 0 || c.sfx_potential > 0) ? `
+        <div style="margin-top:6px; display:flex; gap:6px; flex-wrap:wrap;">
+          ${c.meme_potential > 0 ? `<span style="font-size:10px; background:${c.meme_potential>=70?'#fd79a8':'#636e72'}22; color:${c.meme_potential>=70?'#fd79a8':'#636e72'}; padding:2px 6px; border-radius:4px;">🎭 Meme: ${c.meme_potential}</span>` : ''}
+          ${c.sfx_potential > 0 ? `<span style="font-size:10px; background:${c.sfx_potential>=70?'#00cec9':'#636e72'}22; color:${c.sfx_potential>=70?'#00cec9':'#636e72'}; padding:2px 6px; border-radius:4px;">🔊 SFX: ${c.sfx_potential}</span>` : ''}
+          ${c.dm_share_potential > 0 ? `<span style="font-size:10px; background:${c.dm_share_potential>=60?'#e17055':'#636e72'}22; color:${c.dm_share_potential>=60?'#e17055':'#636e72'}; padding:2px 6px; border-radius:4px;">📤 DM: ${c.dm_share_potential}</span>` : ''}
+        </div>
+        ` : ''}
+
+        <!-- AI Detayları -->
+        ${hookMoment ? `<div style="margin-top:6px; font-size:11px; color:var(--accent-primary);">🪝 ${escapeHtml(hookMoment)}</div>` : ''}
+        ${suggestedEdit ? `<div style="margin-top:3px; font-size:11px; color:var(--text-secondary);">✏️ ${escapeHtml(suggestedEdit)}</div>` : ''}
+        <div style="margin-top:4px; font-size:10px; color:#555;">${method === 'llm' ? '🤖 AI' : '📊 Math'}</div>
+      </div>
+    </div>`;
+  }).join('');
+
+  lucide.createIcons();
+}
+
+// ── Auto Edit ───────────────────────────────────────────────────
+async function editHighScored() {
+  const btn = document.getElementById('edit-btn');
+  const statusDiv = document.getElementById('score-status');
+  btn.disabled = true;
+  statusDiv.textContent = 'Edit kuyruğu çalışıyor...';
+  statusDiv.style.color = 'var(--text-secondary)';
+
+  try {
+    const resp = await fetch('/api/kick-clips/edit?min_score=55&max_clips=10', {
+      method: 'POST',
+      headers: getApiKeyHeaders(),
+    });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const data = await resp.json();
+
+    if (data.status === 'busy') {
+      statusDiv.textContent = 'Düzenleme zaten devam ediyor...';
+      return;
+    }
+    if (data.status === 'empty') {
+      statusDiv.textContent = data.message;
+      statusDiv.style.color = 'var(--text-secondary)';
+      return;
+    }
+
+    statusDiv.textContent = data.message;
+    statusDiv.style.color = 'var(--warning)';
+    addLogEntry('AUTO_EDIT', `${data.clips?.length || 0} klip düzenleniyor`);
+
+    // Sonuçları periyodik kontrol et
+    pollEditResults();
+  } catch (e) {
+    statusDiv.textContent = `Edit hatası: ${e.message}`;
+    statusDiv.style.color = 'var(--danger)';
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function pollEditResults() {
+  const checkEdit = async () => {
+    try {
+      const resp = await fetch('/api/kick-clips/edit-results', { headers: getApiKeyHeaders() });
+      if (!resp.ok) return;
+      const data = await resp.json();
+
+      setText('edited-count', (data.results || []).length);
+      renderEditedGrid(data.results || []);
+
+      if (data.processing) {
+        document.getElementById('score-status').textContent = 'Düzenleme devam ediyor...';
+        setTimeout(checkEdit, 3000);
+      } else {
+        document.getElementById('score-status').textContent = `${(data.results || []).length} klip düzenlendi!`;
+        document.getElementById('score-status').style.color = 'var(--success)';
+        addLogEntry('AUTO_EDIT_DONE', `${data.results?.length || 0} klip tamamlandı`);
+      }
+    } catch {}
+  };
+  checkEdit();
+}
+
+function renderEditedGrid(results) {
+  const grid = document.getElementById('edited-grid');
+  if (!results || results.length === 0) {
+    grid.innerHTML = `<div class="empty-state"><i data-lucide="check-circle" size="48"></i><p>Henüz düzenleme yapılmadı</p></div>`;
+    lucide.createIcons();
+    return;
+  }
+
+  grid.innerHTML = results.map(r => {
+    const status = r.status || 'error';
+    const statusColor = status === 'ready' ? '#00b894' : status === 'processing' ? '#fdcb6e' : '#d63031';
+    const statusText = status === 'ready' ? 'HAZIR' : status === 'processing' ? 'İŞLENİYOR' : 'HATA';
+
+    return `
+    <div class="clip-card">
+      ${r.thumbnail_path ? `<img class="clip-thumb" src="/data/edited_clips/${r.thumbnail_path?.split('/').pop()}" loading="lazy">` : `<div class="clip-thumb-placeholder"><i data-lucide="scissors" size="32"></i></div>`}
+      <div class="clip-info">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+          <span style="font-size:20px; font-weight:800; color:${statusColor};">${statusText}</span>
+          <span style="font-size:14px; font-weight:700; color:var(--accent-primary);">Skor: ${r.score?.toFixed(0) || '?'}</span>
+        </div>
+        <div class="clip-title-text">${escapeHtml(r.original_title || 'Adsız')}</div>
+        <div class="clip-meta-row">
+          ${r.watermarked ? '<span>Watermark</span>' : ''}
+          ${r.has_subtitles ? '<span>Altyazılı</span>' : ''}
+          ${r.output_path ? `<span style="color:var(--success);">Düzenlendi</span>` : ''}
+          ${r.error ? `<span style="color:var(--danger);">${r.error}</span>` : ''}
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+
+  lucide.createIcons();
+}
+
+// ── Polling ─────────────────────────────────────────────────────
 async function pollStatus() {
   try {
-    const r = await fetch('/api/system/status');
+    const headers = getApiKeyHeaders();
+    const r = await fetch('/api/system/status', { headers });
     if (r.ok) {
       const d = await r.json();
-      updateMetrics({
-        clips: d.clips_today || 0,
-        stream_active: d.stream_active || false,
-      });
+      setText('m-api-status', d.status || 'ok');
+      if (d.stream_active !== undefined) {
+        updateMetrics({ stream_active: d.stream_active });
+      }
     }
-
-    const dhr = await fetch('/api/admin/health/deep');
-    if (dhr.ok) {
-      const dh = await dhr.json();
-      const dbOk = dh.checks?.database === 'ok';
-      const redisOk = dh.checks?.redis === 'ok';
-      const ebOk = dh.checks?.event_bus === 'ok';
-      const pipeOk = dh.checks?.ai_pipeline === 'idle' || dh.checks?.ai_pipeline === 'ok';
-      updateServices([
-        { name: 'API Gateway', status: dh.status === 'healthy' ? 'ok' : 'degraded', uptime: '-' },
-        { name: 'Event Bus', status: ebOk ? 'ok' : 'degraded', uptime: '-' },
-        { name: 'AI Pipeline', status: pipeOk ? 'ok' : 'degraded', uptime: '-' },
-        { name: 'PostgreSQL DB', status: dbOk ? 'ok' : 'degraded', uptime: '-' },
-        { name: 'Redis Cache', status: redisOk ? 'ok' : 'degraded', uptime: '-' },
-      ]);
-    }
-
-    const llmReq = await fetch('/api/llm/status');
-    if (llmReq.ok) {
-        const llmData = await llmReq.json();
-        const providers = llmData.facade?.enabled_providers || [];
-        setText('m-llm-providers', providers.length);
-    }
-
-    const vectorReq = await fetch('/api/llm/vector/stats');
-    if (vectorReq.ok) {
-        const vectorData = await vectorReq.json();
-        setText('m-vector-clips', vectorData.total_clips || vectorData.count || 0);
-    }
-  } catch(e) { console.error('pollStatus error:', e); }
+  } catch {}
 }
 
-async function startMasterPipeline() {
-    const urlInput = document.getElementById('vod-url').value;
-    const streamer = document.getElementById('vod-streamer').value || 'Yayıncı';
-    const game = document.getElementById('vod-game').value || 'Oyun';
-    const statusDiv = document.getElementById('pipeline-status');
-    const btn = document.getElementById('pipeline-btn');
-    
-    if (!urlInput) {
-        statusDiv.style.color = "var(--danger)";
-        statusDiv.innerHTML = '<i data-lucide="alert-circle" size="18"></i> Lütfen geçerli bir URL girin!';
-        lucide.createIcons();
-        return;
-    }
-    
-    btn.disabled = true;
-    btn.innerHTML = '<span style="display:flex;align-items:center;gap:8px;"><i data-lucide="loader" class="pulse" size="18"></i> İşleniyor...</span>';
-    lucide.createIcons();
-    
-    statusDiv.style.color = "var(--warning)";
-    statusDiv.innerHTML = '<i data-lucide="zap" size="18"></i> Otonom Ajans başlatıldı — arka planda çalışıyor. Event Log\'dan takip edin.';
-    document.getElementById('pipeline-results').innerHTML = '';
-    
-    try {
-        const response = await fetch('/api/v1/social/generate-master-pipeline', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ url: urlInput, streamer: streamer, game: game })
-        });
-        
-        if (response.ok) {
-            const data = await response.json();
-            statusDiv.style.color = "var(--success)";
-            statusDiv.innerHTML = '<i data-lucide="check-circle" size="18"></i> Pipeline başarıyla başlatıldı! Klipler hazırlanıyor...';
-            addLogEntry("MASTER_PIPELINE", `▶ Başladı: ${urlInput} (${streamer} / ${game})`);
-            
-            if (data.generated_clips) renderClipResults(data.generated_clips);
-            
-            document.getElementById('vod-url').value = '';
-        } else {
-            statusDiv.style.color = "var(--danger)";
-            statusDiv.innerHTML = '<i data-lucide="x-circle" size="18"></i> Hata oluştu. Sunucu loglarını kontrol edin.';
-        }
-    } catch (e) {
-        statusDiv.style.color = "var(--danger)";
-        statusDiv.innerHTML = '<i data-lucide="wifi-off" size="18"></i> Sunucuya bağlanılamadı.';
-    } finally {
-        btn.disabled = false;
-        btn.innerHTML = '<span style="display:flex;align-items:center;gap:8px;"><i data-lucide="play" size="18"></i> Otomatik Üret</span>';
-        lucide.createIcons();
-    }
-}
-
-function renderClipResults(clips) {
-    const emotionEmoji = {
-        surprised: "😮", happy: "😂", angry: "😡",
-        fear: "😨", disgust: "🤢", sad: "😢", neutral: "😐"
-    };
-    const grid = document.getElementById('pipeline-results');
-    
-    grid.innerHTML = clips.map((c, i) => {
-        const emoji = emotionEmoji[c.emotion] || "🎥";
-        const scoreColor = c.viral_score > 20 ? 'badge-green' : c.viral_score > 8 ? 'badge-yellow' : 'badge-red';
-        
-        return `
-        <div class="clip-result-card">
-            <div class="clip-header">
-                <span class="clip-title">🎬 Klip #${c.rank || i+1}</span>
-                <span class="badge ${scoreColor}">Score: ${(c.viral_score||0).toFixed(1)}</span>
-            </div>
-            
-            <div class="clip-meta">
-                <strong>Model:</strong> YOLOv8 (${(c.action_score||0).toFixed(2)})<br>
-                <strong>Scenes:</strong> ${c.scene_count||0} <br>
-                <strong>Emotion:</strong> ${emoji} <span style="color:var(--warning)">${c.emotion||'neutral'}</span>
-                ${c.emotion_bonus > 0 ? `<span style="color:var(--accent-secondary)">(+${(c.emotion_bonus*5).toFixed(0)} viral bonus)</span>` : ''}
-            </div>
-            
-            ${c.qc ? `<div style="margin-bottom:12px; font-size:12px;">QC Check: <span class="badge ${c.qc.passed?'badge-green':'badge-yellow'}">${c.qc.passed?'✓ Passed':'⚠ Warning'}</span> <span style="margin-left:8px; color:var(--text-secondary);">Score: ${c.qc.score}/100</span></div>` : ''}
-            
-            ${c.social_kit && c.social_kit.hooks && c.social_kit.hooks[0] ? `<div class="clip-hook">“${c.social_kit.hooks[0]}”</div>` : ''}
-            
-            ${c.social_kit && c.social_kit.hashtags ? `<div class="clip-tags">${(c.social_kit.hashtags||[]).slice(0,5).join(' ')}</div>` : ''}
-            
-            <div class="clip-actions">
-                <a href="${c.output_path}" target="_blank" class="action-link link-success"><i data-lucide="download" size="14" style="vertical-align:-2px; margin-right:4px;"></i>Video</a>
-                <a href="${c.thumbnail_path||'#'}" target="_blank" class="action-link link-primary"><i data-lucide="image" size="14" style="vertical-align:-2px; margin-right:4px;"></i>Cover</a>
-                <a href="${c.media_kit_path||'#'}" target="_blank" class="action-link link-secondary"><i data-lucide="file-text" size="14" style="vertical-align:-2px; margin-right:4px;"></i>Kit</a>
-            </div>
-            
-            ${c.features && c.features.length > 0 ? `<div style="margin-top:16px;font-size:11px;color:var(--text-secondary); opacity: 0.8;">${c.features.slice(0,5).join(' • ')}</div>` : ''}
-        </div>`;
-    }).join('');
-    
-    // Re-initialize icons for the newly injected HTML
-    lucide.createIcons();
-}
-
-// Initial Calls
+// ── Init ────────────────────────────────────────────────────────
 connect();
-setInterval(pollStatus, 5000);
+loadClips('recent');
+loadStats();
+loadCollectorStatus();
+setInterval(pollStatus, 10000);
+setInterval(loadStats, 30000);
 pollStatus();
+
+// ── Clip Player Modal ──────────────────────────────────────────
+let currentClipId = '';
+let currentClipUrl = '';
+
+function openClipModal(clipId, clipUrl, title, views, likes, duration, creator, thumb) {
+  currentClipId = clipId;
+  currentClipUrl = clipUrl;
+
+  const modal = document.getElementById('clip-modal');
+  const video = document.getElementById('clip-video');
+  const titleEl = document.getElementById('modal-title');
+  const metaEl = document.getElementById('modal-meta');
+
+  modal.style.display = 'flex';
+  document.body.style.overflow = 'hidden';
+
+  titleEl.textContent = title;
+  metaEl.innerHTML = `
+    <span>${formatNumber(views)} izlenme</span>
+    <span>${formatDuration(duration)}</span>
+    ${creator ? `<span>@${escapeHtml(creator)}</span>` : ''}
+  `;
+
+  // HLS stream dene, yoksa MP4
+  if (clipUrl && clipUrl.includes('.m3u8')) {
+    if (typeof Hls !== 'undefined' && Hls.isSupported()) {
+      const hls = new Hls();
+      hls.loadSource(clipUrl);
+      hls.attachMedia(video);
+      hls.on(Hls.Events.MANIFEST_PARSED, () => video.play().catch(() => {}));
+    } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+      video.src = clipUrl;
+      video.play().catch(() => {});
+    } else {
+      video.poster = thumb || '';
+      video.src = clipUrl;
+    }
+  } else if (clipUrl && clipUrl !== '#') {
+    video.src = clipUrl;
+  }
+
+  // AI analiz başlat
+  loadClipAnalysis(clipId);
+}
+
+function closeClipModal() {
+  const modal = document.getElementById('clip-modal');
+  const video = document.getElementById('clip-video');
+  modal.style.display = 'none';
+  document.body.style.overflow = '';
+  video.pause();
+  video.src = '';
+}
+
+// ESC ile kapat
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') closeClipModal();
+});
+
+// ── Clip AI Analiz ─────────────────────────────────────────────
+async function loadClipAnalysis(clipId) {
+  const loading = document.getElementById('analysis-loading');
+  const content = document.getElementById('analysis-content');
+  const hookPoints = document.getElementById('hook-points');
+  const stockSuggestions = document.getElementById('stock-suggestions');
+
+  loading.style.display = 'block';
+  content.style.display = 'none';
+  hookPoints.innerHTML = 'Analiz bekleniyor...';
+  stockSuggestions.innerHTML = 'Analiz sonrası öneriler burada görünecek.';
+
+  try {
+    const resp = await fetch(`/api/kick-clips/analyze/${clipId}`, { headers: getApiKeyHeaders() });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const data = await resp.json();
+    const a = data.analysis || {};
+
+    loading.style.display = 'none';
+    content.style.display = 'block';
+
+    // Analiz içeriği
+    content.innerHTML = `
+      <div style="margin-bottom:8px; font-size:13px; color:var(--text-primary);">
+        ${escapeHtml(a.description || 'Analiz tamamlandı')}
+      </div>
+      <div style="display:flex; gap:6px; flex-wrap:wrap; margin-bottom:8px;">
+        <span style="background:${(a.viral_potential||0)>=70?'#00b894':'#fdcb6e'}22; color:${(a.viral_potential||0)>=70?'#00b894':'#fdcb6e'}; padding:3px 8px; border-radius:6px; font-size:11px; font-weight:600;">
+          Viral: ${a.viral_potential || 0}
+        </span>
+        ${a.tiktok_score !== undefined ? `<span style="background:#00000022; color:#fff; padding:3px 8px; border-radius:6px; font-size:11px; font-weight:600;">📱 TikTok: ${a.tiktok_score}</span>` : ''}
+        ${a.reels_score !== undefined ? `<span style="background:#e1306c22; color:#e1306c; padding:3px 8px; border-radius:6px; font-size:11px; font-weight:600;">📸 Reels: ${a.reels_score}</span>` : ''}
+        <span style="background:${(a.edit_priority||'')==='high'?'#e17055':'#6c5ce7'}22; color:${(a.edit_priority||'')==='high'?'#e17055':'#6c5ce7'}; padding:3px 8px; border-radius:6px; font-size:11px; font-weight:600;">
+          ${a.edit_priority || 'medium'}
+        </span>
+        ${a.hook_type ? `<span style="background:#fdcb6e22; color:#fdcb6e; padding:3px 8px; border-radius:6px; font-size:11px; font-weight:600;">🪝 ${a.hook_type}</span>` : ''}
+        ${a.meme_potential !== undefined ? `<span style="background:#fd79a822; color:#fd79a8; padding:3px 8px; border-radius:6px; font-size:11px; font-weight:600;">🎭 Meme: ${a.meme_potential}</span>` : ''}
+        ${a.sfx_potential !== undefined ? `<span style="background:#00cec922; color:#00cec9; padding:3px 8px; border-radius:6px; font-size:11px; font-weight:600;">🔊 SFX: ${a.sfx_potential}</span>` : ''}
+        ${a.dm_share_potential !== undefined ? `<span style="background:#e1705522; color:#e17055; padding:3px 8px; border-radius:6px; font-size:11px; font-weight:600;">📤 DM Paylaşım: ${a.dm_share_potential}</span>` : ''}
+        ${a.emotional_trigger ? `<span style="background:#e1705522; color:#e17055; padding:3px 8px; border-radius:6px; font-size:11px; font-weight:600;">${a.emotional_trigger}</span>` : ''}
+        <span style="font-size:10px; color:#555;">${a.analysis_method === 'llm' ? '🤖 AI' : '📊 Math'}</span>
+      </div>
+      <div style="font-size:12px; color:var(--text-primary); margin-bottom:4px;">
+        <strong>🪝 Hook Metni:</strong>
+        <p style="margin:4px 0 0 0; color:var(--accent-primary); font-weight:600;">"${escapeHtml(a.hook_suggestion || 'Henüz öneri yok')}"</p>
+      </div>
+      ${a.caption_tiktok ? `<div style="font-size:11px; color:var(--text-primary); margin-top:6px;">
+        <strong>📱 TikTok Caption:</strong>
+        <p style="margin:2px 0 0 0; color:var(--text-secondary);">${escapeHtml(a.caption_tiktok)}</p>
+      </div>` : ''}
+      ${a.caption_reels ? `<div style="font-size:11px; color:var(--text-primary); margin-top:4px;">
+        <strong>📸 Reels Caption:</strong>
+        <p style="margin:2px 0 0 0; color:var(--text-secondary);">${escapeHtml(a.caption_reels)}</p>
+      </div>` : ''}
+      ${a.hashtags && a.hashtags.length ? `<div style="margin-top:6px; display:flex; gap:4px; flex-wrap:wrap;">
+        ${a.hashtags.map(h => `<span style="background:var(--accent-primary); color:#fff; padding:2px 6px; border-radius:4px; font-size:10px;">#${h}</span>`).join('')}
+      </div>` : ''}
+      ${a.optimal_duration_tiktok ? `<div style="font-size:11px; color:var(--text-secondary); margin-top:6px;">
+        ⏱ Optimal süre: TikTok ${a.optimal_duration_tiktok}s / Reels ${a.optimal_duration_reels || '?'}s
+      </div>` : ''}
+    `;
+
+    // Hook noktaları
+    const hooks = a.hook_timestamps || [];
+    if (hooks.length > 0) {
+      hookPoints.innerHTML = hooks.map(h => `
+        <div class="hook-timestamp" onclick="seekTo(${h.t})" title="${escapeHtml(h.reason)}">
+          🪝 ${h.t.toFixed(1)}s — ${escapeHtml(h.reason)}
+          ${h.hook_type ? `<span style="font-size:9px; background:var(--accent-primary); color:#fff; padding:1px 4px; border-radius:3px; margin-left:4px;">${h.hook_type}</span>` : ''}
+          <span style="font-size:10px; opacity:0.7;">(${h.strength || 0}%)</span>
+        </div>
+      `).join('');
+    } else {
+      hookPoints.innerHTML = '<span style="color:var(--text-secondary);">Hook noktası bulunamadı</span>';
+    }
+
+    // Düzenleme önerileri
+    const edits = a.suggested_edits || [];
+    if (edits.length > 0) {
+      stockSuggestions.innerHTML = edits.map(e => `
+        <div class="edit-suggestion">
+          <strong>${e.type}:</strong> ${escapeHtml(e.description)}
+          ${e.platform ? `<span style="font-size:9px; background:#e1306c33; color:#e1306c; padding:1px 4px; border-radius:3px; margin-left:4px;">${e.platform}</span>` : ''}
+          ${e.timestamp !== null && e.timestamp !== undefined ? `<span style="color:var(--accent-primary); cursor:pointer; font-size:11px;" onclick="seekTo(${e.timestamp})">⏱ ${e.timestamp.toFixed(1)}s</span>` : ''}
+        </div>
+      `).join('');
+    }
+
+    // Stok video önerileri (AI'ın önerdiği sorgularla)
+    const stockQueries = a.stock_video_queries || [];
+    if (stockQueries.length > 0) {
+      stockSuggestions.innerHTML += `
+        <div style="margin-top:8px; border-top:1px solid var(--border-color); padding-top:8px;">
+          <div style="font-size:11px; font-weight:600; color:var(--text-primary); margin-bottom:6px;">🎥 Stok Video Önerileri:</div>
+          ${stockQueries.map(q => `
+            <button onclick="searchStockForClip('${escapeHtml(q)}', 'hook')" style="background:var(--accent-primary); color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:10px; margin:2px;">
+              🔍 ${escapeHtml(q)}
+            </button>
+          `).join('')}
+        </div>
+      `;
+    } else if (a.intro_suggestion) {
+      stockSuggestions.innerHTML += `
+        <div style="margin-top:8px;">
+          <button onclick="searchStockForClip('${escapeHtml(a.intro_suggestion)}', 'hook')" style="background:var(--accent-primary); color:#fff; border:none; padding:6px 12px; border-radius:6px; cursor:pointer; font-size:12px;">
+            🎥 Hook Stok Video Bul
+          </button>
+        </div>
+      `;
+    }
+
+  } catch (e) {
+    loading.textContent = `Analiz yüklenemedi: ${e.message}`;
+    loading.style.color = 'var(--danger)';
+  }
+}
+
+function seekTo(time) {
+  const video = document.getElementById('clip-video');
+  if (video && video.duration) {
+    video.currentTime = time;
+    video.play().catch(() => {});
+  }
+}
+
+// ── Aksiyon Fonksiyonları ──────────────────────────────────────
+async function actionAutoHook() {
+  if (!currentClipId) return;
+  const status = document.getElementById('action-status');
+  const btn = document.getElementById('btn-auto-hook');
+  btn.disabled = true;
+  status.innerHTML = '<span style="color:var(--text-secondary);">🪝 Otomatik kancalama uygulanıyor...</span>';
+
+  try {
+    const resp = await fetch(`/api/kick-clips/auto-hook/${currentClipId}`, {
+      method: 'POST', headers: getApiKeyHeaders()
+    });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const data = await resp.json();
+    if (data.error) {
+      status.innerHTML = `<span style="color:var(--danger);">Hata: ${data.error}</span>`;
+    } else {
+      status.innerHTML = `
+        <span style="color:var(--success);">✅ Kancalama uygulandı!</span>
+        ${data.output_path ? `<br><small style="color:var(--text-secondary);">Çıktı: ${data.output_path.split('/').pop()}</small>` : ''}
+      `;
+    }
+  } catch (e) {
+    status.innerHTML = `<span style="color:var(--danger);">Hata: ${e.message}</span>`;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function actionSubtitle() {
+  if (!currentClipId) return;
+  const status = document.getElementById('action-status');
+  status.innerHTML = '<span style="color:var(--text-secondary);">✏️ Altyazı oluşturuluyor (LLM)...</span>';
+  // Altyazı analizinden suggest
+  try {
+    const resp = await fetch(`/api/kick-clips/analyze/${currentClipId}`, { headers: getApiKeyHeaders() });
+    const data = await resp.json();
+    const edits = data.analysis?.suggested_edits || [];
+    const subEdit = edits.find(e => e.type === 'subtitle');
+    if (subEdit) {
+      status.innerHTML = `<span style="color:var(--success);">✏️ Altyazı önerisi: ${escapeHtml(subEdit.description)}</span>
+        <br><small>Whisper ile otomatik altyazı oluşturulacak.</small>`;
+    } else {
+      status.innerHTML = '<span style="color:var(--text-secondary);">Bu klip için altyazı önerisi bulunamadı.</span>';
+    }
+  } catch (e) {
+    status.innerHTML = `<span style="color:var(--danger);">Hata: ${e.message}</span>`;
+  }
+}
+
+async function actionAutoEdit() {
+  if (!currentClipId) return;
+  const status = document.getElementById('action-status');
+  const btn = document.getElementById('btn-auto-edit');
+  btn.disabled = true;
+  status.innerHTML = '<span style="color:var(--text-secondary);">🎬 Otomatik edit uygulanıyor...</span>';
+
+  try {
+    const resp = await fetch('/api/kick-clips/edit?min_score=55&max_clips=1', {
+      method: 'POST', headers: getApiKeyHeaders()
+    });
+    const data = await resp.json();
+    status.innerHTML = `<span style="color:var(--success);">${data.message || 'Edit tamamlandı'}</span>`;
+  } catch (e) {
+    status.innerHTML = `<span style="color:var(--danger);">Hata: ${e.message}</span>`;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function actionThumbnail() {
+  if (!currentClipId) return;
+  const status = document.getElementById('action-status');
+  try {
+    const resp = await fetch(`/api/kick-clips/analyze/${currentClipId}`, { headers: getApiKeyHeaders() });
+    const data = await resp.json();
+    const suggestion = data.analysis?.thumbnail_suggestion || 'Öneri bulunamadı';
+    status.innerHTML = `<span style="color:var(--accent-primary);">🖼️ Thumbnail: ${escapeHtml(suggestion)}</span>`;
+  } catch (e) {
+    status.innerHTML = `<span style="color:var(--danger);">Hata: ${e.message}</span>`;
+  }
+}
+
+async function actionStockHook() {
+  if (!currentClipId) return;
+  const status = document.getElementById('action-status');
+  status.innerHTML = '<span style="color:var(--text-secondary);">🎥 Hook stok videoları aranıyor...</span>';
+
+  try {
+    const resp = await fetch(`/api/kick-clips/analyze/${currentClipId}`, { headers: getApiKeyHeaders() });
+    const data = await resp.json();
+    const queries = data.analysis?.stock_video_queries || ['gaming reaction', 'explosion effect', 'dramatic reveal'];
+    
+    const allResults = [];
+    for (const q of queries.slice(0, 3)) {
+      try {
+        const sr = await fetch(`/api/kick-clips/stock/search?q=${encodeURIComponent(q)}&limit=2`, { headers: getApiKeyHeaders() });
+        const sd = await sr.json();
+        allResults.push(...(sd.results || []));
+      } catch {}
+    }
+
+    if (allResults.length > 0) {
+      status.innerHTML = allResults.slice(0, 5).map(v => `
+        <div style="margin:4px 0; padding:6px; background:rgba(9,132,227,0.1); border-radius:6px; display:flex; justify-content:space-between; align-items:center;">
+          <div>
+            <span style="font-size:11px; font-weight:600;">${v.source}</span>
+            <span style="font-size:10px; color:var(--text-secondary);"> ${v.duration}s • ${v.width}x${v.height}</span>
+          </div>
+          <a href="${v.url}" target="_blank" style="color:var(--accent-primary); font-size:11px;">İzle →</a>
+        </div>
+      `).join('');
+    } else {
+      status.innerHTML = '<span style="color:var(--text-secondary);">Stok video bulunamadı</span>';
+    }
+  } catch (e) {
+    status.innerHTML = `<span style="color:var(--danger);">Hata: ${e.message}</span>`;
+  }
+}
+
+async function actionPlatform() {
+  // Eski fonksiyon — artık render panel_toggle ile değiştirildi
+  toggleRenderPanel();
+}
+
+function toggleRenderPanel() {
+  const panel = document.getElementById('render-panel');
+  if (!panel) return;
+  panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+}
+
+async function renderForPlatform(platform) {
+  if (!currentClipId) return;
+  const status = document.getElementById('action-status');
+  const platformNames = {
+    'tiktok': 'TikTok (9:16, 1080x1920, 10Mbps)',
+    'instagram_reels': 'Instagram Reels (9:16, 1080x1920, 12Mbps)',
+    'youtube_shorts': 'YouTube Shorts (9:16, 1080x1920, 10Mbps)',
+    'x': 'X / Twitter (16:9, 1280x720, 5Mbps)',
+  };
+  status.innerHTML = `<span style="color:var(--text-secondary);">🚀 Render başladı: ${platformNames[platform] || platform}...</span>`;
+
+  try {
+    const resp = await fetch(`/api/kick-clips/render/${currentClipId}?platform=${platform}`, {
+      method: 'POST', headers: getApiKeyHeaders()
+    });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const data = await resp.json();
+    if (data.error) {
+      status.innerHTML = `<span style="color:var(--danger);">Hata: ${data.error}</span>`;
+    } else {
+      status.innerHTML = `<span style="color:var(--success);">✅ ${data.message || 'Render başladı'}</span>`;
+      setTimeout(() => checkRenderResults(currentClipId), 3000);
+    }
+  } catch (e) {
+    status.innerHTML = `<span style="color:var(--danger);">Hata: ${e.message}</span>`;
+  }
+}
+
+async function renderForAllPlatforms() {
+  if (!currentClipId) return;
+  const status = document.getElementById('action-status');
+  status.innerHTML = `<span style="color:var(--text-secondary);">⚡ Tüm formatlarda render ediliyor (TikTok, Reels, Shorts, X)...</span>`;
+
+  try {
+    const resp = await fetch(`/api/kick-clips/render-multi/${currentClipId}?platforms=tiktok,instagram_reels,youtube_shorts,x`, {
+      method: 'POST', headers: getApiKeyHeaders()
+    });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const data = await resp.json();
+    if (data.error) {
+      status.innerHTML = `<span style="color:var(--danger);">Hata: ${data.error}</span>`;
+    } else {
+      status.innerHTML = `<span style="color:var(--success);">✅ Tüm formatlar render edildi!</span>`;
+      checkRenderResults(currentClipId);
+    }
+  } catch (e) {
+    status.innerHTML = `<span style="color:var(--danger);">Hata: ${e.message}</span>`;
+  }
+}
+
+async function checkRenderResults(clipId) {
+  try {
+    const resp = await fetch(`/api/kick-clips/render-results/${clipId}`, { headers: getApiKeyHeaders() });
+    const data = await resp.json();
+    const resultsPanel = document.getElementById('render-results-panel');
+    const resultsList = document.getElementById('render-results-list');
+    if (!resultsPanel || !resultsList) return;
+
+    const results = data.results || [];
+    if (results.length === 0 && !data.processing) {
+      resultsPanel.style.display = 'none';
+      return;
+    }
+
+    resultsPanel.style.display = 'block';
+    if (data.processing) {
+      resultsList.innerHTML = '<span style="color:var(--text-secondary);">⏳ Render devam ediyor...</span>';
+      setTimeout(() => checkRenderResults(clipId), 5000);
+      return;
+    }
+
+    resultsList.innerHTML = results.map(r => {
+      const platform = r.platform || 'unknown';
+      const output = r.output_path ? r.output_path.split(/[\\\/]/).pop() : 'n/a';
+      const statusColor = r.status === 'ready' ? 'var(--success)' : 'var(--danger)';
+      return `
+        <div style="padding:8px; background:rgba(0,184,148,0.1); border-radius:6px; margin:4px 0;">
+          <div style="display:flex; justify-content:space-between; align-items:center;">
+            <strong style="color:${statusColor};">${platform}</strong>
+            <span style="font-size:10px; color:${statusColor};">${r.status || 'unknown'}</span>
+          </div>
+          ${r.output_path ? `<div style="font-size:10px; color:var(--text-secondary); margin-top:4px;">📁 ${output}</div>` : ''}
+          ${r.error ? `<div style="font-size:10px; color:var(--danger); margin-top:4px;">❌ ${r.error}</div>` : ''}
+        </div>
+      `;
+    }).join('');
+  } catch (e) {
+    console.error('Render results error:', e);
+  }
+}
+
+async function searchStockForClip(query, category) {
+  const status = document.getElementById('action-status');
+  status.innerHTML = '<span style="color:var(--text-secondary);">🔍 Stok video aranıyor...</span>';
+
+  try {
+    const resp = await fetch(`/api/kick-clips/stock/search?q=${encodeURIComponent(query)}&limit=5`, { headers: getApiKeyHeaders() });
+    const data = await resp.json();
+    const videos = data.results || [];
+    status.innerHTML = videos.length > 0
+      ? videos.map(v => `<div style="margin:3px 0; font-size:12px; padding:4px; background:rgba(108,92,231,0.1); border-radius:4px;">
+          ${v.source} — ${v.duration}s <a href="${v.url}" target="_blank" style="color:var(--accent-primary);">İzle</a>
+        </div>`).join('')
+      : '<span style="color:var(--text-secondary);">Sonuç bulunamadı</span>';
+  } catch (e) {
+    status.innerHTML = `<span style="color:var(--danger);">Hata: ${e.message}</span>`;
+  }
+}
+
+// ── Viral Efektler (Meme + SFX) ───────────────────────────────
+async function actionViralEffects() {
+  if (!currentClipId) return;
+  const status = document.getElementById('action-status');
+  const btn = document.getElementById('btn-viral-effects');
+  btn.disabled = true;
+  status.innerHTML = '<span style="color:var(--text-secondary);">🎭 Viral efektler analiz ediliyor (Meme + SFX)...</span>';
+
+  try {
+    const resp = await fetch(`/api/kick-clips/analyze/${currentClipId}`, { headers: getApiKeyHeaders() });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const data = await resp.json();
+    const a = data.analysis || {};
+
+    const memeCount = (a.meme_overlays || []).length;
+    const sfxCount = (a.sfx_events || []).length;
+    const memePotential = a.meme_potential || 0;
+    const sfxPotential = a.sfx_potential || 0;
+
+    if (memeCount === 0 && sfxCount === 0) {
+      status.innerHTML = `
+        <span style="color:var(--text-secondary);">🎭 Bu klip için virald efekt önerisi bulunamadı.</span><br>
+        <small style="color:var(--text-secondary);">Meme potansiyeli: ${memePotential} | SFX potansiyeli: ${sfxPotential}</small>
+        <br><small>Otomatik edit sırasında otomatik eklenecektir.</small>
+      `;
+    } else {
+      let html = `<span style="color:var(--success);">🎭 Viral efektler hazır!</span><br>`;
+      html += `<small style="color:var(--text-secondary);">Meme potansiyeli: ${memePotential} | SFX potansiyeli: ${sfxPotential}</small>`;
+
+      if (memeCount > 0) {
+        html += `<div style="margin-top:6px;"><strong style="font-size:11px;">🎭 Meme Overlay'leri (${memeCount}):</strong>`;
+        a.meme_overlays.forEach((m, i) => {
+          html += `<div style="font-size:10px; color:var(--text-secondary); margin:2px 0;">
+            • ${m.position || 'bottom_right'} @ ${m.timestamp || 2}s (${m.duration || 3}s, %${m.scale_pct || 30})
+            ${m.animation ? `— ${m.animation}` : ''}
+          </div>`;
+        });
+        html += `</div>`;
+      }
+
+      if (sfxCount > 0) {
+        html += `<div style="margin-top:6px;"><strong style="font-size:11px;">🔊 Ses Efektleri (${sfxCount}):</strong>`;
+        a.sfx_events.forEach((s, i) => {
+          html += `<div style="font-size:10px; color:var(--text-secondary); margin:2px 0;">
+            • ${s.event_type || 'impact'} @ ${s.timestamp || 3}s (${s.volume_db || -8}dB)
+          </div>`;
+        });
+        html += `</div>`;
+      }
+
+      html += `<br><small style="color:var(--accent-primary);">💡 Oto-Edit'e geçildiğinde bu efektler otomatik uygulanacaktır.</small>`;
+      status.innerHTML = html;
+    }
+  } catch (e) {
+    status.innerHTML = `<span style="color:var(--danger);">Hata: ${e.message}</span>`;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// ── Arka Plan Müziği ──────────────────────────────────────────
+async function actionAddMusic() {
+  if (!currentClipId) return;
+  const status = document.getElementById('action-status');
+  const btn = document.getElementById('btn-add-music');
+  btn.disabled = true;
+  status.innerHTML = '<span style="color:var(--text-secondary);">🎵 Arka plan müziği aranıyor...</span>';
+
+  try {
+    const resp = await fetch(`/api/kick-clips/analyze/${currentClipId}`, { headers: getApiKeyHeaders() });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const data = await resp.json();
+    const a = data.analysis || {};
+    const musicPath = a.music_path || '';
+    const musicVolume = a.music_volume_db || -18;
+
+    if (!musicPath) {
+      status.innerHTML = `
+        <span style="color:var(--text-secondary);">🎵 Bu klip için müzik önerisi bulunamadı.</span><br>
+        <small style="color:var(--text-secondary);">data/music/ klasörüne MP3 dosyaları koyarak otomatik kullanılabilir hale getirin.</small>
+      `;
+    } else {
+      status.innerHTML = `
+        <span style="color:var(--success);">🎵 Müzik hazır: ${musicPath.split('/').pop()}</span><br>
+        <small style="color:var(--text-secondary);">Seviye: ${musicVolume}dB (Reels standardı: -18dB)</small>
+        <br><small style="color:var(--accent-primary);">💡 Oto-Edit'e geçildiğinde müzik otomatik eklenecektir.</small>
+      `;
+    }
+  } catch (e) {
+    status.innerHTML = `<span style="color:var(--danger);">Hata: ${e.message}</span>`;
+  } finally {
+    btn.disabled = false;
+  }
+}
 </script>
 </body>
 </html>

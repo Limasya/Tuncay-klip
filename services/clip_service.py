@@ -9,7 +9,7 @@ import logging
 import asyncio
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
-from datetime import datetime
+from datetime import datetime, timezone
 from config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -195,7 +195,7 @@ class ClipMetadataService:
         try:
             info = await kick_service.get_livestream_info()
             self._stream_info_cache = info
-            self._cache_time = datetime.utcnow()
+            self._cache_time = datetime.now(timezone.utc)
             return info
         except Exception as e:
             logger.warning("Stream metadata alınamadı, cache kullanılıyor: %s", e)
@@ -225,7 +225,7 @@ class ClipMetadataService:
                 "audio_energy": audio_result.get("rms_energy"),
                 "audio_spike": audio_result.get("is_spike"),
             },
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "clip_labels": clip_labels[:5] if clip_labels else [],
         }
 

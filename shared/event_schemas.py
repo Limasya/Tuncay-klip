@@ -5,7 +5,12 @@ Every event flowing through the system is defined here.
 from __future__ import annotations
 import time
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
+
+
+def _utcnow() -> datetime:
+    """Timezone-aware UTC now. Replaces deprecated _utcnow()."""
+    return datetime.now(timezone.utc)
 from enum import Enum
 from typing import ClassVar, Optional
 from pydantic import BaseModel, Field
@@ -76,7 +81,7 @@ class SystemEvent(BaseModel):
     """Base event flowing through the system."""
     event_id: str = Field(default_factory=_uuid7)
     event_type: EventType
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=_utcnow)
     source_service: str = ""
     stream_id: str = ""
     correlation_id: str = ""
@@ -84,7 +89,7 @@ class SystemEvent(BaseModel):
     payload: dict = Field(default_factory=dict)
 
     def age_seconds(self) -> float:
-        return (datetime.utcnow() - self.timestamp).total_seconds()
+        return (datetime.now(timezone.utc) - self.timestamp).total_seconds()
 
 
 # ─── Video Analysis Results ──────────────────────────────────
@@ -168,7 +173,7 @@ class FrameAnalysisResult(BaseModel):
 
 class AudioFeatures(BaseModel):
     chunk_id: str = Field(default_factory=_uuid7)
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=_utcnow)
     rms_energy: float = 0.0
     zero_crossing_rate: float = 0.0
     spectral_centroid: float = 0.0
@@ -236,9 +241,9 @@ class HighlightScore(BaseModel):
 class ClipCandidate(BaseModel):
     candidate_id: str = Field(default_factory=_uuid7)
     stream_id: str = ""
-    start_time: datetime = Field(default_factory=datetime.utcnow)
-    end_time: datetime = Field(default_factory=datetime.utcnow)
-    event_timestamp: datetime = Field(default_factory=datetime.utcnow)
+    start_time: datetime = Field(default_factory=_utcnow)
+    end_time: datetime = Field(default_factory=_utcnow)
+    event_timestamp: datetime = Field(default_factory=_utcnow)
     highlight_score: HighlightScore = Field(default_factory=HighlightScore)
     trigger_signals: list[str] = Field(default_factory=list)
     priority: float = 0.0
@@ -260,8 +265,8 @@ class ClipResult(BaseModel):
     file_path: str = ""
     thumbnail_path: str = ""
     duration_seconds: float = 0.0
-    start_time: datetime = Field(default_factory=datetime.utcnow)
-    end_time: datetime = Field(default_factory=datetime.utcnow)
+    start_time: datetime = Field(default_factory=_utcnow)
+    end_time: datetime = Field(default_factory=_utcnow)
     highlight_score: float = 0.0
     category: str = ""
     tags: list[str] = Field(default_factory=list)
@@ -287,6 +292,6 @@ class StreamInfo(BaseModel):
     platform: str = "kick"
     channel_slug: str = ""
     title: str = ""
-    started_at: datetime = Field(default_factory=datetime.utcnow)
+    started_at: datetime = Field(default_factory=_utcnow)
     viewer_count: int = 0
     state: StreamState = StreamState.OFFLINE

@@ -6,6 +6,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { HealthMonitor } from "./health.js";
 import { PipelineAPI } from "./api.js";
+import { createProxyMiddleware } from "http-proxy-middleware";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = parseInt(process.env.DASHBOARD_PORT || "3100", 10);
@@ -37,6 +38,27 @@ app.get("/api/clips", async (_req, res) => {
 app.get("/api/analytics", async (_req, res) => {
   res.json(await api.getAnalytics());
 });
+
+// Tüm /api/kick-clips/ isteklerini Python FastAPI'ye proxy et
+app.use(
+  "/api/kick-clips",
+  createProxyMiddleware({
+    target: API_URL,
+    changeOrigin: true,
+    pathRewrite: { "^/api/kick-clips": "/api/kick-clips" },
+    timeout: 60000,
+  })
+);
+
+// Genel catch-all proxy — yukarıda eşleşmeyen tüm /api/* istekleri
+app.use(
+  "/api",
+  createProxyMiddleware({
+    target: API_URL,
+    changeOrigin: true,
+    timeout: 60000,
+  })
+);
 
 wss.on("connection", (ws) => {
   console.log("[WS] Client connected");

@@ -108,16 +108,25 @@ domain_registry = DomainRegistry()
 # ── Domain Tanımları ──
 
 def build_ai_domain() -> Domain:
-    """AI/LLM domain — LLM engine, recommendations, smart editor."""
+    """AI/LLM domain — LLM engine, recommendations, smart editor, viral editing."""
     from api.routers import llm_status, recommendations, smart_editor
+    routers = [llm_status.router, recommendations.router, smart_editor.router]
+    
+    try:
+        from api.routers import viral
+        routers.append(viral.router)
+    except Exception as e:
+        logger.debug("viral router yüklenemedi: %s", e)
+    
     return Domain(
         name="ai",
-        description="LLM engine, recommendations, smart editor, vector search",
-        routers=[llm_status.router, recommendations.router, smart_editor.router],
+        description="LLM engine, recommendations, smart editor, viral editing, vector search",
+        routers=routers,
         tags=[
             {"name": "LLM", "description": "LLM provider management, routing, testing"},
             {"name": "Recommendations", "description": "ML-powered clip recommendations"},
             {"name": "Smart Editor", "description": "AI-assisted editing and optimization"},
+            {"name": "Viral Editing", "description": "AI-powered viral video optimization"},
         ],
     )
 
@@ -137,14 +146,15 @@ def build_media_domain() -> Domain:
 
 
 def build_kick_domain() -> Domain:
-    """Kick domain — kick stream, archive, clips collector."""
-    from api.routers import system, social
+    """Kick domain — kick stream, archive, clips collector, clips API."""
+    from api.routers import system, social, kick_clips
     return Domain(
         name="kick",
-        description="Kick stream monitoring, VOD archive, clips collection",
-        routers=[system.router, social.router],
+        description="Kick stream monitoring, VOD archive, clips collection, clips API",
+        routers=[system.router, social.router, kick_clips.router],
         tags=[
             {"name": "Kick", "description": "Kick.com stream monitoring and management"},
+            {"name": "kick-clips", "description": "Kick public clips browsing and search"},
         ],
     )
 

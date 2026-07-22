@@ -7,7 +7,7 @@ lower-third, sticker, emotion-arc, word-timing, karaoke endpoint'leri.
 import asyncio
 import logging
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
@@ -77,7 +77,7 @@ async def create_edit_spec(request: EditSpecRequest):
             category=request.category.value,
             aspect_ratio=ar,
             resolution=request.resolution,
-            custom_overrides=request.custom_overrides,
+            custom_overrides=None,
         )
 
         return EditSpecResponse(
@@ -104,7 +104,7 @@ async def start_render(request: RenderJobCreate, background_tasks: BackgroundTas
     Yeni bir render işi başlatır. Arka planda çalışır.
     """
     job_id = str(uuid.uuid4())[:8]
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
 
     job = {
         "job_id": job_id,
@@ -284,7 +284,7 @@ async def _execute_render_job(job_id: str, request: RenderJobCreate):
             category=request.category.value,
             aspect_ratio=ar,
             resolution=request.resolution,
-            custom_overrides=request.custom_overrides,
+            custom_overrides=None,
         )
 
         # Render
@@ -293,7 +293,7 @@ async def _execute_render_job(job_id: str, request: RenderJobCreate):
         if output_path:
             job["status"] = "completed"
             job["output_path"] = output_path
-            job["completed_at"] = datetime.utcnow()
+            job["completed_at"] = datetime.now(timezone.utc)
         else:
             job["status"] = "failed"
             job["error"] = "Render başarısız"
@@ -661,7 +661,7 @@ async def advanced_render(request: AdvancedRenderRequest, background_tasks: Back
     emotion-arc, scene-detection dahil.
     """
     job_id = str(uuid.uuid4())[:8]
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
 
     job = {
         "job_id": job_id,
@@ -762,7 +762,7 @@ async def _execute_advanced_render(job_id: str, request: AdvancedRenderRequest):
         if output_path:
             job["status"] = "completed"
             job["output_path"] = output_path
-            job["completed_at"] = datetime.utcnow()
+            job["completed_at"] = datetime.now(timezone.utc)
         else:
             job["status"] = "failed"
             job["error"] = "Render başarısız"
